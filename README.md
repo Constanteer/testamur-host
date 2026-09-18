@@ -39,10 +39,16 @@ The container runs two local processes:
   └─ MathHub
 ```
 
-Attach one persistent volume at:
+Attach **one persistent Zeabur Volume** at exactly:
 
 ```text
 /data
+```
+
+This is required, not optional. Without a mounted volume, Zeabur redeploys are stateless and `accounts.sqlite3`, projects, monitors, sessions and history are discarded with the old container. After deploying, open `/healthz` and confirm:
+
+```json
+"storage": { "persistent_volume_mounted": true }
 ```
 
 Persistent state is separated inside that volume:
