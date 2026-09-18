@@ -17,7 +17,7 @@ from .product_service import TestamurProductService
 WEB_ROOT = Path(__file__).with_name("web")
 
 _STATIC_ASSETS = {"index.html", "app.js", "styles.css"}
-_SPA_PREFIXES = {"app", "object", "compare", "impact", "temporal", "projects", "explore", "monitoring", "learn", "quickstart", "demo", "status"}
+_SPA_PREFIXES = {"app", "object", "compare", "impact", "temporal", "projects", "explore", "monitoring", "learn", "docs", "quickstart", "demo", "status"}
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
