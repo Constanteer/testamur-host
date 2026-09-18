@@ -495,6 +495,9 @@ body.modal-open { overflow: hidden; }
 .help-menu-panel > a:hover { background: var(--soft); text-decoration: none; }
 .help-menu-panel > a strong { font-size: 12px; font-weight: 600; }
 .help-menu-panel > a small { color: var(--muted); font-size: 10px; }
+.help-shortcuts { display: flex; gap: 12px; padding: 7px 9px 6px; color: var(--muted); font-size: 10px; }
+.help-shortcuts span { display: inline-flex; align-items: center; gap: 5px; }
+.help-shortcuts kbd { min-width: 20px; padding: 1px 5px; border: 1px solid var(--line); border-bottom-color: #afb8c1; border-radius: 4px; background: var(--soft); color: var(--ink); text-align: center; font: 9px ui-monospace,SFMono-Regular,Menlo,monospace; }
 
 .onboarding-card {
   margin-bottom: 18px; padding: 18px; border: 1px solid #b6e3ff; border-radius: 8px;
