@@ -901,3 +901,76 @@ body.modal-open { overflow: hidden; }
 .revalidation-boundary { padding: 14px 16px; background: #f6fbff; border-color: #b6e3ff; }
 .revalidation-boundary strong { display: block; font-size: 12px; }
 .revalidation-boundary p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+
+
+/* Agent integration guide */
+.integrations-shell { width: min(1120px,100%); margin: 0 auto; display: grid; gap: 18px; }
+.integrations-hero {
+  display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 28px; align-items: stretch;
+  padding: 24px; border: 1px solid var(--line); border-radius: 9px; background: var(--canvas);
+}
+.integrations-hero h1 { max-width: 760px; margin: 5px 0 8px; font-size: 30px; letter-spacing: -.025em; }
+.integrations-hero p { max-width: 800px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.integrations-status { display: grid; align-content: center; gap: 5px; padding: 15px; border: 1px solid #b6e3ff; border-radius: 8px; background: #f6fbff; }
+.integrations-status > span { color: var(--accent); font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.integrations-status strong { font-size: 12px; }
+.integrations-status small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+
+.integration-prereq,.integration-first-use {
+  padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas);
+}
+.integration-prereq h2,.integration-first-use h2 { margin: 4px 0; font-size: 16px; }
+.integration-prereq p,.integration-first-use p { margin: 0; color: var(--muted); font-size: 11px; }
+.integration-command {
+  display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center;
+  margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: #0d1117; color: #e6edf3;
+}
+.integration-command > div { min-width: 0; display: grid; gap: 4px; }
+.integration-command span { color: #8c959f; font-size: 9px; }
+.integration-command code { min-width: 0; overflow-x: auto; white-space: nowrap; font: 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.integration-command .btn { border-color: #484f58; background: #21262d; color: #e6edf3; }
+.integration-command .btn:hover { background: #30363d; }
+.integration-note {
+  display: grid; grid-template-columns: auto auto minmax(0,1fr); gap: 8px; align-items: baseline;
+  margin-top: 10px; padding: 10px; border-radius: 6px; background: var(--soft); color: var(--muted); font-size: 10px;
+}
+.integration-note strong { color: var(--ink); }
+.integration-note code { color: var(--ink); font-size: 9px; }
+
+.integration-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.integration-card {
+  min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas);
+}
+.integration-featured { border-color: #8c959f; box-shadow: 0 1px 0 rgba(31,35,40,.05); }
+.integration-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.integration-mark {
+  width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px;
+  background: #24292f; color: white; font: 700 10px ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+.integration-card h2 { margin: 11px 0 5px; font-size: 17px; }
+.integration-card > p { margin: 0 0 12px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.integration-card .integration-command { margin-top: 8px; }
+.integration-manual-step { display: grid; gap: 3px; margin-top: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); }
+.integration-manual-step strong { font-size: 10px; }
+.integration-manual-step span { color: var(--muted); font-size: 9px; line-height: 1.45; }
+
+.integration-first-use { display: grid; grid-template-columns: .75fr 1.25fr; gap: 24px; }
+.integration-prompts { display: grid; gap: 7px; }
+.integration-prompts button {
+  width: 100%; display: grid; gap: 2px; padding: 11px 12px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--soft); color: var(--ink); text-align: left;
+}
+.integration-prompts button:hover { border-color: #8c959f; background: #eef1f4; }
+.integration-prompts strong { font-size: 10px; }
+.integration-prompts span { color: var(--muted); font-size: 9px; line-height: 1.4; }
+
+@media (max-width: 820px) {
+  .integrations-hero,.integration-first-use { grid-template-columns: 1fr; }
+  .integration-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .integration-command { grid-template-columns: 1fr; }
+  .integration-command .btn { justify-self: start; }
+  .integration-note { grid-template-columns: 1fr; }
+  .integrations-hero { padding: 18px; }
+}
