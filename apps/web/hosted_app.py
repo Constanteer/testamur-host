@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import os
 import shutil
 import threading
@@ -37,6 +38,7 @@ from .identity import AccountError, AccountStore
 SESSION_COOKIE = "testamur_session"
 WORKSPACE_COOKIE = "testamur_workspace"
 _MATHHUB_PREFIX = "/sources/mathhub"
+_MATHHUB_ROOT = Path(__file__).resolve().parents[2] / "mathhub_app"
 _ACCOUNT_ROUTES = {"signin", "signup", "settings"}
 _PUBLIC_ASSETS = {"index.html", "app.js", "styles.css"}
 
@@ -102,6 +104,51 @@ def _clear_cookie(*, secure: bool) -> str:
     if secure:
         parts.append("Secure")
     return "; ".join(parts)
+
+
+def _mathhub_static(relative_path: str) -> dict[str, Any]:
+    raw = unquote(relative_path or "").lstrip("/")
+    if not raw:
+        raw = "index.html"
+    root = _MATHHUB_ROOT.resolve()
+    target = (root / raw).resolve()
+    if target != root and root not in target.parents:
+        return _error("invalid_path", "invalid MathHub asset path", status=400)
+    if not target.is_file():
+        return {
+            "status": int(HTTPStatus.NOT_FOUND),
+            "headers": {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Cache-Control": "no-store",
+                **_SECURITY_HEADERS,
+            },
+            "body": b"Not found\n",
+        }
+    try:
+        body = target.read_bytes()
+    except OSError:
+        return _error("asset_unavailable", "MathHub asset is unavailable", status=503)
+    content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    if content_type.startswith("text/") or target.suffix.lower() in {".js", ".json", ".svg"}:
+        content_type += "; charset=utf-8"
+    security = {
+        **_SECURITY_HEADERS,
+        "Content-Security-Policy": (
+            "default-src 'self'; base-uri 'self'; form-action 'self'; "
+            "img-src 'self' data:; style-src 'self'; "
+            "script-src 'self' https://cdn.jsdelivr.net; "
+            "connect-src 'self'"
+        ),
+    }
+    return {
+        "status": int(HTTPStatus.OK),
+        "headers": {
+            "Content-Type": content_type,
+            "Cache-Control": "no-cache" if target.suffix.lower() == ".html" else "public, max-age=300",
+            **security,
+        },
+        "body": body,
+    }
 
 
 def _redirect(location: str) -> dict[str, Any]:
@@ -776,7 +823,11 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         if path == _MATHHUB_PREFIX:
             self._send(_redirect(_MATHHUB_PREFIX + "/"))
             return
-        if path.startswith(_MATHHUB_PREFIX + "/") or path.startswith("/api/"):
+        if path.startswith(_MATHHUB_PREFIX + "/"):
+            relative = path[len(_MATHHUB_PREFIX) + 1:]
+            self._send(_mathhub_static(relative))
+            return
+        if path.startswith("/api/"):
             self._send(self._proxy_mathhub())
             return
         if path.startswith("/v1/account/") or path.startswith("/v1/users/"):
@@ -829,7 +880,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         # reject writes based on the forwarded public Host header here; account
         # and workspace authorization below remains authoritative.
         path = urlsplit(self.path).path.rstrip("/") or "/"
-        if path == _MATHHUB_PREFIX or path.startswith(_MATHHUB_PREFIX + "/") or path.startswith("/api/"):
+        if path.startswith("/api/"):
             self._send(self._proxy_mathhub())
             return
 
