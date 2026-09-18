@@ -1262,7 +1262,32 @@ function supplyChainPanel(project, supplyChain) {
       </section>
     </div>`;
   }
+
   const warnings = supplyChain.warnings || [];
+  const dependencies = supplyChain.dependencies || [];
+  const manifests = supplyChain.manifests || [];
+  const exactCount = dependencies.filter(item => item.is_exact_revision).length;
+  const directCount = dependencies.filter(item => item.direct === true).length;
+  const dependencyRows = dependencies.map(item => {
+    const name = item.name || item.component_id || item.record_revision_id || 'dependency';
+    const version = item.version || 'unversioned';
+    const search = [item.ecosystem, name, version, item.identity_strength, ...(item.observed_in || [])].filter(Boolean).join(' ').toLowerCase();
+    const exact = item.is_exact_revision
+      ? badge('exact material', 'good')
+      : badge(item.identity_strength || 'declared identity', 'neutral');
+    const direct = item.direct === true ? '<span class="dependency-direct">direct</span>' : item.direct === false ? '<span class="dependency-transitive">transitive</span>' : '<span class="dependency-transitive">declared</span>';
+    return `<div class="dependency-row" data-supply-dependency data-search="${esc(search)}">
+      <div class="dependency-identity"><span class="dependency-ecosystem">${esc(item.ecosystem || 'package')}</span><a data-nav href="${esc(objectPath(item.record_revision_id))}"><strong>${esc(name)}</strong></a><code>${esc(version)}</code></div>
+      <div class="dependency-evidence">${direct}${exact}</div>
+      <div class="dependency-origin">${(item.observed_in || []).map(path => `<span>${esc(path)}</span>`).join('') || '<span>—</span>'}</div>
+    </div>`;
+  }).join('');
+
+  const manifestRows = manifests.map(item => `<a data-nav class="manifest-row" href="${esc(objectPath(item.record_revision_id))}">
+    <div><strong>${esc(item.path || 'manifest')}</strong><small>${esc(item.parser || 'parser')} · ${esc(String(item.dependency_count || 0))} dependency declaration(s)</small></div>
+    <code>${esc(short(item.sha256 || '', 22))}</code>
+  </a>`).join('');
+
   return `<div class="supply-chain-layout">
     <section class="supply-chain-summary">
       <div class="supply-chain-heading">
@@ -1272,7 +1297,8 @@ function supplyChainPanel(project, supplyChain) {
       <div class="supply-chain-stats">
         <div><strong>${esc(String(supplyChain.manifest_count || 0))}</strong><span>manifests</span></div>
         <div><strong>${esc(String(supplyChain.dependency_count || 0))}</strong><span>dependencies</span></div>
-        <div><strong>${esc(String(warnings.length))}</strong><span>warnings</span></div>
+        <div><strong>${esc(String(directCount))}</strong><span>direct</span></div>
+        <div><strong>${esc(String(exactCount))}</strong><span>exact material</span></div>
       </div>
       <div class="fields supply-chain-meta">
         <div class="field"><span>Latest scan</span><div>${esc(ago(supplyChain.recorded_at))}</div></div>
@@ -1280,20 +1306,41 @@ function supplyChainPanel(project, supplyChain) {
         <div class="field"><span>Persistent scan</span><div><a data-nav class="mono ref-link" href="${esc(objectPath(supplyChain.scan_record_id))}">${esc(short(supplyChain.scan_record_id, 72))}</a></div></div>
       </div>
     </section>
+
     ${warnings.length ? `<section class="supply-chain-warnings"><div class="section-head compact"><h2>Import warnings</h2><span>${warnings.length}</span></div><div class="warning-list">${warnings.map(item => `<div><span>!</span><p>${esc(item)}</p></div>`).join('')}</div></section>` : ''}
+
+    <section class="supply-inventory-card">
+      <div class="supply-inventory-head">
+        <div><h2>Dependency inventory</h2><p>Search the recorded declaration inventory. Open a row to inspect the persistent record and exact basis.</p></div>
+        <label class="supply-search"><span aria-hidden="true">⌕</span><input type="search" data-supply-search placeholder="Search package, ecosystem, version, manifest…" /></label>
+      </div>
+      <div class="dependency-table-head"><span>Package</span><span>Evidence</span><span>Observed in</span></div>
+      <div class="dependency-table" data-supply-list>
+        ${dependencyRows || '<div class="dependency-empty">No dependency records were projected from this scan.</div>'}
+      </div>
+      <div class="supply-filter-empty" data-supply-filter-empty hidden>No dependencies match this search.</div>
+      ${supplyChain.inventory_truncated ? '<div class="supply-truncated">The product projection is truncated. Counts still reflect the full recorded scan.</div>' : ''}
+    </section>
+
+    <section class="manifest-card">
+      <div class="section-head compact"><div><h2>Observed manifests</h2><p>Each manifest record pins the exact local bytes by SHA-256.</p></div><span>${manifests.length}</span></div>
+      <div class="manifest-list">${manifestRows || '<div class="dependency-empty">No manifest records were projected from this scan.</div>'}</div>
+    </section>
+
     <section class="supply-chain-boundary-card">
       <span class="onboarding-kicker">SEMANTIC BOUNDARY</span>
       <h2>What this inventory does—and does not—say.</h2>
       <div class="supply-chain-boundaries">
         <code>manifest declaration != runtime use</code>
-        <code>declared version != exact content unless digest/locator evidence supports it</code>
+        <code>declared version != exact content unless digest/revision evidence supports it</code>
         <code>advisory identity match != affectedness verdict</code>
         <code>changed != invalid</code>
       </div>
-      <p>Advisories can be resolved against these canonical component identities later, but affectedness remains a separate recorded assessment rather than a generic trust score.</p>
+      <p>Advisories can resolve against canonical component identities, but applicability remains separate evidence. A package appearing here is not by itself proof that a vulnerability affects the built or deployed artifact.</p>
     </section>
   </div>`;
 }
+
 
 async function projectMonitorsPanel(project, monitors) {
   const data = await dashboard();
@@ -1377,6 +1424,18 @@ async function projectPage(ref) {
     });
     document.querySelector('[data-refresh-project]')?.addEventListener('click', event => {
       refreshProjectMonitorsFromButton(event.currentTarget);
+    });
+    const supplySearch = document.querySelector('[data-supply-search]');
+    supplySearch?.addEventListener('input', () => {
+      const query = supplySearch.value.trim().toLowerCase();
+      let visible = 0;
+      document.querySelectorAll('[data-supply-dependency]').forEach(row => {
+        const match = !query || String(row.dataset.search || '').includes(query);
+        row.hidden = !match;
+        if (match) visible += 1;
+      });
+      const emptyState = document.querySelector('[data-supply-filter-empty]');
+      if (emptyState) emptyState.hidden = visible !== 0;
     });
   } catch (error) {
     errorPage(error, 'Project unavailable');
