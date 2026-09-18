@@ -142,7 +142,7 @@ const state = {
 const app = document.querySelector('#app');
 
 function esc(v='') { return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c])); }
-function statusText(s) { return s === 'verified' ? 'Kernel verified' : s === 'partial' ? 'Partial' : s === 'failed' ? 'Failed' : 'Open'; }
+function statusText(s) { return s === 'verified' ? 'Verified' : s === 'partial' ? 'Partial' : s === 'failed' ? 'Failed' : 'Open'; }
 function badge(s) { return `<span class="status ${s}">${statusText(s)}</span>`; }
 function getClaim(id) { return claims.find(c => c.id === id) || auxiliaryClaims[id]; }
 function workFor(c) {
@@ -151,33 +151,86 @@ function workFor(c) {
 }
 
 function topbar() {
-  const nav = [['registry','Registry'],['graph','Dependency graph'],['authors','Authors'],['submit','Register claim']];
+  const nav = [['registry','Claims'],['graph','Graph'],['authors','People']];
   const dot = state.runtime.checked ? (state.runtime.ready ? 'ready' : 'bad') : '';
-  return `<header class="topbar"><button class="wordmark" data-view="registry">MathHub</button>
-    <nav class="topnav">${nav.map(([v,t]) => `<button class="${state.view===v?'active':''}" data-view="${v}">${t}</button>`).join('')}</nav>
-    <div class="top-spacer"></div><div class="runtime-pill"><span class="runtime-dot ${dot}"></span>${esc(state.runtime.label)}</div>
-  </header>`;
+  const hosted = location.pathname.startsWith('/sources/mathhub');
+  const parent = hosted ? '<a class="parent-link" href="/">Testamur</a><span class="product-separator">/</span>' : '';
+  return `<header class="topbar"><div class="topbar-inner">
+    <div class="product-lockup">${parent}<button class="wordmark" data-view="registry">MathHub</button><span class="product-tag">formal source</span></div>
+    <nav class="topnav" aria-label="MathHub navigation">${nav.map(([v,t]) => `<button class="${state.view===v?'active':''}" data-view="${v}">${t}</button>`).join('')}</nav>
+    <div class="top-spacer"></div>
+    <div class="runtime-pill" title="Lean runtime status"><span class="runtime-dot ${dot}"></span><span>${esc(state.runtime.label)}</span></div>
+    <button class="btn btn-primary btn-small top-register" data-view="submit">New claim</button>
+  </div></header>`;
 }
 
 function renderRegistry() {
   const q = state.search.trim().toLowerCase();
   const filtered = claims.filter(c => (state.filter==='all' || c.status===state.filter) && (!q || [c.id,c.title,c.statement,c.area,c.author,c.formalizer,...c.tags].join(' ').toLowerCase().includes(q)));
   const counts = { verified: claims.filter(c=>c.status==='verified').length, partial: claims.filter(c=>c.status==='partial').length, open: claims.filter(c=>c.status==='open').length };
-  return `<main class="shell page">
-    <div class="eyebrow">Formal mathematics registry</div>
-    <h1 class="display-title">Claims first. Proofs checked. Dependencies explicit.</h1>
-    <p class="display-deck">MathHub treats a mathematical claim as a durable object with a formal Lean declaration. Proof artifacts are compiled in a pinned environment; the registry records authorship, imports, proof constants and axioms rather than asking another model whether the proof looks plausible.</p>
-    <div class="hero-search"><input id="search" class="search-input" value="${esc(state.search)}" placeholder="Search by claim, author, field or formal identifier…"/><button class="btn btn-primary" data-view="submit">Register a claim</button></div>
+  const areas = [...new Set(claims.map(c=>c.area))].sort();
+  return `<main class="shell page registry-page">
+    <section class="registry-head">
+      <div>
+        <div class="eyebrow">Formal mathematics registry</div>
+        <h1 class="registry-title">Claims, proofs, and the routes between them.</h1>
+        <p class="registry-deck">Search a mathematical claim, then open it to inspect the exact Lean declaration, proof artifact, imports, axioms, and dependency trail. A verified badge is a build result—not a vote of confidence.</p>
+      </div>
+      <div class="registry-runtime">
+        <div class="registry-runtime-head"><span class="runtime-dot ${state.runtime.checked ? (state.runtime.ready ? 'ready' : 'bad') : ''}"></span><strong>Lean engine</strong></div>
+        <div class="registry-runtime-value">${esc(state.runtime.label)}</div>
+        <div class="registry-runtime-note">Verification records are tied to the checked environment and dependency lock.</div>
+      </div>
+    </section>
+
+    <div class="registry-toolbar">
+      <label class="registry-search"><span aria-hidden="true">⌕</span><input id="search" class="search-input" value="${esc(state.search)}" placeholder="Search claims, authors, fields, tags, or Lean names…" aria-label="Search MathHub claims"/></label>
+      <button class="btn btn-primary" data-view="submit">Register claim</button>
+    </div>
+
     <div class="overview-line">
       <div class="metric"><div class="metric-value">${claims.length}</div><div class="metric-label">Claims</div></div>
-      <div class="metric"><div class="metric-value">${counts.verified}</div><div class="metric-label">Kernel verified</div></div>
+      <div class="metric"><div class="metric-value">${counts.verified}</div><div class="metric-label">Verified</div></div>
       <div class="metric"><div class="metric-value">${counts.partial}</div><div class="metric-label">Partial</div></div>
       <div class="metric"><div class="metric-value">${counts.open}</div><div class="metric-label">Open</div></div>
     </div>
-    <section class="section"><div class="section-head"><h2 class="section-title">Registry</h2><div class="filters">${['all','verified','partial','open'].map(f=>`<button class="filter ${state.filter===f?'active':''}" data-filter="${f}">${f==='all'?'All':statusText(f)}</button>`).join('')}</div></div>
-      <div class="claim-list">${filtered.length ? filtered.map(c=>`<button class="claim-card" data-claim="${c.id}"><div><div class="claim-id">${c.id}</div><div style="margin-top:11px">${badge(c.status)}</div></div><div><div class="claim-card-title">${c.title}</div><div class="claim-card-text">${c.statement}</div></div><div class="claim-side">${c.area}<br>Claim: ${c.author}<br>Proof: ${c.formalizer}</div></button>`).join('') : '<div class="empty">No claims match the current query.</div>'}</div>
-    </section>
-    <div class="footer-note">The records above are prototype data. “Kernel verified” becomes authoritative only when it is produced by the local/production Lean build service and stored with its exact dependency lock.</div>
+
+    <div class="registry-layout">
+      <section class="registry-main">
+        <div class="section-head registry-list-head">
+          <div><h2 class="section-title">Claims</h2><span class="section-note">${filtered.length} shown</span></div>
+          <div class="filters">${['all','verified','partial','open'].map(f=>`<button class="filter ${state.filter===f?'active':''}" data-filter="${f}">${f==='all'?'All':statusText(f)}</button>`).join('')}</div>
+        </div>
+        <div class="claim-list">${filtered.length ? filtered.map(c=>`<button class="claim-card" data-claim="${c.id}">
+          <div class="claim-card-main">
+            <div class="claim-card-kicker"><span class="claim-id">${c.id}</span><span>·</span><span>${esc(c.area)}</span></div>
+            <div class="claim-card-title">${esc(c.title)}</div>
+            <div class="claim-card-text">${esc(c.statement)}</div>
+            <div class="claim-card-meta"><span>Claim: ${esc(c.author)}</span><span>Proof: ${esc(c.formalizer)}</span><span class="mono">${esc(c.leanName)}</span></div>
+          </div>
+          <div class="claim-card-status">${badge(c.status)}<span class="claim-open-arrow" aria-hidden="true">→</span></div>
+        </button>`).join('') : '<div class="empty">No claims match this search or filter.</div>'}</div>
+      </section>
+
+      <aside class="registry-sidebar">
+        <section class="side-card">
+          <div class="side-card-title">Browse by field</div>
+          <div class="area-list">${areas.map(area=>`<span><strong>${esc(area)}</strong><small>${claims.filter(c=>c.area===area).length}</small></span>`).join('')}</div>
+        </section>
+        <section class="side-card">
+          <div class="side-card-title">What “verified” means</div>
+          <ol class="verification-steps">
+            <li><strong>Claim</strong><span>Natural-language statement plus exact Lean declaration.</span></li>
+            <li><strong>Proof</strong><span>Proof term compiled in the pinned environment.</span></li>
+            <li><strong>Record</strong><span>Imports, axioms and dependency closure retained with the result.</span></li>
+          </ol>
+        </section>
+        <section class="side-card side-card-quiet">
+          <strong>Prototype registry</strong>
+          <p>The sample records are demonstrators. Treat “verified” as authoritative only when backed by a stored production build record.</p>
+        </section>
+      </aside>
+    </div>
   </main>`;
 }
 
@@ -226,16 +279,19 @@ function renderGraph() {
   const sel = graphObject(state.graphSelected);
   const map = Object.fromEntries(graphNodes.map(n=>[n.id,n]));
   const edges = graphEdges.map(([a,b])=>`<line class="edge" x1="${map[a].x}" y1="${map[a].y}" x2="${map[b].x}" y2="${map[b].y}"/>`).join('');
-  const nodes = graphNodes.map(n=>{const c=graphObject(n.id), label=c.title.length>28?c.title.slice(0,27)+'…':c.title;return `<g class="node ${state.graphSelected===n.id?'selected':''}" data-node="${n.id}" transform="translate(${n.x},${n.y})"><circle r="27"></circle><text text-anchor="middle" y="48">${esc(label)}</text><text text-anchor="middle" y="63" style="font-family:var(--mono);font-size:8px;fill:#888">${n.id}</text></g>`}).join('');
-  return `<main class="shell page"><div class="eyebrow">Dependency graph</div><h1 class="display-title">From proof constants to mathematical structure.</h1><p class="display-deck">The machine layer records what Lean actually uses. The registry layer maps relevant declarations to Claims so the graph remains mathematically legible.</p><div class="graph-shell"><div class="graph-canvas"><svg viewBox="0 0 930 650"><defs><marker id="arrow" viewBox="0 0 10 10" refX="30" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#aaa69a"/></marker></defs>${edges}${nodes}</svg></div><aside class="graph-inspector"><div class="eyebrow">Selected claim</div><h2 class="section-title" style="font-size:28px;margin-top:12px">${sel.title}</h2><div style="margin:14px 0">${badge(sel.status)}</div><p class="display-deck" style="font-size:15px">${sel.statement||''}</p><div class="meta-row" style="margin-top:28px"><div class="meta-label">Identifier</div><div class="meta-value meta-mono">${sel.id}</div></div>${claims.some(c=>c.id===sel.id)?`<button class="btn btn-primary" data-claim="${sel.id}" style="width:100%;margin-top:18px">Open claim</button>`:''}</aside></div></main>`;
+  const nodes = graphNodes.map(n=>{const c=graphObject(n.id), label=c.title.length>28?c.title.slice(0,27)+'…':c.title;return `<g class="node ${state.graphSelected===n.id?'selected':''}" data-node="${n.id}" transform="translate(${n.x},${n.y})"><circle r="27"></circle><text text-anchor="middle" y="48">${esc(label)}</text><text text-anchor="middle" y="63" class="graph-node-id">${n.id}</text></g>`}).join('');
+  return `<main class="shell page">
+    <section class="page-head"><div><div class="eyebrow">Dependency graph</div><h1 class="page-heading">Follow the proof route.</h1><p>Lean records the machine dependency closure. MathHub maps selected declarations back to mathematical claims so the route remains readable.</p></div></section>
+    <div class="graph-shell"><div class="graph-canvas"><svg viewBox="0 0 930 650"><defs><marker id="arrow" viewBox="0 0 10 10" refX="30" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8c959f"/></marker></defs>${edges}${nodes}</svg></div><aside class="graph-inspector"><div class="eyebrow">Selected claim</div><h2 class="section-title">${esc(sel.title)}</h2><div class="graph-status">${badge(sel.status)}</div><p>${esc(sel.statement||'')}</p><div class="meta-row"><div class="meta-label">Identifier</div><div class="meta-value meta-mono">${sel.id}</div></div>${claims.some(c=>c.id===sel.id)?`<button class="btn btn-primary" data-claim="${sel.id}">Open claim</button>`:''}</aside></div>
+  </main>`;
 }
 
 function renderAuthors() {
-  return `<main class="shell page"><div class="eyebrow">Provenance</div><h1 class="display-title">Claim authorship and proof authorship are distinct.</h1><p class="display-deck">A historical claim, a new proof, and a modern Lean formalization may have different authors. MathHub keeps those lines separate.</p><div class="author-grid">${authors.map(a=>`<article class="author-card"><div class="author-name">${a.name}</div><div class="author-handle">${a.handle}</div><div class="author-bio">${a.bio}</div><div class="author-stats"><span><strong>${a.claims}</strong>claims</span><span><strong>${a.proofs}</strong>proofs</span></div><div class="claim-id" style="margin-top:20px">${a.areas}</div></article>`).join('')}</div></main>`;
+  return `<main class="shell page"><section class="page-head"><div><div class="eyebrow">Provenance</div><h1 class="page-heading">People and provenance.</h1><p>Claim authorship, proof authorship, and formalization are separate lines. MathHub keeps them separate instead of collapsing them into one credit field.</p></div></section><div class="author-grid">${authors.map(a=>`<article class="author-card"><div class="author-avatar" aria-hidden="true">${esc(a.name.slice(0,1))}</div><div><div class="author-name">${esc(a.name)}</div><div class="author-handle">${esc(a.handle)}</div></div><div class="author-bio">${esc(a.bio)}</div><div class="author-stats"><span><strong>${a.claims}</strong>claims</span><span><strong>${a.proofs}</strong>proofs</span></div><div class="author-areas">${esc(a.areas)}</div></article>`).join('')}</div></main>`;
 }
 
 function renderSubmit() {
-  return `<main class="shell page"><div class="page-narrow"><div class="eyebrow">Register</div><h1 class="display-title">A Claim begins with a formal declaration.</h1><p class="display-deck">Natural-language exposition is useful, but the Lean declaration fixes the formal object. A proof may be attached immediately or later.</p><div class="submit-layout"><form id="claim-form"><div class="field"><label>Title</label><input id="draft-title" required placeholder="Claim title"/></div><div class="field"><label>Natural-language statement</label><textarea id="draft-human" style="font-family:var(--serif)" required></textarea></div><div class="field"><label>Lean imports</label><textarea id="draft-imports">Mathlib</textarea></div><div class="field"><label>Formal Lean declaration</label><textarea id="draft-decl" required placeholder="theorem my_claim : ..."></textarea></div><div class="field"><label>Lean proof</label><textarea id="draft-proof" style="min-height:230px" placeholder="by\n  ..."></textarea></div><div class="workbench-actions"><button class="btn" type="button" id="draft-test">Compile draft</button><button class="btn btn-primary" type="submit">Prepare registry object</button></div><div id="draft-result" style="margin-top:24px"></div></form><aside><div class="callout"><strong>Verification is a build result.</strong><br>A submitted proof is never marked verified because a person or model says it is convincing. The service compiles it, surfaces axioms and dependency closure, then stores that result with the environment lock.</div><div class="callout warn" style="margin-top:20px"><strong>Local prototype security.</strong><br>The Lean runner executes submitted Lean code on your machine. Use it only with code you trust; production requires process/container isolation.</div></aside></div></div></main>`;
+  return `<main class="shell page"><div class="page-narrow"><section class="page-head"><div><div class="eyebrow">New claim</div><h1 class="page-heading">Register the formal object first.</h1><p>The natural-language description helps humans navigate. The Lean declaration fixes the claim MathHub will actually track.</p></div></section><div class="submit-layout"><form id="claim-form" class="submit-form"><div class="field"><label>Title</label><input id="draft-title" required placeholder="Claim title"/></div><div class="field"><label>Natural-language statement</label><textarea id="draft-human" class="human-editor" required placeholder="State the mathematical claim in ordinary language."></textarea></div><div class="field"><label>Lean imports</label><textarea id="draft-imports">Mathlib</textarea></div><div class="field"><label>Formal Lean declaration</label><textarea id="draft-decl" required placeholder="theorem my_claim : ..."></textarea></div><div class="field"><label>Lean proof</label><textarea id="draft-proof" class="proof-draft" placeholder="by\n  ..."></textarea></div><div class="workbench-actions"><button class="btn" type="button" id="draft-test">Compile draft</button><button class="btn btn-primary" type="submit">Prepare registry object</button></div><div id="draft-result" class="draft-result"></div></form><aside class="submit-side"><div class="side-card"><div class="side-card-title">Verification pipeline</div><ol class="verification-steps"><li><strong>Compile</strong><span>Lean accepts or rejects the declaration and proof.</span></li><li><strong>Audit</strong><span>MathHub extracts imports, proof constants and axioms.</span></li><li><strong>Record</strong><span>The result is stored with its environment lock.</span></li></ol></div><div class="callout warn"><strong>Prototype runner</strong><br>The current runner executes submitted Lean code on this service. Production isolation remains a deployment boundary.</div></aside></div></div></main>`;
 }
 
 function current() { if(state.view==='claim') return renderClaim(); if(state.view==='graph') return renderGraph(); if(state.view==='authors') return renderAuthors(); if(state.view==='submit') return renderSubmit(); return renderRegistry(); }

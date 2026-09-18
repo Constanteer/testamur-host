@@ -31,10 +31,111 @@ function proofHtml(p,i){
 }
 function neighbors(title,items,empty){return `<section class="neighborhood-column"><h3>${title}</h3>${items?.length?items.map(x=>`<button class="neighbor-row" data-open-claim="${x.claim_id}"><span><strong>${esc(x.title)}</strong><small>${esc(x.lean_name||'')}</small></span><span>${x.proof_ids?.length||''}</span></button>`).join(''):`<div class="quiet-empty">${empty}</div>`}</section>`}
 
-topbar=function(){const dot=state.runtime.checked?(state.runtime.ready?'ready':'bad'):'';return `<header class="topbar argument-topbar"><button class="wordmark" data-view="registry">MathHub</button><nav class="topnav"><button class="${state.view==='registry'?'active':''}" data-view="registry">Claims</button><button class="${state.view==='graph'?'active':''}" data-view="graph">Graph</button></nav><div class="top-spacer"></div><div class="runtime-pill"><span class="runtime-dot ${dot}"></span>${esc(state.runtime.ready?'Lean connected':state.runtime.label)}</div><button class="btn" data-view="submit">New claim</button></header>`};
-renderRegistry=function(){const q=state.search.trim().toLowerCase(),f=claims.filter(c=>(state.filter==='all'||c.status===state.filter)&&(!q||[c.title,c.statement,c.area,c.author,c.leanName].join(' ').toLowerCase().includes(q)));return `<main class="shell page argument-home"><section class="argument-hero"><div class="eyebrow">Formal mathematics</div><h1>Mathematics as a graph of arguments.</h1><p>Claims are statements. Proofs are routes that establish them. Dependencies record which other Claims each route actually uses.</p><div class="argument-search"><input id="search" class="search-input" value="${esc(state.search)}" placeholder="Search mathematics, Lean names, authors…"/><button class="btn btn-primary" data-view="submit">Register a claim</button></div></section><section class="claim-index"><div class="section-head"><h2 class="section-title">Claims</h2><div class="filters">${['all','verified','partial','open'].map(x=>`<button class="filter ${state.filter===x?'active':''}" data-filter="${x}">${x==='all'?'All':statusText(x)}</button>`).join('')}</div></div><div class="argument-claim-list">${f.map(c=>`<button class="argument-claim-row" data-claim="${c.id}"><div><code>${esc(c.leanName||'')}</code><h3>${esc(c.title)}</h3><p>${esc(c.statement)}</p></div><div class="claim-row-meta"><span>${esc(c.area||'')}</span>${badge(c.status)}</div></button>`).join('')||'<div class="quiet-empty">No Claims match.</div>'}</div></section></main>`};
-renderClaim=function(){const c=claims.find(x=>x.id===state.selected)||claims[0];if(!c)return '<main class="shell page">No Claim.</main>';const a=argFor(c),x=a.claim||{},w=workFor(c);return `<main class="shell page argument-claim-page"><div class="argument-reading-column"><div class="breadcrumb"><button data-view="registry">Claims</button><span>/</span><span>${esc(c.area||'')}</span></div><header class="argument-claim-header"><div class="claim-title-line"><code>${esc(x.lean_name||c.leanName||'')}</code>${badge(x.status||c.status)}</div><h1>${esc(x.title||c.title)}</h1><p>${esc(x.statement||c.statement)}</p></header><section class="claim-statement-surface"><div class="surface-label">Claim</div><div class="formal-math">\\[${x.latex||c.latex}\\]</div><pre class="formal-declaration">${esc(x.formal_declaration||c.declaration)}</pre></section><section class="proof-routes-section"><div class="route-section-head"><div><div class="eyebrow">Proof routes</div><h2>${a.proofs?.length?`${a.proofs.length} proof${a.proofs.length===1?'':'s'}`:'No proof registered yet'}</h2></div></div><div class="proof-routes">${a.proofs?.map(proofHtml).join('')||'<div class="open-claim-note">Open Claim. A Proof can be attached later.</div>'}</div></section><section class="argument-neighborhood"><div class="route-section-head"><div><div class="eyebrow">Mathematical neighborhood</div><h2>Argument graph</h2></div><button class="btn" data-open-neighborhood>Open graph</button></div><div class="neighborhood-grid">${neighbors('Depends on',a.depends_on,'No mapped dependencies.')}${neighbors('Used by',a.used_by,'No current Proof uses this Claim.')}</div></section><details class="workbench-disclosure"><summary><strong>Proof workbench</strong><span>secondary editing surface</span></summary><div class="workbench-body"><div class="code-panel"><textarea id="imports-editor" class="code-editor import-editor">${esc(w.imports)}</textarea></div><div class="code-panel"><textarea id="decl-editor" class="code-editor declaration-editor">${esc(w.declaration)}</textarea></div><div class="code-panel"><textarea id="proof-editor" class="code-editor">${esc(w.proof)}</textarea></div><div class="workbench-actions"><button class="btn btn-primary" data-lean-action="compile">Compile</button><button class="btn" data-lean-action="audit">Extract dependencies</button>${live(c.id)?`<button class="btn" data-save-proof="${c.id}">Save as new Proof</button>`:''}</div><div id="audit-slot">${auditHtml(c)}</div></div></details><details class="provenance-disclosure"><summary>Provenance & history</summary><div class="provenance-small"><div><span>Claim author</span><strong>${esc(x.claim_author||c.author||'—')}</strong></div><div><span>Canonical reference</span><code>${esc(c.id)}</code></div>${a.provenance?.claim_version_id?`<div><span>Current revision</span><code>${esc(a.provenance.claim_version_id)}</code></div>`:''}${a.provenance?.verification_build_id?`<div><span>Verification witness</span><code>${esc(a.provenance.verification_build_id)}</code></div>`:''}</div></details></div></main>`};
-renderSubmit=function(){return `<main class="shell page"><div class="argument-reading-column submit-simple"><div class="eyebrow">New Claim</div><h1 class="display-title">Register a mathematical statement.</h1><p class="display-deck">A Claim is a Lean <code>theorem</code> or <code>lemma</code>. Definitions and other constants stay in the formal substrate. An optional Proof owns its source.</p><form id="claim-form" class="argument-submit-form"><div class="field"><label>Title</label><input id="draft-title" required/></div><div class="registry-two-col"><div class="field"><label>Claim author</label><input id="draft-author"/></div><div class="field"><label>Field</label><input id="draft-area"/></div></div><div class="field"><label>Statement</label><textarea id="draft-human" required></textarea></div><div class="field"><label>LaTeX display</label><textarea id="draft-latex"></textarea></div><div class="field"><label>Formal Lean theorem / lemma</label><textarea id="draft-decl" required placeholder="theorem my_claim : ..."></textarea></div><div class="field"><label>Imports</label><textarea id="draft-imports">Mathlib</textarea></div><hr class="submission-separator"/><div class="eyebrow">Optional Proof</div><div class="field"><label>Proof author</label><input id="draft-proof-author"/></div><div class="field"><label>Proof source</label><textarea id="draft-proof" style="min-height:230px" placeholder="by\n  ..."></textarea></div><div class="workbench-actions"><button class="btn" type="button" id="draft-test">Compile draft</button><button class="btn btn-primary" type="submit">Register Claim</button></div><div id="draft-result"></div></form></div></main>`};
+topbar=function(){
+  const dot=state.runtime.checked?(state.runtime.ready?'ready':'bad'):'';
+  const hosted=location.pathname.startsWith('/sources/mathhub');
+  const parent=hosted?'<a class="parent-link" href="/">Testamur</a><span class="product-separator">/</span>':'';
+  return `<header class="topbar argument-topbar"><div class="topbar-inner">
+    <div class="product-lockup">${parent}<button class="wordmark" data-view="registry">MathHub</button><span class="product-tag">formal source</span></div>
+    <nav class="topnav"><button class="${state.view==='registry'?'active':''}" data-view="registry">Claims</button><button class="${state.view==='graph'?'active':''}" data-view="graph">Graph</button></nav>
+    <div class="top-spacer"></div>
+    <div class="runtime-pill"><span class="runtime-dot ${dot}"></span><span>${esc(state.runtime.ready?'Lean connected':state.runtime.label)}</span></div>
+    <button class="btn btn-primary btn-small" data-view="submit">New claim</button>
+  </div></header>`;
+};
+
+renderRegistry=function(){
+  const q=state.search.trim().toLowerCase();
+  const f=claims.filter(c=>(state.filter==='all'||c.status===state.filter)&&(!q||[c.id,c.title,c.statement,c.area,c.author,c.formalizer,c.leanName,...(c.tags||[])].join(' ').toLowerCase().includes(q)));
+  const counts={verified:claims.filter(c=>c.status==='verified').length,partial:claims.filter(c=>c.status==='partial').length,open:claims.filter(c=>c.status==='open').length};
+  const areas=[...new Set(claims.map(c=>c.area||'Unclassified'))].sort();
+  return `<main class="shell page argument-home">
+    <section class="argument-hero registry-head">
+      <div>
+        <div class="eyebrow">MathHub registry</div>
+        <h1>Claims. Proofs. Dependencies.</h1>
+        <p>Open any mathematical claim to inspect its exact Lean declaration, available proof routes, verification witness, axioms, and the Claims those proofs actually use.</p>
+      </div>
+      <div class="registry-runtime">
+        <div class="registry-runtime-head"><span class="runtime-dot ${state.runtime.checked?(state.runtime.ready?'ready':'bad'):''}"></span><strong>Verification engine</strong></div>
+        <div class="registry-runtime-value">${esc(state.runtime.ready?'Lean connected':state.runtime.label)}</div>
+        <div class="registry-runtime-note">A verified status is produced by the Lean build pipeline and kept with its environment evidence.</div>
+      </div>
+    </section>
+
+    <div class="argument-search registry-toolbar">
+      <label class="registry-search"><span aria-hidden="true">⌕</span><input id="search" class="search-input" value="${esc(state.search)}" placeholder="Search claims, Lean names, authors, fields…" aria-label="Search MathHub"/></label>
+      <button class="btn btn-primary" data-view="submit">Register claim</button>
+    </div>
+
+    <div class="overview-line">
+      <div class="metric"><div class="metric-value">${claims.length}</div><div class="metric-label">Claims</div></div>
+      <div class="metric"><div class="metric-value">${counts.verified}</div><div class="metric-label">Verified</div></div>
+      <div class="metric"><div class="metric-value">${counts.partial}</div><div class="metric-label">Partial</div></div>
+      <div class="metric"><div class="metric-value">${counts.open}</div><div class="metric-label">Open</div></div>
+    </div>
+
+    <div class="registry-layout">
+      <section class="claim-index registry-main">
+        <div class="section-head registry-list-head"><div><h2 class="section-title">Claims</h2><span class="section-note">${f.length} shown</span></div><div class="filters">${['all','verified','partial','open'].map(x=>`<button class="filter ${state.filter===x?'active':''}" data-filter="${x}">${x==='all'?'All':statusText(x)}</button>`).join('')}</div></div>
+        <div class="argument-claim-list claim-list">${f.map(c=>`<button class="argument-claim-row" data-claim="${c.id}">
+          <div class="argument-claim-main">
+            <div class="claim-row-kicker"><code>${esc(c.id)}</code><span>·</span><span>${esc(c.area||'Unclassified')}</span></div>
+            <h3>${esc(c.title)}</h3>
+            <p>${esc(c.statement)}</p>
+            <div class="claim-row-submeta"><span>Claim: ${esc(c.author||'—')}</span><span>Proof: ${esc(c.formalizer||'—')}</span><code>${esc(c.leanName||'')}</code></div>
+          </div>
+          <div class="claim-row-meta">${badge(c.status)}<span class="claim-open-arrow">→</span></div>
+        </button>`).join('')||'<div class="quiet-empty">No Claims match this search or filter.</div>'}</div>
+      </section>
+
+      <aside class="registry-sidebar">
+        <section class="side-card"><div class="side-card-title">Browse by field</div><div class="area-list">${areas.map(area=>`<span><strong>${esc(area)}</strong><small>${claims.filter(c=>(c.area||'Unclassified')===area).length}</small></span>`).join('')}</div></section>
+        <section class="side-card"><div class="side-card-title">Reading a Claim</div><ol class="verification-steps"><li><strong>Statement</strong><span>The exact formal theorem or lemma MathHub tracks.</span></li><li><strong>Proof route</strong><span>A concrete artifact that establishes the Claim.</span></li><li><strong>Dependencies</strong><span>Other registered Claims used by that proof route.</span></li></ol></section>
+        <section class="side-card side-card-quiet"><strong>Why the badge matters</strong><p>“Verified” means a build witness exists. It does not mean an LLM judged the proof convincing.</p></section>
+      </aside>
+    </div>
+  </main>`;
+};
+
+renderClaim=function(){
+  const c=claims.find(x=>x.id===state.selected)||claims[0];
+  if(!c)return '<main class="shell page">No Claim.</main>';
+  const a=argFor(c),x=a.claim||{},w=workFor(c);
+  return `<main class="shell page argument-claim-page"><div class="argument-reading-column">
+    <div class="breadcrumb"><button data-view="registry">Claims</button><span>/</span><span>${esc(c.area||'Unclassified')}</span><span>/</span><span>${esc(c.id)}</span></div>
+    <header class="argument-claim-header">
+      <div class="claim-title-line"><code>${esc(x.lean_name||c.leanName||'')}</code>${badge(x.status||c.status)}</div>
+      <h1>${esc(x.title||c.title)}</h1>
+      <p>${esc(x.statement||c.statement)}</p>
+      <div class="claim-provenance-inline"><span>Claim by <strong>${esc(x.claim_author||c.author||'—')}</strong></span><span>${a.proofs?.length||0} proof route${a.proofs?.length===1?'':'s'}</span><span>${esc(c.area||'Unclassified')}</span></div>
+    </header>
+    <section class="claim-statement-surface"><div class="surface-label">Formal Claim</div><div class="formal-math">\\[${x.latex||c.latex}\\]</div><pre class="formal-declaration">${esc(x.formal_declaration||c.declaration)}</pre></section>
+    <section class="proof-routes-section"><div class="route-section-head"><div><div class="eyebrow">Proof routes</div><h2>${a.proofs?.length?`${a.proofs.length} proof${a.proofs.length===1?'':'s'}`:'No proof registered yet'}</h2></div></div><div class="proof-routes">${a.proofs?.map(proofHtml).join('')||'<div class="open-claim-note">This Claim is registered without a proof route. A Proof can be attached later.</div>'}</div></section>
+    <section class="argument-neighborhood"><div class="route-section-head"><div><div class="eyebrow">Mathematical neighborhood</div><h2>Dependency projection</h2></div><button class="btn" data-open-neighborhood>Open graph</button></div><div class="neighborhood-grid">${neighbors('Depends on',a.depends_on,'No mapped dependencies.')}${neighbors('Used by',a.used_by,'No current Proof uses this Claim.')}</div></section>
+    <details class="workbench-disclosure"><summary><strong>Proof workbench</strong><span>edit and rebuild this route</span></summary><div class="workbench-body"><div class="code-panel"><div class="code-panel-head"><span class="code-label">Imports</span></div><textarea id="imports-editor" class="code-editor import-editor">${esc(w.imports)}</textarea></div><div class="code-panel"><div class="code-panel-head"><span class="code-label">Formal declaration</span></div><textarea id="decl-editor" class="code-editor declaration-editor">${esc(w.declaration)}</textarea></div><div class="code-panel"><div class="code-panel-head"><span class="code-label">Proof source</span></div><textarea id="proof-editor" class="code-editor">${esc(w.proof)}</textarea></div><div class="workbench-actions"><button class="btn btn-primary" data-lean-action="compile">Compile</button><button class="btn" data-lean-action="audit">Extract dependencies</button>${live(c.id)?`<button class="btn" data-save-proof="${c.id}">Save as new Proof</button>`:''}</div><div id="audit-slot">${auditHtml(c)}</div></div></details>
+    <details class="provenance-disclosure"><summary>Provenance & history</summary><div class="provenance-small"><div><span>Claim author</span><strong>${esc(x.claim_author||c.author||'—')}</strong></div><div><span>Canonical reference</span><code>${esc(c.id)}</code></div>${a.provenance?.claim_version_id?`<div><span>Current revision</span><code>${esc(a.provenance.claim_version_id)}</code></div>`:''}${a.provenance?.verification_build_id?`<div><span>Verification witness</span><code>${esc(a.provenance.verification_build_id)}</code></div>`:''}</div></details>
+  </div></main>`;
+};
+
+renderSubmit=function(){
+  return `<main class="shell page"><div class="argument-reading-column submit-simple">
+    <section class="page-head"><div><div class="eyebrow">New Claim</div><h1 class="page-heading">Register a mathematical statement.</h1><p>A Claim is the durable mathematical object. A Proof is a separate route that may be attached now or later.</p></div></section>
+    <div class="submit-layout"><form id="claim-form" class="argument-submit-form submit-form">
+      <div class="field"><label>Title</label><input id="draft-title" required placeholder="Claim title"/></div>
+      <div class="registry-two-col"><div class="field"><label>Claim author</label><input id="draft-author" placeholder="name / handle"/></div><div class="field"><label>Field</label><input id="draft-area" placeholder="Number theory"/></div></div>
+      <div class="field"><label>Statement</label><textarea id="draft-human" class="human-editor" required placeholder="Human-readable statement"></textarea></div>
+      <div class="field"><label>LaTeX display</label><textarea id="draft-latex" placeholder="Optional display formula"></textarea></div>
+      <div class="field"><label>Formal Lean theorem / lemma</label><textarea id="draft-decl" required placeholder="theorem my_claim : ..."></textarea></div>
+      <div class="field"><label>Imports</label><textarea id="draft-imports">Mathlib</textarea></div>
+      <hr class="submission-separator"/>
+      <div class="eyebrow">Optional Proof</div>
+      <div class="field"><label>Proof author</label><input id="draft-proof-author" placeholder="name / handle"/></div>
+      <div class="field"><label>Proof source</label><textarea id="draft-proof" class="proof-draft" placeholder="by\n  ..."></textarea></div>
+      <div class="workbench-actions"><button class="btn" type="button" id="draft-test">Compile draft</button><button class="btn btn-primary" type="submit">Register Claim</button></div><div id="draft-result" class="draft-result"></div>
+    </form><aside class="submit-side"><section class="side-card"><div class="side-card-title">Before registration</div><ol class="verification-steps"><li><strong>Declare</strong><span>Define the Claim precisely in Lean.</span></li><li><strong>Compile</strong><span>Attach and test an optional Proof route.</span></li><li><strong>Audit</strong><span>Record dependencies and trust evidence.</span></li></ol></section></aside></div>
+  </div></main>`;
+};
 
 function layout(nodes){const cols=Math.max(1,Math.ceil(Math.sqrt(nodes.length||1)));return Object.fromEntries(nodes.map((n,i)=>[n.id,{...n,x:140+(i%cols)*250,y:120+Math.floor(i/cols)*180}]))}
 async function loadGraph(root=''){if(argumentState.graphLoading)return;argumentState.graphLoading=true;if(state.view==='graph')render();try{const p=new URLSearchParams({depth:String(argumentState.depth),limit:'80',relations:'uses'});if(root)p.set('claim',root);argumentState.graph=await apiJson(`/api/graph?${p}`)}finally{argumentState.graphLoading=false;if(state.view==='graph')render()}}
