@@ -159,6 +159,7 @@ function nav() {
         ${item('/projects', 'Projects')}
         ${item('/monitoring', 'Monitoring')}
         ${item('/explore', 'Explore')}
+        <a href="/sources/mathhub/">MathHub</a>
       </nav>
     </div>
     <form class="global-search" data-search-form role="search">
