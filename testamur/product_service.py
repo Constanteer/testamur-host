@@ -95,12 +95,122 @@ class TestamurProductService:
                 statement = json.loads(str(revision.get("statement") or "{}"))
             except json.JSONDecodeError:
                 continue
+            manifest_revision_ids = [
+                str(item)
+                for item in statement.get("manifest_revision_ids") or []
+                if isinstance(item, str) and item
+            ]
+            dependency_revision_ids = [
+                str(item)
+                for item in statement.get("dependency_record_revision_ids") or []
+                if isinstance(item, str) and item
+            ]
+
+            manifests: list[dict[str, Any]] = []
+            for manifest_revision_id in manifest_revision_ids[:200]:
+                manifest_revision = self.records.get_revision(manifest_revision_id)
+                if manifest_revision is None:
+                    continue
+                try:
+                    manifest_statement = json.loads(
+                        str(manifest_revision.get("statement") or "{}")
+                    )
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    manifest_statement.get("schema")
+                    != "testamur.supply-chain.manifest.v1"
+                ):
+                    continue
+                dependency_ids = manifest_statement.get("dependency_revision_ids")
+                manifests.append(
+                    {
+                        "record_id": manifest_revision.get("record_id"),
+                        "record_revision_id": manifest_revision_id,
+                        "recorded_at": manifest_revision.get("recorded_at"),
+                        "path": manifest_statement.get("path"),
+                        "parser": manifest_statement.get("parser"),
+                        "sha256": manifest_statement.get("sha256"),
+                        "dependency_count": len(dependency_ids)
+                        if isinstance(dependency_ids, list)
+                        else 0,
+                    }
+                )
+
+            dependencies: list[dict[str, Any]] = []
+            for dependency_revision_id in dependency_revision_ids[:1000]:
+                dependency_revision = self.records.get_revision(
+                    dependency_revision_id
+                )
+                if dependency_revision is None:
+                    continue
+                try:
+                    dependency_statement = json.loads(
+                        str(dependency_revision.get("statement") or "{}")
+                    )
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    dependency_statement.get("schema")
+                    != "testamur.supply-chain.dependency.v1"
+                ):
+                    continue
+                component_revision = dependency_statement.get(
+                    "component_revision"
+                )
+                if not isinstance(component_revision, dict):
+                    component_revision = {}
+                component = component_revision.get("component")
+                if not isinstance(component, dict):
+                    component = {}
+                observed_in = dependency_statement.get("observed_in")
+                dependencies.append(
+                    {
+                        "record_id": dependency_revision.get("record_id"),
+                        "record_revision_id": dependency_revision_id,
+                        "recorded_at": dependency_revision.get("recorded_at"),
+                        "component_revision_id": component_revision.get(
+                            "component_revision_id"
+                        ),
+                        "component_id": component.get("component_id"),
+                        "ecosystem": component.get("namespace"),
+                        "name": component.get("name"),
+                        "version": component_revision.get("version"),
+                        "digest": component_revision.get("digest"),
+                        "locator": component_revision.get("locator"),
+                        "identity_strength": component_revision.get(
+                            "identity_strength"
+                        ),
+                        "is_exact_revision": bool(
+                            component_revision.get("is_exact_revision")
+                        ),
+                        "direct": dependency_statement.get("direct"),
+                        "observed_in": list(observed_in)
+                        if isinstance(observed_in, list)
+                        else [],
+                    }
+                )
+
+            dependencies.sort(
+                key=lambda item: (
+                    str(item.get("ecosystem") or ""),
+                    str(item.get("name") or ""),
+                    str(item.get("version") or ""),
+                )
+            )
+            manifests.sort(key=lambda item: str(item.get("path") or ""))
             supply_chain = {
                 "scan_record_id": record["record_id"],
                 "scan_revision_id": revision["revision_id"],
                 "recorded_at": revision.get("recorded_at"),
-                "manifest_count": len(statement.get("manifest_revision_ids") or []),
-                "dependency_count": len(statement.get("dependency_record_revision_ids") or []),
+                "manifest_count": len(manifest_revision_ids),
+                "dependency_count": len(dependency_revision_ids),
+                "manifests": manifests,
+                "dependencies": dependencies,
+                "inventory_truncated": (
+                    len(manifest_revision_ids) > len(manifests)
+                    or len(dependency_revision_ids) > len(dependencies)
+                ),
                 "warnings": list(statement.get("warnings") or []),
                 "semantics": dict(statement.get("semantics") or {}),
             }
