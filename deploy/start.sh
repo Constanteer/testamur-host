@@ -6,6 +6,17 @@ MATHHUB_LOG=/data/mathhub/startup.log
 BOOTSTRAP_LOG=/data/mathhub/bootstrap.log
 touch "$MATHHUB_LOG" "$BOOTSTRAP_LOG"
 
+
+if python - <<'PY'
+import os
+raise SystemExit(0 if os.path.ismount("/data") else 1)
+PY
+then
+  printf '[testamur] persistent volume detected at /data\n'
+else
+  printf >&2 '[testamur] WARNING: /data is not a mount point. Accounts, projects and history WILL be lost on redeploy. Mount a persistent Zeabur Volume at /data before using hosted Testamur.\n'
+fi
+
 # Keep Lean and Lake state on the persistent Zeabur volume instead of baking
 # gigabytes of mathlib cache into every OCI image.
 export ELAN_HOME=/data/lean/elan
