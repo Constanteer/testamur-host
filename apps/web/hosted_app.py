@@ -744,6 +744,10 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         if path == "/healthz":
             self._send(_json({"ok": True, "service": "testamur-host"}))
             return
+        if path == "/scources/mathhub" or path.startswith("/scources/mathhub/"):
+            suffix = path[len("/scources/mathhub"):]
+            self._send(_redirect(_MATHHUB_PREFIX + (suffix or "/")))
+            return
         if path == _MATHHUB_PREFIX:
             self._send(_redirect(_MATHHUB_PREFIX + "/"))
             return
