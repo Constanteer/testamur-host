@@ -1281,6 +1281,12 @@ function supplyChainPanel(project, supplyChain) {
       </div>
     </section>
     ${warnings.length ? `<section class="supply-chain-warnings"><div class="section-head compact"><h2>Import warnings</h2><span>${warnings.length}</span></div><div class="warning-list">${warnings.map(item => `<div><span>!</span><p>${esc(item)}</p></div>`).join('')}</div></section>` : ''}
+    <section class="supply-chain-advisories">
+      <div class="section-head compact"><h2>Advisory candidates</h2><span>${supplyChain.advisory_candidate_count || 0}</span></div>
+      <p class="supply-chain-advisory-note">Only exact upstream revision-reference overlap appears here. A candidate still requires an explicit applicability / affectedness assessment.</p>
+      ${(supplyChain.advisory_candidates || []).length ? `<div class="advisory-candidate-list">${supplyChain.advisory_candidates.map(item => `<a data-nav class="advisory-candidate-row" href="${esc(objectPath(item.event_revision_id))}"><span class="alert-mark">!</span><span><strong>${esc(item.external_id || item.event_class || 'Advisory')}</strong><small>${esc(item.provider || 'provider')} · ${esc(String((item.matching_component_revision_ids || []).length))} exact component revision match(es) · needs applicability assessment</small></span><span>${badge('candidate', 'warn')}</span></a>`).join('')}</div>` : '<div class="empty advisory-empty"><strong>No exact advisory candidates</strong><p>No recorded advisory currently has exact upstream revision refs overlapping this project inventory.</p></div>'}
+      ${supplyChain.unresolved_advisory_count ? `<p class="form-help">${esc(String(supplyChain.unresolved_advisory_count))} recorded advisory identity/identities remain unresolved and were intentionally not fuzzy-matched into this project.</p>` : ''}
+    </section>
     <section class="supply-chain-boundary-card">
       <span class="onboarding-kicker">SEMANTIC BOUNDARY</span>
       <h2>What this inventory does—and does not—say.</h2>

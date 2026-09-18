@@ -302,3 +302,27 @@ class TestamurAdvisoryStore:
     def latest_revision(self, event_id: str) -> dict[str, Any] | None:
         values = self.revisions(event_id, limit=1)
         return None if not values else values[0]
+
+    def latest_revisions(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Return the latest immutable revision for each advisory event.
+
+        This is an inventory/read helper only. It does not resolve provider
+        identities, infer applicability, or create affectedness assessments.
+        """
+        bounded = max(1, min(int(limit), 5000))
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT revision_json
+                   FROM testamur_advisory_revisions AS r
+                   WHERE r.rowid = (
+                     SELECT r2.rowid
+                     FROM testamur_advisory_revisions AS r2
+                     WHERE r2.event_id = r.event_id
+                     ORDER BY r2.rowid DESC
+                     LIMIT 1
+                   )
+                   ORDER BY r.rowid DESC
+                   LIMIT ?""",
+                (bounded,),
+            ).fetchall()
+        return [json.loads(str(row["revision_json"])) for row in rows]
