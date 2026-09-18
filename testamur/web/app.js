@@ -374,15 +374,15 @@ function newProjectFields() {
   const owner = workspace?.label || (accountState.mode === 'hosted' ? 'Personal workspace' : 'Local workspace');
   const ownerInitial = String(owner).trim().slice(0, 1).toUpperCase() || 'W';
   const ownerMeta = workspace?.kind === 'organization' ? 'organization' : 'workspace';
-  return \`<form class="new-project-form" data-new-project>
+  return `<form class="new-project-form" data-new-project>
     <section class="project-create-block">
       <div class="project-create-section-head">
         <div><strong>Project</strong><span>Name the container. Monitors are added inside it.</span></div>
       </div>
       <div class="create-project-path">
-        <div class="project-owner-prefix" title="\${esc(ownerMeta)}">
-          <span class="project-owner-avatar" aria-hidden="true">\${esc(ownerInitial)}</span>
-          <strong>\${esc(owner)}</strong>
+        <div class="project-owner-prefix" title="${esc(ownerMeta)}">
+          <span class="project-owner-avatar" aria-hidden="true">${esc(ownerInitial)}</span>
+          <strong>${esc(owner)}</strong>
           <span class="project-path-slash">/</span>
         </div>
         <label class="project-name-field"><span class="sr-only">Project name</span><input name="name" type="text" autocomplete="off" placeholder="project-name" maxlength="100" required /></label>
@@ -429,20 +429,20 @@ function newProjectFields() {
       <a data-nav class="btn btn-secondary" href="/projects">Cancel</a>
       <button class="btn btn-primary" type="submit">Create project</button>
     </div>
-  </form>\`;
+  </form>`;
 }
 
 async function newProjectPage() {
   if (accountState.mode === 'hosted' && !accountState.authenticated) {
-    shell(\`<div class="create-auth-gate">
+    shell(`<div class="create-auth-gate">
       <div class="create-auth-mark" aria-hidden="true">T</div>
       <h1>Sign in to create a project</h1>
       <p>Your session is no longer active. Sign in again before making workspace changes.</p>
       <div class="create-auth-actions"><a data-nav class="btn btn-primary" href="/signin">Sign in</a><a data-nav class="btn btn-secondary" href="/projects">Back to projects</a></div>
-    </div>\`);
+    </div>`);
     return;
   }
-  shell(\`<div class="new-project-page">
+  shell(`<div class="new-project-page">
     <div class="new-project-heading">
       <div>
         <a data-nav class="new-project-back" href="/projects">Projects</a>
@@ -450,8 +450,8 @@ async function newProjectPage() {
         <p>Create the container first; monitors can be attached now or later.</p>
       </div>
     </div>
-    <section class="new-project-card">\${newProjectFields()}</section>
-  </div>\`, true);
+    <section class="new-project-card">${newProjectFields()}</section>
+  </div>`, true);
   bindNavigation();
   const form = document.querySelector('[data-new-project]');
   form?.addEventListener('submit', createProjectFromForm);
