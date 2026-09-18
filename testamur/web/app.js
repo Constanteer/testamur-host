@@ -40,6 +40,10 @@ const pretty = value => JSON.stringify(value, null, 2);
 const objectPath = ref => `/object/${encodeURIComponent(ref)}`;
 const projectPath = ref => `/projects/${encodeURIComponent(ref)}`;
 const params = () => new URLSearchParams(location.search);
+const safeNextPath = value => {
+  const candidate = String(value || '');
+  return candidate.startsWith('/') && !candidate.startsWith('//') ? candidate : '/';
+};
 const cadenceLabel = seconds => ({
   300: 'every 5m',
   900: 'every 15m',
@@ -572,30 +576,32 @@ function hostedAccountUnavailable(title) {
 
 async function signInPage() {
   if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Sign in');
-  if (accountState.authenticated) return navigate('/');
+  const next = params().get('next');
+  if (accountState.authenticated) return navigate(safeNextPath(next));
   shell(`<div class="account-page"><section class="account-card">
     <div class="account-mark">T</div>
     <h1>Sign in to Testamur</h1>
-    <p>Open your projects, monitoring state and recorded activity.</p>
-    <form class="account-form" data-signin>
+    <p>${next ? 'Sign in to continue to the requested Testamur workspace page.' : 'Open your projects, monitoring state and recorded activity.'}</p>
+    <form class="account-form" data-signin data-next="${esc(safeNextPath(next))}">
       <label><span>Username or email</span><input name="identifier" autocomplete="username" required /></label>
       <label><span>Password</span><input name="password" type="password" autocomplete="current-password" required /></label>
       <div data-account-result></div>
       <button class="btn btn-primary account-submit" type="submit">Sign in</button>
     </form>
-    <div class="account-switch">New to Testamur? <a data-nav href="/signup">Create an account</a></div>
+    <div class="account-switch">New to Testamur? <a data-nav href="/signup${next ? `?next=${encodeURIComponent(next)}` : ''}">Create an account</a></div>
   </section></div>`);
   document.querySelector('[data-signin]')?.addEventListener('submit', submitSignIn);
 }
 
 async function signUpPage() {
   if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Create account');
-  if (accountState.authenticated) return navigate('/');
+  const next = params().get('next');
+  if (accountState.authenticated) return navigate(safeNextPath(next));
   shell(`<div class="account-page"><section class="account-card">
     <div class="account-mark">T</div>
     <h1>Create your Testamur account</h1>
     <p>Your hosted workspace is isolated from other users by default.</p>
-    <form class="account-form" data-signup>
+    <form class="account-form" data-signup data-next="${esc(safeNextPath(next))}">
       <label><span>Username</span><input name="username" autocomplete="username" minlength="3" maxlength="39" required /></label>
       <label><span>Email</span><input name="email" type="email" autocomplete="email" required /></label>
       <label><span>Display name</span><input name="display_name" autocomplete="name" maxlength="80" placeholder="Optional" /></label>
@@ -603,7 +609,7 @@ async function signUpPage() {
       <div data-account-result></div>
       <button class="btn btn-primary account-submit" type="submit">Create account</button>
     </form>
-    <div class="account-switch">Already have an account? <a data-nav href="/signin">Sign in</a></div>
+    <div class="account-switch">Already have an account? <a data-nav href="/signin${next ? `?next=${encodeURIComponent(next)}` : ''}">Sign in</a></div>
   </section></div>`);
   document.querySelector('[data-signup]')?.addEventListener('submit', submitSignUp);
 }
@@ -1023,7 +1029,8 @@ async function submitSignIn(event) {
     });
     await loadAccountState();
     cache.dashboard = null;
-    navigate('/');
+    const next = form.dataset.next;
+    navigate(safeNextPath(next));
   } catch (error) {
     accountError(result, error);
     button.disabled = false;
@@ -1046,7 +1053,8 @@ async function submitSignUp(event) {
     });
     await loadAccountState();
     cache.dashboard = null;
-    navigate('/');
+    const next = form.dataset.next;
+    navigate(safeNextPath(next));
   } catch (error) {
     accountError(result, error);
     button.disabled = false;
@@ -1761,6 +1769,20 @@ async function render() {
   const path = location.pathname;
   if (path === '/signin') return signInPage();
   if (path === '/signup') return signUpPage();
+
+  const publicHostedRoute =
+    path === '/learn' ||
+    path === '/docs' ||
+    path === '/quickstart' ||
+    path === '/demo' ||
+    path === '/status' ||
+    path.startsWith('/users/');
+  if (accountState.mode === 'hosted' && !accountState.authenticated && !publicHostedRoute) {
+    const next = `${path}${location.search || ''}`;
+    history.replaceState({}, '', `/signin?next=${encodeURIComponent(next)}`);
+    return signInPage();
+  }
+
   if (path === '/settings/profile') return profilePage();
   if (path === '/settings/security') return securityPage();
   if (path === '/settings/organizations') return organizationsPage();
