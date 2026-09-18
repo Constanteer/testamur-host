@@ -78,15 +78,45 @@ class TestamurProductService:
                     "locator": None if source is None else source.get("initial_locator"),
                 }
             )
+        supply_chain = None
+        for relation in self.records.relations_for(
+            str(project["project_id"]),
+            direction="outgoing",
+            relation_types=["cites"],
+            limit=100,
+        ):
+            revision = self.records.get_revision(str(relation.get("to_ref") or ""))
+            if revision is None:
+                continue
+            record = self.records.get_record(str(revision.get("record_id") or ""))
+            if record is None or record.get("record_kind") != "supply-chain-scan":
+                continue
+            try:
+                statement = json.loads(str(revision.get("statement") or "{}"))
+            except json.JSONDecodeError:
+                continue
+            supply_chain = {
+                "scan_record_id": record["record_id"],
+                "scan_revision_id": revision["revision_id"],
+                "recorded_at": revision.get("recorded_at"),
+                "manifest_count": len(statement.get("manifest_revision_ids") or []),
+                "dependency_count": len(statement.get("dependency_record_revision_ids") or []),
+                "warnings": list(statement.get("warnings") or []),
+                "semantics": dict(statement.get("semantics") or {}),
+            }
+            break
+
         return {
             "ok": True,
             "schema": "testamur.product.project.v2",
             "project": project,
             "monitors": monitors,
+            "supply_chain": supply_chain,
             "semantics": {
                 "project_is_container": True,
                 "monitor_count": len(monitors),
                 "sources_are_monitor_targets": True,
+                "supply_chain_is_manifest_observation": supply_chain is not None,
             },
         }
 
