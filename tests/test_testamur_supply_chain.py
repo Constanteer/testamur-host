@@ -113,3 +113,50 @@ def _dispatch_json(service: TestamurProductService, argv: list[str]) -> str:
     output = io.StringIO()
     assert dispatch(argv, service=service, stdout=output) == 0
     return output.getvalue()
+
+
+def test_project_supply_chain_projects_only_exact_advisory_candidates(tmp_path) -> None:
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "requirements.txt").write_text("requests==2.32.5\n", encoding="utf-8")
+    service = TestamurProductService(tmp_path / "state" / "evidence.db")
+
+    imported = json.loads(
+        _dispatch_json(service, ["project", "import", str(root), "--name", "demo"])
+    )
+    component_revision_id = imported["dependencies"][0]["component_revision_id"]
+
+    exact = service.advisories.record_adverse_event(
+        provider="osv",
+        external_id="OSV-EXACT-1",
+        event_class="VULNERABILITY_ADVISORY",
+        upstream_refs=[component_revision_id],
+        source_refs=["tst:source:osv-exact"],
+        known_affected={"provider_declared": True},
+    )
+    service.advisories.record_adverse_event(
+        provider="osv",
+        external_id="OSV-UNRESOLVED-1",
+        event_class="VULNERABILITY_ADVISORY",
+        upstream_identity={
+            "provider_model": "osv",
+            "affected_packages": [
+                {"package": {"ecosystem": "PyPI", "name": "requests"}, "versions": ["2.32.5"]}
+            ],
+        },
+        source_refs=["tst:source:osv-unresolved"],
+        known_affected={"provider_declared_versions": [{"name": "requests", "version": "2.32.5"}]},
+    )
+
+    project = service.project("demo")
+    supply = project["supply_chain"]
+    assert supply["advisory_candidate_count"] == 1
+    assert supply["unresolved_advisory_count"] == 1
+    candidate = supply["advisory_candidates"][0]
+    assert candidate["event_revision_id"] == exact["event_revision_id"]
+    assert candidate["external_id"] == "OSV-EXACT-1"
+    assert candidate["matching_component_revision_ids"] == [component_revision_id]
+    assert candidate["status"] == "exact_identity_overlap"
+    assert candidate["semantics"]["exact_identity_overlap_is_affectedness_verdict"] is False
+    assert candidate["semantics"]["applicability_assessment_required"] is True
+    assert supply["semantics"]["unresolved_identity_is_not_fuzzy_matched"] is True
