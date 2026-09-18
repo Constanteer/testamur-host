@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .advisory import TestamurAdvisoryStore
 from .contracts import ObjectKind, classify_object_ref, error_envelope, object_envelope
 from .product_extensions import ProductExtensions
 from .project_store import TestamurProjectStore
@@ -31,6 +32,7 @@ class TestamurProductService:
         self.records = TestamurRecordStore(self.database_path)
         self.watches = TestamurWatchStore(self.database_path)
         self.projects = TestamurProjectStore(self.database_path)
+        self.advisories = TestamurAdvisoryStore(self.database_path)
         self.extensions = extensions or ProductExtensions.empty()
 
     @classmethod
@@ -95,14 +97,86 @@ class TestamurProductService:
                 statement = json.loads(str(revision.get("statement") or "{}"))
             except json.JSONDecodeError:
                 continue
+            dependency_revision_ids = list(
+                statement.get("dependency_record_revision_ids") or []
+            )
+            component_revision_ids: set[str] = set()
+            for dependency_revision_id in dependency_revision_ids:
+                dependency_revision = self.records.get_revision(
+                    str(dependency_revision_id)
+                )
+                if dependency_revision is None:
+                    continue
+                try:
+                    dependency_statement = json.loads(
+                        str(dependency_revision.get("statement") or "{}")
+                    )
+                except json.JSONDecodeError:
+                    continue
+                component_revision = dependency_statement.get("component_revision")
+                if not isinstance(component_revision, dict):
+                    continue
+                component_revision_id = str(
+                    component_revision.get("revision_id") or ""
+                ).strip()
+                if component_revision_id:
+                    component_revision_ids.add(component_revision_id)
+
+            advisory_candidates: list[dict[str, Any]] = []
+            unresolved_advisory_count = 0
+            for advisory_revision in self.advisories.latest_revisions(limit=1000):
+                upstream_refs = {
+                    str(value)
+                    for value in advisory_revision.get("upstream_refs") or []
+                    if str(value)
+                }
+                if not upstream_refs:
+                    if advisory_revision.get("upstream_identity"):
+                        unresolved_advisory_count += 1
+                    continue
+                matched = sorted(component_revision_ids & upstream_refs)
+                if not matched:
+                    continue
+                event = self.advisories.get_event(
+                    str(advisory_revision.get("event_id") or "")
+                ) or {}
+                advisory_candidates.append(
+                    {
+                        "event_id": advisory_revision.get("event_id"),
+                        "event_revision_id": advisory_revision.get(
+                            "event_revision_id"
+                        ),
+                        "provider": event.get("provider"),
+                        "external_id": event.get("external_id"),
+                        "event_class": advisory_revision.get("event_class"),
+                        "issued_at": advisory_revision.get("issued_at"),
+                        "severity": dict(advisory_revision.get("severity") or {}),
+                        "matching_component_revision_ids": matched,
+                        "status": "exact_identity_overlap",
+                        "semantics": {
+                            "exact_identity_overlap_is_affectedness_verdict": False,
+                            "applicability_assessment_required": True,
+                        },
+                    }
+                )
+
             supply_chain = {
                 "scan_record_id": record["record_id"],
                 "scan_revision_id": revision["revision_id"],
                 "recorded_at": revision.get("recorded_at"),
                 "manifest_count": len(statement.get("manifest_revision_ids") or []),
-                "dependency_count": len(statement.get("dependency_record_revision_ids") or []),
+                "dependency_count": len(dependency_revision_ids),
+                "component_revision_count": len(component_revision_ids),
                 "warnings": list(statement.get("warnings") or []),
-                "semantics": dict(statement.get("semantics") or {}),
+                "advisory_candidates": advisory_candidates,
+                "advisory_candidate_count": len(advisory_candidates),
+                "unresolved_advisory_count": unresolved_advisory_count,
+                "semantics": {
+                    **dict(statement.get("semantics") or {}),
+                    "advisory_candidate_requires_exact_upstream_ref_overlap": True,
+                    "advisory_candidate_is_not_affectedness_verdict": True,
+                    "unresolved_identity_is_not_fuzzy_matched": True,
+                },
             }
             break
 
