@@ -103,6 +103,24 @@ def test_project_import_is_durable_and_idempotent(tmp_path) -> None:
     assert dependency["identity_strength"] == "declared-version"
     assert dependency["is_exact_revision"] is False
 
+    service.advisories.record_adverse_event(
+        provider="example-security",
+        external_id="ADV-2026-0001",
+        event_class="VULNERABILITY_ADVISORY",
+        upstream_refs=[dependency["component_revision_id"]],
+        source_refs=["tst:source-revision:example-advisory"],
+        severity={"label": "high"},
+    )
+    refreshed = service.project("demo")["supply_chain"]
+    assert refreshed["advisory_identity_match_count"] == 1
+    advisory_match = refreshed["advisory_identity_matches"][0]
+    assert advisory_match["external_id"] == "ADV-2026-0001"
+    assert advisory_match["matched_component_revision_ids"] == [
+        dependency["component_revision_id"]
+    ]
+    assert advisory_match["semantics"]["exact_identity_match_only"] is True
+    assert advisory_match["semantics"]["identity_match_implies_affectedness"] is False
+
 
 def test_manifest_change_creates_new_scan_revision(tmp_path) -> None:
     root = tmp_path / "demo"
