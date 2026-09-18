@@ -20,7 +20,12 @@ bootstrap_mathhub() {
   {
     printf '\n[%s] hydrating pinned Lean/mathlib environment\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     cd /app/mathhub_app || exit 1
-    if lake update && lake exe cache get; then
+    toolchain="$(tr -d '\r\n' < lean-toolchain)"
+    printf '[%s] installing pinned Lean toolchain: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$toolchain"
+    if elan toolchain install "$toolchain" \
+      && elan default "$toolchain" \
+      && lake update \
+      && lake exe cache get; then
       touch /data/mathhub/.lean-ready
       printf '[%s] Lean/mathlib environment ready\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     else
