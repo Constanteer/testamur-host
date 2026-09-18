@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .advisory import TestamurAdvisoryStore
 from .contracts import ObjectKind, classify_object_ref, error_envelope, object_envelope
 from .product_extensions import ProductExtensions
 from .project_store import TestamurProjectStore
@@ -31,6 +32,7 @@ class TestamurProductService:
         self.records = TestamurRecordStore(self.database_path)
         self.watches = TestamurWatchStore(self.database_path)
         self.projects = TestamurProjectStore(self.database_path)
+        self.advisories = TestamurAdvisoryStore(self.database_path)
         self.extensions = extensions or ProductExtensions.empty()
 
     @classmethod
@@ -199,6 +201,54 @@ class TestamurProductService:
                 )
             )
             manifests.sort(key=lambda item: str(item.get("path") or ""))
+
+            component_revision_ids = {
+                str(item["component_revision_id"])
+                for item in dependencies
+                if item.get("component_revision_id")
+            }
+            advisory_identity_matches: list[dict[str, Any]] = []
+            if component_revision_ids:
+                for advisory_revision in self.advisories.latest_revisions(limit=1000):
+                    upstream_refs = {
+                        str(item)
+                        for item in advisory_revision.get("upstream_refs") or []
+                        if isinstance(item, str) and item
+                    }
+                    matched = sorted(component_revision_ids & upstream_refs)
+                    if not matched:
+                        continue
+                    event = self.advisories.get_event(
+                        str(advisory_revision.get("event_id") or "")
+                    ) or {}
+                    advisory_identity_matches.append(
+                        {
+                            "event_id": advisory_revision.get("event_id"),
+                            "event_revision_id": advisory_revision.get(
+                                "event_revision_id"
+                            ),
+                            "provider": event.get("provider"),
+                            "external_id": event.get("external_id"),
+                            "event_class": advisory_revision.get("event_class"),
+                            "issued_at": advisory_revision.get("issued_at"),
+                            "severity": dict(advisory_revision.get("severity") or {}),
+                            "source_refs": list(
+                                advisory_revision.get("source_refs") or []
+                            ),
+                            "matched_component_revision_ids": matched,
+                            "semantics": {
+                                "exact_identity_match_only": True,
+                                "identity_match_implies_affectedness": False,
+                                "applicability_requires_separate_assessment": True,
+                            },
+                        }
+                    )
+            advisory_identity_matches.sort(
+                key=lambda item: (
+                    str(item.get("provider") or ""),
+                    str(item.get("external_id") or ""),
+                )
+            )
             supply_chain = {
                 "scan_record_id": record["record_id"],
                 "scan_revision_id": revision["revision_id"],
@@ -207,6 +257,8 @@ class TestamurProductService:
                 "dependency_count": len(dependency_revision_ids),
                 "manifests": manifests,
                 "dependencies": dependencies,
+                "advisory_identity_matches": advisory_identity_matches,
+                "advisory_identity_match_count": len(advisory_identity_matches),
                 "inventory_truncated": (
                     len(manifest_revision_ids) > len(manifests)
                     or len(dependency_revision_ids) > len(dependencies)
