@@ -819,3 +819,23 @@ body.modal-open { overflow: hidden; }
 .advisory-candidate-row strong, .advisory-candidate-row small { display: block; }
 .advisory-candidate-row small { margin-top: 2px; color: var(--muted); font-size: 10px; }
 .advisory-empty { margin: 12px; }
+
+
+/* Explicit revalidation workflow */
+.revalidation-layout { display: grid; gap: 16px; }
+.revalidation-hero, .revalidation-steps, .revalidation-boundary {
+  border: 1px solid var(--line); border-radius: 8px; background: var(--canvas);
+}
+.revalidation-hero { padding: 20px; }
+.revalidation-hero h2 { margin: 5px 0 6px; font-size: 18px; }
+.revalidation-hero p { max-width: 860px; margin: 0; color: var(--muted); }
+.revalidation-steps { overflow: hidden; }
+.revalidation-steps article { display: grid; grid-template-columns: 30px minmax(0,1fr); gap: 12px; padding: 15px 18px; }
+.revalidation-steps article + article { border-top: 1px solid var(--line); }
+.revalidation-steps article > span { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--soft); color: var(--muted); font-size: 10px; font-weight: 700; }
+.revalidation-steps strong { display: block; font-size: 12px; }
+.revalidation-steps p { margin: 3px 0 5px; color: var(--muted); font-size: 11px; }
+.revalidation-steps a { font-size: 11px; font-weight: 600; }
+.revalidation-boundary { padding: 14px 16px; background: #f6fbff; border-color: #b6e3ff; }
+.revalidation-boundary strong { display: block; font-size: 12px; }
+.revalidation-boundary p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
