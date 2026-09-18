@@ -1600,6 +1600,29 @@ async function impactPanel(ref) {
   }
 }
 
+function revalidationPanel(ref, identity = {}) {
+  const comparable = ['source', 'record'].includes(identity.kind);
+  return `<div class="revalidation-layout">
+    <section class="revalidation-hero">
+      <span class="onboarding-kicker">EXPLICIT REVIEW</span>
+      <h2>Revalidation is where judgment belongs.</h2>
+      <p>Testamur can preserve the old basis, detect mechanical change, and narrow downstream review through recorded reliance/lineage. It does not turn those signals into an automatic validity, truth, or affectedness verdict.</p>
+      <div class="quickstart-rules"><span>changed ≠ invalid</span><span>stale ≠ false</span><span>impact ≠ failure</span></div>
+    </section>
+    <section class="revalidation-steps">
+      <article><span>1</span><div><strong>Inspect the recorded history</strong><p>Confirm which revision your earlier work saw and what newer revision Testamur observed.</p><a data-nav href="${esc(objectPath(ref))}?tab=history">Open history →</a></div></article>
+      <article><span>2</span><div><strong>Compare the basis mechanically</strong><p>${comparable ? 'Compare the recorded versions before interpreting what the difference means.' : 'This object family has no canonical mechanical compare surface; inspect its recorded fields/history instead.'}</p>${comparable ? `<a data-nav href="${esc(objectPath(ref))}?tab=compare">Open compare →</a>` : ''}</div></article>
+      <article><span>3</span><div><strong>Narrow the downstream review set</strong><p>Use Impact only where canonical reliance/lineage evidence exists. A projected object is a review candidate, not automatically wrong.</p><a data-nav href="${esc(objectPath(ref))}?tab=impact">Open impact →</a></div></article>
+      <article><span>4</span><div><strong>Review, rerun, or reconsider</strong><p>Perform the domain-specific work: rerun tests, re-read the changed requirement, rebuild an artifact, or otherwise reassess the downstream result.</p></div></article>
+      <article><span>5</span><div><strong>Record the new evidence explicitly</strong><p>Attach the new result/assessment to the new basis using the canonical Testamur workflow you already use. This page does not manufacture an assessment simply because change or impact was observed.</p></div></article>
+    </section>
+    <section class="revalidation-boundary">
+      <strong>Semantic boundary</strong>
+      <p><code>recorded != verified</code> · <code>changed != invalid</code> · <code>stale != false</code>. Revalidation is an explicit act whose evidence should remain inspectable.</p>
+    </section>
+  </div>`;
+}
+
 function timePanel(ref) {
   return `<section class="time-query-card"><div><h2>Time</h2><p>Ask what this environment had recorded at a specific time.</p></div><form data-time-form data-ref="${esc(ref)}"><label><span>Perspective</span><select name="mode"><option>KNOWN_AT</option><option>AVAILABLE_BY</option><option>EFFECTIVE_AT</option></select></label><label class="grow"><span>Timestamp</span><input name="at" type="datetime-local" required /></label><button class="btn btn-primary">Query</button></form><div data-time-result></div></section>`;
 }
@@ -1612,7 +1635,7 @@ async function objectPage(ref, forcedTab = null) {
     const data = dto.data || {};
     const isSource = identity.kind === 'source';
     const comparable = ['source', 'record'].includes(identity.kind);
-    const tabs = ['overview', 'history', ...(comparable ? ['compare'] : []), 'impact', 'time', 'raw'];
+    const tabs = ['overview', 'history', ...(comparable ? ['compare'] : []), 'impact', ...(comparable ? ['revalidate'] : []), 'time', 'raw'];
     const requested = forcedTab || params().get('tab') || 'overview';
     const selected = tabs.includes(requested) ? requested : 'overview';
     let panel;
@@ -1620,6 +1643,7 @@ async function objectPage(ref, forcedTab = null) {
     else if (selected === 'history') panel = await historyPanel(ref);
     else if (selected === 'compare') panel = await comparePanel(ref);
     else if (selected === 'impact') panel = await impactPanel(ref);
+    else if (selected === 'revalidate') panel = revalidationPanel(ref, identity);
     else if (selected === 'time') panel = timePanel(ref);
     else panel = `<div class="raw-block"><div class="raw-head"><h2>Raw canonical envelope</h2><span>Advanced</span></div><pre>${esc(pretty(dto))}</pre></div>`;
 
