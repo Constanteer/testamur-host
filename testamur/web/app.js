@@ -1220,23 +1220,77 @@ async function sourceOverview(ref, source) {
   </div>`;
 }
 
-function projectOverview(project, monitors) {
+function projectOverview(project, monitors, supplyChain = null) {
   const active = monitors.filter(monitor => monitor.latest_state && monitor.latest_state !== 'not evaluated').length;
   const attention = monitors.filter(monitor => ['changed', 'unavailable'].includes(monitor.latest_state)).length;
+  const supplySummary = supplyChain
+    ? `<div class="field"><span>Supply chain</span><div><strong>${esc(String(supplyChain.dependency_count || 0))}</strong> dependencies from ${esc(String(supplyChain.manifest_count || 0))} manifest(s) · <a data-nav href="${esc(projectPath(project.slug))}?tab=supply-chain">Open inventory</a></div></div>`
+    : `<div class="field"><span>Supply chain</span><div><span class="muted">Not imported yet</span> · <a data-nav href="${esc(projectPath(project.slug))}?tab=supply-chain">Set up</a></div></div>`;
   return `<div class="monitoring-layout">
     <section class="object-overview-grid">
       <div class="object-main-card"><h2>Project overview</h2><div class="fields">
         <div class="field"><span>Description</span><div>${esc(project.description || 'No description')}</div></div>
         <div class="field"><span>Visibility</span><div>${badge(project.visibility || 'private')}</div></div>
         <div class="field"><span>Monitors</span><div>${monitors.length}</div></div>
+        ${supplySummary}
         <div class="field"><span>Active</span><div>${active}</div></div>
         <div class="field"><span>Needs attention</span><div>${attention}</div></div>
         <div class="field"><span>Created</span><div>${esc(ago(project.created_at))}</div></div>
       </div></div>
-      <aside class="object-about"><h3>About</h3><p>A project groups related monitors. Sources are monitor targets, not project identity.</p><div class="about-row"><span>Slug</span><strong>${esc(project.slug)}</strong></div><div class="about-row"><span>Monitors</span><strong>${monitors.length}</strong></div><div class="about-row"><span>Next</span><a data-nav href="${esc(projectPath(project.slug))}?tab=monitors">${monitors.length ? 'Manage monitors' : 'Add first monitor'}</a></div></aside>
+      <aside class="object-about"><h3>About</h3><p>A project groups related monitors and recorded dependency evidence. Sources are monitor targets, not project identity.</p><div class="about-row"><span>Slug</span><strong>${esc(project.slug)}</strong></div><div class="about-row"><span>Monitors</span><strong>${monitors.length}</strong></div><div class="about-row"><span>Dependencies</span><strong>${esc(String(supplyChain?.dependency_count || 0))}</strong></div><div class="about-row"><span>Next</span><a data-nav href="${esc(projectPath(project.slug))}?tab=${supplyChain ? 'supply-chain' : 'monitors'}">${supplyChain ? 'Inspect supply chain' : monitors.length ? 'Manage monitors' : 'Add first monitor'}</a></div></aside>
     </section>
     <section><div class="section-head"><h2>Monitors</h2><a data-nav href="${esc(projectPath(project.slug))}?tab=monitors">View all</a></div>
       <div class="right-card">${monitors.length ? `<div class="monitor-list">${monitors.slice(0, 6).map(monitor => `<a data-nav class="monitor-row" href="${esc(objectPath(monitor.watch_id))}"><span class="status-dot status-${tone(monitor.latest_state)}"></span><span><strong>${esc(monitor.label || domain(monitor.locator || monitor.source_id))}</strong><small>${esc(short(monitor.locator || monitor.source_id, 80))} · ${esc(monitor.latest_state || 'not evaluated')}</small></span></a>`).join('')}</div>` : `<div class="empty-project-guide"><span class="onboarding-kicker">NEXT STEP</span><h3>This project is not watching anything yet.</h3><p>Add something this work depends on. A monitor gives Testamur a stable target to observe over time.</p><div class="monitor-examples"><span><strong>Documentation URL</strong><code>https://example.com/api</code></span><span><strong>GitHub repository</strong><code>Constanteer/slate-lang</code></span><span><strong>Agent integration</strong><small>Capture sources used by Codex or another MCP host.</small></span></div><a data-nav class="btn btn-primary" href="${esc(projectPath(project.slug))}?tab=monitors">Add first monitor</a></div>`}</div>
+    </section>
+  </div>`;
+}
+
+function supplyChainPanel(project, supplyChain) {
+  if (!supplyChain) {
+    return `<div class="supply-chain-layout">
+      <section class="supply-chain-empty">
+        <span class="onboarding-kicker">SOFTWARE SUPPLY CHAIN</span>
+        <h2>Import what this repository declares it depends on.</h2>
+        <p>Run the import from the repository root. Testamur hashes the manifest/lockfile bytes and records canonical package/component revision observations without pretending that a declaration proves runtime use.</p>
+        <div class="supply-chain-command"><code>testamur project import . --name ${esc(project.name || project.slug || 'project')}</code></div>
+        <div class="supply-chain-boundaries">
+          <code>manifest declaration != runtime use</code>
+          <code>name/version match != affectedness</code>
+          <code>changed != invalid</code>
+        </div>
+        <p class="form-help">Recognized today: requirements*.txt, uv.lock, poetry.lock, package-lock.json / npm-shrinkwrap.json, Cargo.lock and go.sum.</p>
+      </section>
+    </div>`;
+  }
+  const warnings = supplyChain.warnings || [];
+  return `<div class="supply-chain-layout">
+    <section class="supply-chain-summary">
+      <div class="supply-chain-heading">
+        <div><span class="onboarding-kicker">RECORDED INVENTORY</span><h2>Declared software dependencies</h2><p>Derived from exact local manifest/lockfile observations. This is provenance evidence, not a vulnerability verdict or proof of runtime loading.</p></div>
+        ${badge(warnings.length ? `${warnings.length} warning${warnings.length === 1 ? '' : 's'}` : 'recorded', warnings.length ? 'warn' : 'good')}
+      </div>
+      <div class="supply-chain-stats">
+        <div><strong>${esc(String(supplyChain.manifest_count || 0))}</strong><span>manifests</span></div>
+        <div><strong>${esc(String(supplyChain.dependency_count || 0))}</strong><span>dependencies</span></div>
+        <div><strong>${esc(String(warnings.length))}</strong><span>warnings</span></div>
+      </div>
+      <div class="fields supply-chain-meta">
+        <div class="field"><span>Latest scan</span><div>${esc(ago(supplyChain.recorded_at))}</div></div>
+        <div class="field"><span>Scan revision</span><div><a data-nav class="mono ref-link" href="${esc(objectPath(supplyChain.scan_revision_id))}">${esc(short(supplyChain.scan_revision_id, 72))}</a></div></div>
+        <div class="field"><span>Persistent scan</span><div><a data-nav class="mono ref-link" href="${esc(objectPath(supplyChain.scan_record_id))}">${esc(short(supplyChain.scan_record_id, 72))}</a></div></div>
+      </div>
+    </section>
+    ${warnings.length ? `<section class="supply-chain-warnings"><div class="section-head compact"><h2>Import warnings</h2><span>${warnings.length}</span></div><div class="warning-list">${warnings.map(item => `<div><span>!</span><p>${esc(item)}</p></div>`).join('')}</div></section>` : ''}
+    <section class="supply-chain-boundary-card">
+      <span class="onboarding-kicker">SEMANTIC BOUNDARY</span>
+      <h2>What this inventory does—and does not—say.</h2>
+      <div class="supply-chain-boundaries">
+        <code>manifest declaration != runtime use</code>
+        <code>declared version != exact content unless digest/locator evidence supports it</code>
+        <code>advisory identity match != affectedness verdict</code>
+        <code>changed != invalid</code>
+      </div>
+      <p>Advisories can be resolved against these canonical component identities later, but affectedness remains a separate recorded assessment rather than a generic trust score.</p>
     </section>
   </div>`;
 }
@@ -1287,14 +1341,19 @@ async function projectPage(ref) {
     const response = await api('/v1/project', { ref });
     const project = response.project || {};
     const monitors = response.monitors || [];
+    const supplyChain = response.supply_chain || null;
     const requested = params().get('tab') || 'overview';
-    const selected = ['overview', 'monitors'].includes(requested) ? requested : 'overview';
-    const panel = selected === 'monitors' ? await projectMonitorsPanel(project, monitors) : projectOverview(project, monitors);
+    const selected = ['overview', 'monitors', 'supply-chain'].includes(requested) ? requested : 'overview';
+    const panel = selected === 'monitors'
+      ? await projectMonitorsPanel(project, monitors)
+      : selected === 'supply-chain'
+        ? supplyChainPanel(project, supplyChain)
+        : projectOverview(project, monitors, supplyChain);
     shell(`<section class="object-header">
       <div class="breadcrumbs"><a data-nav href="/projects">Projects</a><span>/</span><span>${esc(project.slug || ref)}</span></div>
       <div class="object-title-row"><div><h1>${esc(project.name || project.slug || 'Project')}</h1><p>${esc(project.description || 'No description')}</p></div>${badge(project.visibility || 'private')}</div>
     </section>
-    <nav class="object-tabs"><a data-nav class="${selected === 'overview' ? 'active' : ''}" href="${esc(projectPath(project.slug || ref))}?tab=overview">Overview</a><a data-nav class="${selected === 'monitors' ? 'active' : ''}" href="${esc(projectPath(project.slug || ref))}?tab=monitors">Monitors <span class="tab-count">${monitors.length}</span></a></nav>
+    <nav class="object-tabs"><a data-nav class="${selected === 'overview' ? 'active' : ''}" href="${esc(projectPath(project.slug || ref))}?tab=overview">Overview</a><a data-nav class="${selected === 'monitors' ? 'active' : ''}" href="${esc(projectPath(project.slug || ref))}?tab=monitors">Monitors <span class="tab-count">${monitors.length}</span></a><a data-nav class="${selected === 'supply-chain' ? 'active' : ''}" href="${esc(projectPath(project.slug || ref))}?tab=supply-chain">Supply chain <span class="tab-count">${supplyChain?.dependency_count || 0}</span></a></nav>
     <section id="object-panel" class="object-panel">${panel}</section>`, true);
     bindNavigation();
     const form = document.querySelector('[data-add-project-monitor]');
