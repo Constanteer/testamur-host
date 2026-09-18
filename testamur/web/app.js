@@ -370,7 +370,7 @@ async function homePage() {
       </div>
     </section>`;
 
-    document.querySelector('.dashboard-center').innerHTML = `${onboardingCard(data)}<div class="feed-header">
+    document.querySelector('.dashboard-center').innerHTML = `${onboardingCard(data)}${changedGuidance(alerts, watches, projectByRef)}<div class="feed-header">
       <div><h1>Home</h1><p>What changed across your Testamur workspace.</p></div>
       <button class="btn btn-secondary" data-refresh>Refresh</button>
     </div>
@@ -1416,6 +1416,79 @@ async function addProjectMonitorFromForm(event) {
   }
 }
 
+function historyItemRef(item = {}) {
+  return item.snapshot_id || item.revision_id || item.record_revision_id || item.watch_revision_id || '';
+}
+
+function historyItemLabel(item = {}, index = 0) {
+  const ref = historyItemRef(item);
+  const ordinal = item.ordinal ? `Revision ${item.ordinal}` : '';
+  const at = item.observed_at || item.recorded_at || item.created_at;
+  return [ordinal || short(ref, 18) || `Version ${index + 1}`, at ? new Date(at).toLocaleString() : ''].filter(Boolean).join(' · ');
+}
+
+function comparisonFacts(comparison = {}) {
+  const ignored = new Set(['semantics', 'source_id', 'record_id']);
+  return Object.entries(comparison)
+    .filter(([key, value]) => !ignored.has(key) && typeof value !== 'object')
+    .map(([key, value]) => {
+      const label = key.replaceAll('_', ' ');
+      const rendered = typeof value === 'boolean' ? (value ? 'Yes' : 'No') : value === null ? 'Not assessable' : String(value);
+      const factTone = (key.endsWith('_changed') && value === true) ? 'warn' : (key === 'same_revision' && value === true) ? 'good' : 'neutral';
+      return `<div class="compare-fact"><span>${esc(label)}</span><strong class="compare-fact-${factTone}">${esc(rendered)}</strong></div>`;
+    }).join('');
+}
+
+async function comparePanel(ref) {
+  try {
+    const history = await api('/v1/history', { ref, limit: 100 });
+    const items = (history.items || []).filter(item => historyItemRef(item));
+    if (items.length < 2) {
+      return empty('Nothing to compare yet', 'Testamur needs at least two recorded versions of this object before it can make a mechanical comparison.');
+    }
+    const requestedLeft = params().get('left');
+    const requestedRight = params().get('right');
+    const defaultRight = historyItemRef(items[0]);
+    const defaultLeft = historyItemRef(items[1]);
+    const knownRefs = new Set(items.map(historyItemRef));
+    const left = knownRefs.has(requestedLeft) ? requestedLeft : defaultLeft;
+    const right = knownRefs.has(requestedRight) ? requestedRight : defaultRight;
+    const result = await api('/v1/compare', { left, right });
+    const comparison = result.comparison || {};
+    const changedFields = Object.entries(comparison).filter(([key]) => key.endsWith('_changed'));
+    const changedKeys = changedFields.filter(([, value]) => value === true);
+    const contentChanged = comparison.content_changed;
+    const summary = contentChanged === true || changedKeys.length
+      ? { text: 'Mechanical difference recorded', tone: 'warn' }
+      : contentChanged === false || (changedFields.length > 0 && changedKeys.length === 0)
+        ? { text: 'No mechanical difference recorded', tone: 'good' }
+        : { text: 'Difference not fully assessable', tone: 'neutral' };
+    const options = items.map((item, index) => {
+      const value = historyItemRef(item);
+      return `<option value="${esc(value)}">${esc(historyItemLabel(item, index))}</option>`;
+    }).join('');
+    return `<div class="compare-layout">
+      <section class="compare-toolbar">
+        <div><h2>Compare recorded versions</h2><p>Mechanical comparison only. Testamur does not infer semantic equivalence, truth, validity, or downstream breakage from this result.</p></div>
+        <form data-compare-form data-ref="${esc(ref)}">
+          <label><span>From</span><select name="left">${options}</select></label>
+          <span class="compare-arrow">→</span>
+          <label><span>To</span><select name="right">${options}</select></label>
+          <button class="btn btn-secondary" type="submit">Compare</button>
+        </form>
+      </section>
+      <section class="compare-result">
+        <div class="compare-result-head"><div><span class="onboarding-kicker">MECHANICAL RESULT</span><h2>${esc(summary.text)}</h2></div>${badge(summary.text, summary.tone)}</div>
+        <div class="compare-facts">${comparisonFacts(comparison)}</div>
+        <div class="compare-boundary"><strong>What this means</strong><p>These fields describe identity-level or stored-field differences between two recorded versions.</p><strong>What it does not mean</strong><p>A change does not automatically make downstream work invalid. Use Impact / reliance evidence to decide what deserves review.</p></div>
+      </section>
+    </div>`;
+  } catch (error) {
+    if ([400, 404, 422].includes(error.status)) return empty('Comparison unavailable', error.message || 'These versions cannot be compared.');
+    throw error;
+  }
+}
+
 async function historyPanel(ref) {
   try {
     const history = await api('/v1/history', { ref, limit: 100 });
@@ -1459,12 +1532,14 @@ async function objectPage(ref, forcedTab = null) {
     const identity = dto.object || {};
     const data = dto.data || {};
     const isSource = identity.kind === 'source';
-    const tabs = ['overview', 'history', 'impact', 'time', 'raw'];
+    const comparable = ['source', 'record'].includes(identity.kind);
+    const tabs = ['overview', 'history', ...(comparable ? ['compare'] : []), 'impact', 'time', 'raw'];
     const requested = forcedTab || params().get('tab') || 'overview';
     const selected = tabs.includes(requested) ? requested : 'overview';
     let panel;
     if (selected === 'overview') panel = isSource ? await sourceOverview(ref, data) : genericOverview(identity, data);
     else if (selected === 'history') panel = await historyPanel(ref);
+    else if (selected === 'compare') panel = await comparePanel(ref);
     else if (selected === 'impact') panel = await impactPanel(ref);
     else if (selected === 'time') panel = timePanel(ref);
     else panel = `<div class="raw-block"><div class="raw-head"><h2>Raw canonical envelope</h2><span>Advanced</span></div><pre>${esc(pretty(dto))}</pre></div>`;
@@ -1479,6 +1554,23 @@ async function objectPage(ref, forcedTab = null) {
     <section id="object-panel" class="object-panel">${panel}</section>`, true);
     bindNavigation();
     document.querySelector('[data-time-form]')?.addEventListener('submit', runTimeQuery);
+    const compareForm = document.querySelector('[data-compare-form]');
+    if (compareForm) {
+      const requestedLeft = params().get('left');
+      const requestedRight = params().get('right');
+      if (requestedLeft && [...compareForm.elements.left.options].some(option => option.value === requestedLeft)) compareForm.elements.left.value = requestedLeft;
+      else if (compareForm.elements.left.options.length > 1) compareForm.elements.left.selectedIndex = 1;
+      if (requestedRight && [...compareForm.elements.right.options].some(option => option.value === requestedRight)) compareForm.elements.right.value = requestedRight;
+      else compareForm.elements.right.selectedIndex = 0;
+      compareForm.addEventListener('submit', event => {
+        event.preventDefault();
+        const next = new URL(objectPath(compareForm.dataset.ref), location.origin);
+        next.searchParams.set('tab', 'compare');
+        next.searchParams.set('left', compareForm.elements.left.value);
+        next.searchParams.set('right', compareForm.elements.right.value);
+        navigate(next.pathname + next.search);
+      });
+    }
   } catch (error) {
     errorPage(error, 'Object unavailable');
   }
