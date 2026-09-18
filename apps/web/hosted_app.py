@@ -742,7 +742,18 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         path = unquote(split.path or "/")
         name = path.lstrip("/")
         if path == "/healthz":
-            self._send(_json({"ok": True, "service": "testamur-host"}))
+            mathhub_ok = False
+            mathhub_error = None
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:8001/api/runtime", timeout=1.5) as response:
+                    mathhub_ok = 200 <= int(getattr(response, "status", response.getcode())) < 500
+            except Exception as exc:
+                mathhub_error = str(getattr(exc, "reason", exc))
+            self._send(_json({
+                "ok": True,
+                "service": "testamur-host",
+                "mathhub": {"ok": mathhub_ok, "error": mathhub_error},
+            }))
             return
         if path == "/scources/mathhub" or path.startswith("/scources/mathhub/"):
             suffix = path[len("/scources/mathhub"):]
