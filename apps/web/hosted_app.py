@@ -790,10 +790,9 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         self._send(dispatch_web_get(service, self.path))
 
     def do_POST(self) -> None:
-        bind_host = str(self.server.server_address[0])
-        if not _host_allowed(self.headers.get("Host"), bind_host):
-            self._send(_error("host_not_allowed", "request host is not allowed", status=403))
-            return
+        # Hosted deployments sit behind Zeabur/Cloudflare reverse proxies. Do not
+        # reject writes based on the forwarded public Host header here; account
+        # and workspace authorization below remains authoritative.
         path = urlsplit(self.path).path.rstrip("/") or "/"
         if path == _MATHHUB_PREFIX or path.startswith(_MATHHUB_PREFIX + "/"):
             self._send(self._proxy_mathhub())
