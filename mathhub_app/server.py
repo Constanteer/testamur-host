@@ -36,7 +36,9 @@ IMPORT_RE = re.compile(r"^[A-Za-z0-9_.]+$")
 DECL_NAME_RE = re.compile(r"\b(?:theorem|lemma|def)\s+([^\s:(]+)")
 LEAN_NAME_RE = re.compile(r"^[^\s]+$")
 
-DATA_ROOT = Path(os.environ.get("MATHHUB_DATA_DIR", str(ROOT / ".mathub"))).expanduser().resolve()\nDB_PATH = DATA_ROOT / "registry.sqlite3"
+DATA_ROOT = Path(os.environ.get("MATHHUB_DATA_DIR", str(ROOT / ".mathub"))).expanduser().resolve()
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_ROOT / "registry.sqlite3"
 REGISTRY = Registry(DB_PATH)
 FORMAL = FormalIndex(DB_PATH)
 ARGUMENT = ArgumentIndex(DB_PATH)
