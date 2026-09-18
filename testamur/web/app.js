@@ -471,7 +471,10 @@ async function signInPage() {
       <div data-account-result></div>
       <button class="btn btn-primary account-submit" type="submit">Sign in</button>
     </form>
-    <div class="account-switch">New to Testamur? <a data-nav href="/signup">Create an account</a></div>
+    <div class="account-switch account-switch-prominent">
+      <span>New to Testamur?</span>
+      <a data-nav class="btn btn-secondary" href="/signup">Create account</a>
+    </div>
   </section></div>`);
   document.querySelector('[data-signin]')?.addEventListener('submit', submitSignIn);
 }
