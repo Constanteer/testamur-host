@@ -147,6 +147,9 @@ function accountNav() {
 }
 
 function helpNav() {
+  const mathHub = accountState.mode === 'hosted'
+    ? '<a href="/sources/mathhub/"><strong>MathHub</strong><small>Formal mathematics source</small></a>'
+    : '';
   return `<details class="help-menu">
     <summary class="help-button" aria-label="Help and learning">?</summary>
     <div class="help-menu-panel">
@@ -155,8 +158,10 @@ function helpNav() {
       <a data-nav href="/demo"><strong>Example project</strong><small>See a source change and downstream review</small></a>
       <a data-nav href="/learn"><strong>What is Testamur?</strong><small>Concepts without the internal jargon</small></a>
       <div class="user-menu-divider"></div>
-      <a href="/sources/mathhub/"><strong>MathHub</strong><small>Formal mathematics source</small></a>
+      ${mathHub}
       <a href="https://github.com/Constanteer/testamur-plugins" target="_blank" rel="noreferrer"><strong>Integrations</strong><small>Codex, MCP and agent setup</small></a>
+      <div class="user-menu-divider"></div>
+      <div class="help-shortcuts"><span><kbd>/</kbd> Search</span><span><kbd>?</kbd> Help</span></div>
     </div>
   </details>`;
 }
@@ -1730,9 +1735,15 @@ async function render() {
 
 window.addEventListener('popstate', render);
 window.addEventListener('keydown', event => {
-  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  if (event.key === '/' && !typing) {
     event.preventDefault();
     document.querySelector('.global-search input')?.focus();
+  }
+  if (event.key === '?' && !typing) {
+    event.preventDefault();
+    const menu = document.querySelector('.help-menu');
+    if (menu) menu.open = !menu.open;
   }
 });
 
