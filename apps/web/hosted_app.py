@@ -654,7 +654,10 @@ class HostedTestamurWebHandler(TestamurWebHandler):
 
     def _proxy_mathhub(self) -> dict[str, Any]:
         split = urlsplit(self.path)
-        upstream_path = split.path[len(_MATHHUB_PREFIX):] or "/"
+        if split.path == _MATHHUB_PREFIX or split.path.startswith(_MATHHUB_PREFIX + "/"):
+            upstream_path = split.path[len(_MATHHUB_PREFIX):] or "/"
+        else:
+            upstream_path = split.path or "/"
         target = "http://127.0.0.1:8001" + upstream_path
         if split.query:
             target += "?" + split.query
@@ -741,7 +744,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         if path == _MATHHUB_PREFIX:
             self._send(_redirect(_MATHHUB_PREFIX + "/"))
             return
-        if path.startswith(_MATHHUB_PREFIX + "/"):
+        if path.startswith(_MATHHUB_PREFIX + "/") or path.startswith("/api/"):
             self._send(self._proxy_mathhub())
             return
         if path.startswith("/v1/account/") or path.startswith("/v1/users/"):
@@ -794,7 +797,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         # reject writes based on the forwarded public Host header here; account
         # and workspace authorization below remains authoritative.
         path = urlsplit(self.path).path.rstrip("/") or "/"
-        if path == _MATHHUB_PREFIX or path.startswith(_MATHHUB_PREFIX + "/"):
+        if path == _MATHHUB_PREFIX or path.startswith(_MATHHUB_PREFIX + "/") or path.startswith("/api/"):
             self._send(self._proxy_mathhub())
             return
 
