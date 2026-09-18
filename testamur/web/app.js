@@ -146,6 +146,26 @@ function accountNav() {
   </a>`;
 }
 
+function helpNav() {
+  const mathHub = accountState.mode === 'hosted'
+    ? '<a href="/sources/mathhub/"><strong>MathHub</strong><small>Formal mathematics source</small></a>'
+    : '';
+  return `<details class="help-menu">
+    <summary class="help-button" aria-label="Help and learning">?</summary>
+    <div class="help-menu-panel">
+      <span class="menu-label">Get started</span>
+      <a data-nav href="/quickstart"><strong>5-minute quickstart</strong><small>Track one dependency end to end</small></a>
+      <a data-nav href="/demo"><strong>Example project</strong><small>See a source change and downstream review</small></a>
+      <a data-nav href="/learn"><strong>What is Testamur?</strong><small>Concepts without the internal jargon</small></a>
+      <div class="user-menu-divider"></div>
+      ${mathHub}
+      <a href="https://github.com/Constanteer/testamur-plugins" target="_blank" rel="noreferrer"><strong>Integrations</strong><small>Codex, MCP and agent setup</small></a>
+      <div class="user-menu-divider"></div>
+      <div class="help-shortcuts"><span><kbd>/</kbd> Search</span><span><kbd>?</kbd> Help</span></div>
+    </div>
+  </details>`;
+}
+
 function nav() {
   const item = (href, label) => {
     const active = activeNav(href);
@@ -159,7 +179,6 @@ function nav() {
         ${item('/projects', 'Projects')}
         ${item('/monitoring', 'Monitoring')}
         ${item('/explore', 'Explore')}
-        <a href="/sources/mathhub/">MathHub</a>
       </nav>
     </div>
     <form class="global-search" data-search-form role="search">
@@ -167,7 +186,7 @@ function nav() {
       <input name="q" autocomplete="off" placeholder="Search projects, records, activity…" aria-label="Search Testamur" />
       <kbd>/</kbd>
     </form>
-    <div class="top-actions">${accountNav()}</div>
+    <div class="top-actions">${helpNav()}${accountNav()}</div>
   </header>`;
 }
 
@@ -278,6 +297,57 @@ function recordRow(record) {
   </a>`;
 }
 
+function onboardingProgress(data) {
+  const projects = data.projects || [];
+  const watches = data.watches || [];
+  const feed = data.feed || [];
+  return {
+    project: projects.length > 0,
+    monitor: watches.length > 0,
+    observation: watches.some(w => w.last_evaluated_at) || feed.some(item => item.kind === 'observation' || item.kind === 'alert'),
+  };
+}
+
+function onboardingCard(data) {
+  const progress = onboardingProgress(data);
+  if (progress.project && progress.monitor && progress.observation) return '';
+  const done = [progress.project, progress.monitor, progress.observation].filter(Boolean).length;
+  const nextHref = !progress.project ? '/projects/new' : !progress.monitor ? `${projectPath((data.projects || [])[0]?.slug || (data.projects || [])[0]?.ref || '')}?tab=monitors` : '/monitoring';
+  const nextLabel = !progress.project ? 'Create first project' : !progress.monitor ? 'Add first monitor' : 'Run the first check';
+  const step = (ok, number, title, copy) => `<div class="onboarding-step ${ok ? 'done' : ''}"><span class="onboarding-check">${ok ? '✓' : number}</span><div><strong>${title}</strong><small>${copy}</small></div></div>`;
+  return `<section class="onboarding-card">
+    <div class="onboarding-head">
+      <div><span class="onboarding-kicker">GET STARTED · ${done}/3</span><h2>Make Testamur useful in three steps.</h2><p>Give Testamur one thing your work depends on. It will remember the observed version and show you when that basis changes.</p></div>
+      <a data-nav class="onboarding-demo-link" href="/demo">See an example first →</a>
+    </div>
+    <div class="onboarding-steps">
+      ${step(progress.project, 1, 'Create a project', 'A container for one piece of work and its dependencies.')}
+      ${step(progress.monitor, 2, 'Add something you rely on', 'A URL, repository, specification, artifact, or plugin target.')}
+      ${step(progress.observation, 3, 'Record the first observation', 'Run the monitor once so Testamur has a revision to compare later.')}
+    </div>
+    <div class="onboarding-actions"><a data-nav class="btn btn-primary" href="${esc(nextHref)}">${esc(nextLabel)}</a><a data-nav class="btn btn-secondary" href="/quickstart">Open 5-minute quickstart</a></div>
+  </section>`;
+}
+
+function changedGuidance(alerts, watches, projectByRef) {
+  const changed = alerts.find(alert => String(alert.event_type || '').toLowerCase().includes('changed')) ||
+    alerts.find(alert => watches.find(w => w.watch_id === alert.watch_id)?.latest_state === 'changed');
+  if (!changed) return '';
+  const watch = watches.find(item => item.watch_id === changed.watch_id);
+  const project = projectByRef.get(watch?.project_id);
+  const sourceRef = changed.source_id || watch?.source_id;
+  return `<section class="change-guide">
+    <div class="change-guide-icon">↻</div>
+    <div class="change-guide-copy"><span>FIRST CHANGE WORKFLOW</span><h2>A monitored source changed. That does not mean your work is wrong.</h2><p>Inspect what was recorded, then check which downstream work may need review. Testamur keeps change detection separate from judgment.</p>
+      <div class="change-guide-actions">
+        ${sourceRef ? `<a data-nav class="btn btn-primary" href="${esc(objectPath(sourceRef))}?tab=history">View recorded history</a><a data-nav class="btn btn-secondary" href="/impact/${encodeURIComponent(sourceRef)}">See affected work</a>` : ''}
+        ${project ? `<a data-nav class="btn btn-secondary" href="${esc(projectPath(project.slug || project.ref))}?tab=monitors">Open project monitors</a>` : ''}
+      </div>
+      <small>changed ≠ invalid · stale ≠ false</small>
+    </div>
+  </section>`;
+}
+
 async function homePage() {
   shell(`<div class="dashboard-grid"><aside class="dashboard-left">${loading('Loading projects…')}</aside><section class="dashboard-center">${loading('Loading activity…')}</section><aside class="dashboard-right">${loading('Loading monitoring…')}</aside></div>`, true);
   try {
@@ -305,7 +375,7 @@ async function homePage() {
       </div>
     </section>`;
 
-    document.querySelector('.dashboard-center').innerHTML = `<div class="feed-header">
+    document.querySelector('.dashboard-center').innerHTML = `${onboardingCard(data)}${changedGuidance(alerts, watches, projectByRef)}<div class="feed-header">
       <div><h1>Home</h1><p>What changed across your Testamur workspace.</p></div>
       <button class="btn btn-secondary" data-refresh>Refresh</button>
     </div>
@@ -512,10 +582,7 @@ async function signInPage() {
       <div data-account-result></div>
       <button class="btn btn-primary account-submit" type="submit">Sign in</button>
     </form>
-    <div class="account-switch account-switch-prominent">
-      <span>New to Testamur?</span>
-      <a data-nav class="btn btn-secondary" href="/signup">Create account</a>
-    </div>
+    <div class="account-switch">New to Testamur? <a data-nav href="/signup">Create an account</a></div>
   </section></div>`);
   document.querySelector('[data-signin]')?.addEventListener('submit', submitSignIn);
 }
@@ -1056,6 +1123,7 @@ async function monitoringPage() {
     const projectByRef = new Map(projects.map(project => [project.ref, project]));
     const watchById = new Map(watches.map(watch => [watch.watch_id, watch]));
     shell(`<div class="page-title"><div><h1>Monitoring</h1><p>Monitors and operational events across your projects.</p></div><div class="page-title-actions">${badge(`${alerts.length} alerts`, alerts.length ? 'warn' : 'neutral')}<button class="btn btn-secondary" type="button" data-run-due-monitors>Run due</button></div></div>
+      ${changedGuidance(alerts, watches, projectByRef)}
       <div class="monitoring-layout">
         <section class="table-card"><div class="table-title"><h2>Monitors</h2><span>${watches.length}</span></div>
           ${watches.length ? `<div class="data-table">${watches.map(watch => {
@@ -1159,7 +1227,7 @@ function projectOverview(project, monitors) {
       <aside class="object-about"><h3>About</h3><p>A project groups related monitors. Sources are monitor targets, not project identity.</p><div class="about-row"><span>Slug</span><strong>${esc(project.slug)}</strong></div><div class="about-row"><span>Monitors</span><strong>${monitors.length}</strong></div><div class="about-row"><span>Next</span><a data-nav href="${esc(projectPath(project.slug))}?tab=monitors">${monitors.length ? 'Manage monitors' : 'Add first monitor'}</a></div></aside>
     </section>
     <section><div class="section-head"><h2>Monitors</h2><a data-nav href="${esc(projectPath(project.slug))}?tab=monitors">View all</a></div>
-      <div class="right-card">${monitors.length ? `<div class="monitor-list">${monitors.slice(0, 6).map(monitor => `<a data-nav class="monitor-row" href="${esc(objectPath(monitor.watch_id))}"><span class="status-dot status-${tone(monitor.latest_state)}"></span><span><strong>${esc(monitor.label || domain(monitor.locator || monitor.source_id))}</strong><small>${esc(short(monitor.locator || monitor.source_id, 80))} · ${esc(monitor.latest_state || 'not evaluated')}</small></span></a>`).join('')}</div>` : empty('No monitors yet', 'Add a monitor to a URL, repository, artifact, or plugin-provided target.')}</div>
+      <div class="right-card">${monitors.length ? `<div class="monitor-list">${monitors.slice(0, 6).map(monitor => `<a data-nav class="monitor-row" href="${esc(objectPath(monitor.watch_id))}"><span class="status-dot status-${tone(monitor.latest_state)}"></span><span><strong>${esc(monitor.label || domain(monitor.locator || monitor.source_id))}</strong><small>${esc(short(monitor.locator || monitor.source_id, 80))} · ${esc(monitor.latest_state || 'not evaluated')}</small></span></a>`).join('')}</div>` : `<div class="empty-project-guide"><span class="onboarding-kicker">NEXT STEP</span><h3>This project is not watching anything yet.</h3><p>Add something this work depends on. A monitor gives Testamur a stable target to observe over time.</p><div class="monitor-examples"><span><strong>Documentation URL</strong><code>https://example.com/api</code></span><span><strong>GitHub repository</strong><code>Constanteer/slate-lang</code></span><span><strong>Agent integration</strong><small>Capture sources used by Codex or another MCP host.</small></span></div><a data-nav class="btn btn-primary" href="${esc(projectPath(project.slug))}?tab=monitors">Add first monitor</a></div>`}</div>
     </section>
   </div>`;
 }
@@ -1184,6 +1252,7 @@ async function projectMonitorsPanel(project, monitors) {
     return `<div class="provider-config-fields" data-plugin-monitor-target="${esc(name)}" hidden>${spec.description ? `<p class="form-help">${esc(spec.description)}</p>` : ''}${fields}</div>`;
   }).join('');
   return `<div class="monitoring-layout">
+    ${!monitors.length ? `<section class="monitor-first-run"><div><span class="onboarding-kicker">STEP 2 OF 3</span><h2>Add the first dependency.</h2><p>Choose a target your project genuinely relies on. Testamur will observe it now, then make later change visible without pretending that change automatically invalidates your work.</p></div><div class="monitor-first-run-examples"><span>Docs URL</span><span>Repository</span><span>Specification</span><span>Plugin target</span></div></section>` : ''}
     <section class="time-query-card">
       <div><h2>Add monitor</h2><p>A project can contain many monitors. Each monitor resolves a target Source and owns its own change/unavailable/recovery configuration.</p></div>
       <form data-add-project-monitor data-project-ref="${esc(project.project_id)}">
@@ -1352,6 +1421,79 @@ async function addProjectMonitorFromForm(event) {
   }
 }
 
+function historyItemRef(item = {}) {
+  return item.snapshot_id || item.revision_id || item.record_revision_id || item.watch_revision_id || '';
+}
+
+function historyItemLabel(item = {}, index = 0) {
+  const ref = historyItemRef(item);
+  const ordinal = item.ordinal ? `Revision ${item.ordinal}` : '';
+  const at = item.observed_at || item.recorded_at || item.created_at;
+  return [ordinal || short(ref, 18) || `Version ${index + 1}`, at ? new Date(at).toLocaleString() : ''].filter(Boolean).join(' · ');
+}
+
+function comparisonFacts(comparison = {}) {
+  const ignored = new Set(['semantics', 'source_id', 'record_id']);
+  return Object.entries(comparison)
+    .filter(([key, value]) => !ignored.has(key) && typeof value !== 'object')
+    .map(([key, value]) => {
+      const label = key.replaceAll('_', ' ');
+      const rendered = typeof value === 'boolean' ? (value ? 'Yes' : 'No') : value === null ? 'Not assessable' : String(value);
+      const factTone = (key.endsWith('_changed') && value === true) ? 'warn' : (key === 'same_revision' && value === true) ? 'good' : 'neutral';
+      return `<div class="compare-fact"><span>${esc(label)}</span><strong class="compare-fact-${factTone}">${esc(rendered)}</strong></div>`;
+    }).join('');
+}
+
+async function comparePanel(ref) {
+  try {
+    const history = await api('/v1/history', { ref, limit: 100 });
+    const items = (history.items || []).filter(item => historyItemRef(item));
+    if (items.length < 2) {
+      return empty('Nothing to compare yet', 'Testamur needs at least two recorded versions of this object before it can make a mechanical comparison.');
+    }
+    const requestedLeft = params().get('left');
+    const requestedRight = params().get('right');
+    const defaultRight = historyItemRef(items[0]);
+    const defaultLeft = historyItemRef(items[1]);
+    const knownRefs = new Set(items.map(historyItemRef));
+    const left = knownRefs.has(requestedLeft) ? requestedLeft : defaultLeft;
+    const right = knownRefs.has(requestedRight) ? requestedRight : defaultRight;
+    const result = await api('/v1/compare', { left, right });
+    const comparison = result.comparison || {};
+    const changedFields = Object.entries(comparison).filter(([key]) => key.endsWith('_changed'));
+    const changedKeys = changedFields.filter(([, value]) => value === true);
+    const contentChanged = comparison.content_changed;
+    const summary = contentChanged === true || changedKeys.length
+      ? { text: 'Mechanical difference recorded', tone: 'warn' }
+      : contentChanged === false || (changedFields.length > 0 && changedKeys.length === 0)
+        ? { text: 'No mechanical difference recorded', tone: 'good' }
+        : { text: 'Difference not fully assessable', tone: 'neutral' };
+    const options = items.map((item, index) => {
+      const value = historyItemRef(item);
+      return `<option value="${esc(value)}">${esc(historyItemLabel(item, index))}</option>`;
+    }).join('');
+    return `<div class="compare-layout">
+      <section class="compare-toolbar">
+        <div><h2>Compare recorded versions</h2><p>Mechanical comparison only. Testamur does not infer semantic equivalence, truth, validity, or downstream breakage from this result.</p></div>
+        <form data-compare-form data-ref="${esc(ref)}">
+          <label><span>From</span><select name="left">${options}</select></label>
+          <span class="compare-arrow">→</span>
+          <label><span>To</span><select name="right">${options}</select></label>
+          <button class="btn btn-secondary" type="submit">Compare</button>
+        </form>
+      </section>
+      <section class="compare-result">
+        <div class="compare-result-head"><div><span class="onboarding-kicker">MECHANICAL RESULT</span><h2>${esc(summary.text)}</h2></div>${badge(summary.text, summary.tone)}</div>
+        <div class="compare-facts">${comparisonFacts(comparison)}</div>
+        <div class="compare-boundary"><strong>What this means</strong><p>These fields describe identity-level or stored-field differences between two recorded versions.</p><strong>What it does not mean</strong><p>A change does not automatically make downstream work invalid. Use Impact / reliance evidence to decide what deserves review.</p></div>
+      </section>
+    </div>`;
+  } catch (error) {
+    if ([400, 404, 422].includes(error.status)) return empty('Comparison unavailable', error.message || 'These versions cannot be compared.');
+    throw error;
+  }
+}
+
 async function historyPanel(ref) {
   try {
     const history = await api('/v1/history', { ref, limit: 100 });
@@ -1395,12 +1537,14 @@ async function objectPage(ref, forcedTab = null) {
     const identity = dto.object || {};
     const data = dto.data || {};
     const isSource = identity.kind === 'source';
-    const tabs = ['overview', 'history', 'impact', 'time', 'raw'];
+    const comparable = ['source', 'record'].includes(identity.kind);
+    const tabs = ['overview', 'history', ...(comparable ? ['compare'] : []), 'impact', 'time', 'raw'];
     const requested = forcedTab || params().get('tab') || 'overview';
     const selected = tabs.includes(requested) ? requested : 'overview';
     let panel;
     if (selected === 'overview') panel = isSource ? await sourceOverview(ref, data) : genericOverview(identity, data);
     else if (selected === 'history') panel = await historyPanel(ref);
+    else if (selected === 'compare') panel = await comparePanel(ref);
     else if (selected === 'impact') panel = await impactPanel(ref);
     else if (selected === 'time') panel = timePanel(ref);
     else panel = `<div class="raw-block"><div class="raw-head"><h2>Raw canonical envelope</h2><span>Advanced</span></div><pre>${esc(pretty(dto))}</pre></div>`;
@@ -1415,6 +1559,23 @@ async function objectPage(ref, forcedTab = null) {
     <section id="object-panel" class="object-panel">${panel}</section>`, true);
     bindNavigation();
     document.querySelector('[data-time-form]')?.addEventListener('submit', runTimeQuery);
+    const compareForm = document.querySelector('[data-compare-form]');
+    if (compareForm) {
+      const requestedLeft = params().get('left');
+      const requestedRight = params().get('right');
+      if (requestedLeft && [...compareForm.elements.left.options].some(option => option.value === requestedLeft)) compareForm.elements.left.value = requestedLeft;
+      else if (compareForm.elements.left.options.length > 1) compareForm.elements.left.selectedIndex = 1;
+      if (requestedRight && [...compareForm.elements.right.options].some(option => option.value === requestedRight)) compareForm.elements.right.value = requestedRight;
+      else compareForm.elements.right.selectedIndex = 0;
+      compareForm.addEventListener('submit', event => {
+        event.preventDefault();
+        const next = new URL(objectPath(compareForm.dataset.ref), location.origin);
+        next.searchParams.set('tab', 'compare');
+        next.searchParams.set('left', compareForm.elements.left.value);
+        next.searchParams.set('right', compareForm.elements.right.value);
+        navigate(next.pathname + next.search);
+      });
+    }
   } catch (error) {
     errorPage(error, 'Object unavailable');
   }
@@ -1433,6 +1594,68 @@ async function runTimeQuery(event) {
   } catch (error) {
     result.innerHTML = `<div class="flash flash-danger">${esc(error.message)}</div>`;
   }
+}
+
+function learnPage() {
+  shell(`<div class="learn-shell">
+    <section class="learn-hero">
+      <span class="onboarding-kicker">WHAT IS TESTAMUR?</span>
+      <h1>Remember what your work depended on.</h1>
+      <p>You build something using documentation, a repository, a paper, an artifact, or an AI agent. Testamur records the exact basis. When that basis changes later, it shows you what may need review.</p>
+      <div class="learn-actions"><a data-nav class="btn btn-primary" href="/quickstart">Start the 5-minute quickstart</a><a data-nav class="btn btn-secondary" href="/demo">Open example project</a></div>
+    </section>
+    <section class="learn-story">
+      <article><span>1</span><div><h2>You use something.</h2><p>An API specification is part of the work behind your project.</p></div></article>
+      <article><span>2</span><div><h2>Testamur keeps the observed version.</h2><p>The dependency is not just a URL. Its recorded revision remains inspectable later.</p></div></article>
+      <article><span>3</span><div><h2>The upstream source changes.</h2><p>Testamur detects the change mechanically. It does not jump from “different” to “wrong”.</p></div></article>
+      <article><span>4</span><div><h2>You review what depended on it.</h2><p>History, reliance, and affectedness tell you where revalidation is worth spending attention.</p></div></article>
+    </section>
+    <section class="concept-grid">
+      <article><strong>Project</strong><p>A container for one piece of work and the things around it.</p></article>
+      <article><strong>Monitor</strong><p>One operational watch on a URL, repository, artifact, or plugin target.</p></article>
+      <article><strong>Revision</strong><p>The exact version Testamur observed at a point in time.</p></article>
+      <article><strong>Reliance</strong><p>An explicit statement that some result actually depended on recorded evidence.</p></article>
+      <article><strong>Affectedness</strong><p>A projection of what may need attention after upstream change—not a verdict that it is false.</p></article>
+      <article><strong>Revalidation</strong><p>The act of checking downstream work again against the changed basis.</p></article>
+    </section>
+    <section class="semantic-firewall"><h2>Four rules worth remembering</h2><div><code>recorded ≠ verified</code><code>fetched ≠ relied</code><code>changed ≠ invalid</code><code>stale ≠ false</code></div></section>
+  </div>`);
+}
+
+function quickstartPage() {
+  shell(`<div class="guide-shell">
+    <div class="page-title"><div><span class="onboarding-kicker">5-MINUTE QUICKSTART</span><h1>Track one dependency end to end.</h1><p>At the end, Testamur has one project, one monitored dependency, and one recorded observation it can compare against later.</p></div><a data-nav class="btn btn-secondary" href="/learn">Why this works</a></div>
+    <ol class="quickstart-steps">
+      <li><div class="quickstart-number">1</div><div><h2>Create a project</h2><p>Use the name of the work, not the dependency itself. For example <code>api-client</code>.</p><a data-nav class="btn btn-primary" href="/projects/new">Create project</a></div></li>
+      <li><div class="quickstart-number">2</div><div><h2>Add something the work depends on</h2><p>Open the Project's Monitors tab. Paste a documentation URL, repository locator, or select a plugin-provided target.</p><div class="quickstart-example"><strong>Example</strong><code>https://example.com/api/spec</code></div></div></li>
+      <li><div class="quickstart-number">3</div><div><h2>Record the first observation</h2><p>Choose <strong>Refresh</strong> for the monitor. This creates the baseline Testamur can compare with future observations.</p><a data-nav class="btn btn-secondary" href="/monitoring">Open monitoring</a></div></li>
+      <li><div class="quickstart-number">4</div><div><h2>Come back after it changes</h2><p>A changed monitor gives you a history trail and, where reliance data exists, an affectedness view. Review the evidence before drawing a conclusion.</p><div class="quickstart-rules"><span>changed ≠ invalid</span><span>stale ≠ false</span></div></div></li>
+      <li><div class="quickstart-number">5</div><div><h2>Connect your agent workflow</h2><p>Once the manual loop makes sense, install the Codex plugin or MCP gateway so agent work can use the same source/revision model.</p><a href="https://github.com/Constanteer/testamur-plugins" class="btn btn-secondary" target="_blank" rel="noreferrer">Open integrations</a></div></li>
+    </ol>
+    <section class="guide-next"><div><h2>Want to see the whole loop immediately?</h2><p>The example project starts after an upstream API spec has changed, so you can inspect history, compare the revisions, and see the downstream review path without waiting.</p></div><a data-nav class="btn btn-primary" href="/demo">Open example project</a></section>
+  </div>`);
+}
+
+function demoPage() {
+  const stage = ['overview','history','compare','impact','revalidate'].includes(params().get('stage')) ? params().get('stage') : 'overview';
+  const tabs = [['overview','Overview'],['history','History'],['compare','Compare'],['impact','Affected work'],['revalidate','Revalidate']];
+  const panels = {
+    overview: `<div class="demo-overview"><section class="demo-primary"><div class="demo-source-head"><span class="status-dot status-warn"></span><div><strong>Payments API specification</strong><small>docs.example.test/payments/v2</small></div>${badge('changed','warn')}</div><div class="demo-facts"><span><small>Current revision</small><strong>rev_0194</strong></span><span><small>Last changed</small><strong>2 hours ago</strong></span><span><small>Observed revisions</small><strong>18</strong></span></div><p>The project previously relied on <code>rev_0193</code>. Testamur has now observed a mechanically different revision.</p></section><aside class="demo-note"><strong>What Testamur is saying</strong><p>The source changed.</p><strong>What it is not saying</strong><p>Your parser is wrong.</p></aside></div>`,
+    history: `<div class="demo-timeline"><article><span class="demo-dot"></span><div><strong>rev_0194 · content changed</strong><small>Today, 20:11 · +12 −4 lines</small></div></article><article><span class="demo-line-dot"></span><div><strong>rev_0193 · observed unchanged</strong><small>Yesterday, 09:02</small></div></article><article><span class="demo-line-dot"></span><div><strong>rev_0192 · content changed</strong><small>Sep 12 · +3 −1 lines</small></div></article></div>`,
+    compare: `<div class="demo-diff"><div class="demo-diff-head"><strong>rev_0193 → rev_0194</strong><span>mechanical text diff</span></div><pre><span class="diff-context">POST /charges</span>
+<span class="diff-remove">- idempotency_key: optional string</span>
+<span class="diff-add">+ idempotency_key: required string</span>
+<span class="diff-add">+ requests without a key return HTTP 400</span></pre><div class="demo-diff-stats"><span>+12 additions</span><span>−4 deletions</span><span>2 sections changed</span></div></div>`,
+    impact: `<div class="demo-impact"><article><div><strong>src/payments.ts</strong><small>Relied on request semantics from rev_0193</small></div>${badge('review suggested','warn')}</article><article><div><strong>docs/integration.md</strong><small>Cites the old optional idempotency behavior</small></div>${badge('review suggested','warn')}</article><article><div><strong>benchmark/read-path.ts</strong><small>No recorded reliance on the changed section</small></div>${badge('no projection','neutral')}</article><div class="demo-principle">Affectedness narrows attention. It is not a truth score and does not automatically invalidate downstream work.</div></div>`,
+    revalidate: `<div class="demo-revalidate"><h2>Review the changed dependency</h2><p>You update the client to always send an idempotency key, rerun its tests, and record the new review against <code>rev_0194</code>.</p><div class="demo-revalidation-record"><span>✓</span><div><strong>Revalidation recorded</strong><small>src/payments.ts · based on rev_0194 · tests passed</small></div></div><p class="muted">This is the full Testamur loop: exact basis → change → affected work → explicit review.</p></div>`,
+  };
+  shell(`<div class="demo-shell">
+    <div class="demo-banner"><span>INTERACTIVE EXAMPLE · no workspace data is changed</span><a data-nav href="/quickstart">Build this for real →</a></div>
+    <div class="page-title"><div><h1>api-client</h1><p>Demo project · one upstream API specification changed after this client was built.</p></div>${badge('example project')}</div>
+    <nav class="object-tabs">${tabs.map(([key,label])=>`<a data-nav class="${stage===key?'active':''}" href="/demo?stage=${key}">${label}</a>`).join('')}</nav>
+    <section class="demo-panel">${panels[stage]}</section>
+    <div class="demo-step-footer"><span>Follow the loop:</span>${tabs.map(([key,label],i)=>`<a data-nav class="${stage===key?'active':''}" href="/demo?stage=${key}">${i+1}. ${label}</a>`).join('')}</div>
+  </div>`);
 }
 
 async function statusPage() {
@@ -1499,6 +1722,9 @@ async function render() {
   if (path.startsWith('/projects/')) return projectPage(decodeURIComponent(path.slice(10)));
   if (path === '/explore') return explorePage();
   if (path === '/monitoring') return monitoringPage();
+  if (path === '/learn') return learnPage();
+  if (path === '/quickstart') return quickstartPage();
+  if (path === '/demo') return demoPage();
   if (path === '/status') return statusPage();
   if (path.startsWith('/object/')) return objectPage(decodeURIComponent(path.slice(8)));
   if (path.startsWith('/impact/')) return objectPage(decodeURIComponent(path.slice(8)), 'impact');
@@ -1509,9 +1735,15 @@ async function render() {
 
 window.addEventListener('popstate', render);
 window.addEventListener('keydown', event => {
-  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  if (event.key === '/' && !typing) {
     event.preventDefault();
     document.querySelector('.global-search input')?.focus();
+  }
+  if (event.key === '?' && !typing) {
+    event.preventDefault();
+    const menu = document.querySelector('.help-menu');
+    if (menu) menu.open = !menu.open;
   }
 });
 

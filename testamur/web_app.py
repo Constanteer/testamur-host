@@ -17,7 +17,7 @@ from .product_service import TestamurProductService
 WEB_ROOT = Path(__file__).with_name("web")
 
 _STATIC_ASSETS = {"index.html", "app.js", "styles.css"}
-_SPA_PREFIXES = {"app", "object", "compare", "impact", "temporal", "projects", "explore", "monitoring", "status"}
+_SPA_PREFIXES = {"app", "object", "compare", "impact", "temporal", "projects", "explore", "monitoring", "learn", "quickstart", "demo", "status"}
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -323,22 +323,7 @@ def _host_allowed(value: str | None, bind_host: str) -> bool:
         hostname = host.split("]", 1)[0] + "]"
     else:
         hostname = host.split(":", 1)[0]
-
-    configured = {
-        item.strip().lower()
-        for item in os.environ.get("TESTAMUR_ALLOWED_HOSTS", "").split(",")
-        if item.strip()
-    }
-    if "*" in configured:
-        return True
-
-    allowed = {
-        bind_host.lower(),
-        "localhost",
-        "127.0.0.1",
-        "[::1]",
-        *configured,
-    }
+    allowed = {bind_host.lower(), "localhost", "127.0.0.1", "[::1]"}
     return hostname in allowed
 
 
