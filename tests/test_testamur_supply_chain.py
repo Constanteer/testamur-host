@@ -85,8 +85,21 @@ def test_project_import_is_durable_and_idempotent(tmp_path) -> None:
 
     project = service.project("demo")
     assert project["ok"] is True
-    assert project["supply_chain"]["scan_revision_id"] == first["scan_revision_id"]
-    assert project["supply_chain"]["dependency_count"] == 1
+    inventory = project["supply_chain"]
+    assert inventory["scan_revision_id"] == first["scan_revision_id"]
+    assert inventory["dependency_count"] == 1
+    assert inventory["manifest_count"] == 1
+    assert inventory["inventory_truncated"] is False
+    assert inventory["manifests"][0]["path"] == "requirements.txt"
+    assert inventory["manifests"][0]["parser"] == "requirements"
+    dependency = inventory["dependencies"][0]
+    assert dependency["ecosystem"] == "pypi"
+    assert dependency["name"] == "requests"
+    assert dependency["version"] == "2.32.5"
+    assert dependency["direct"] is True
+    assert dependency["observed_in"] == ["requirements.txt"]
+    assert dependency["identity_strength"] == "declared-version"
+    assert dependency["is_exact_revision"] is False
 
 
 def test_manifest_change_creates_new_scan_revision(tmp_path) -> None:
