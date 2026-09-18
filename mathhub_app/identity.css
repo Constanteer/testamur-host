@@ -1,0 +1,92 @@
+.canonical-ref-row {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.canonical-ref-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.canonical-ref-line code {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .035em;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.copy-ref {
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  color: var(--muted);
+  font: 10px/1.2 var(--sans);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.copy-ref:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.canonical-slug {
+  margin-top: 7px;
+  font: 11px/1.45 var(--sans);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.namespace-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0 12px;
+}
+
+.namespace-chips span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  border: 1px solid var(--rule);
+  padding: 6px 8px;
+  background: rgba(255,255,255,.24);
+}
+
+.namespace-chips code {
+  font-size: 11px;
+}
+
+.namespace-chips strong {
+  font: 10px/1 var(--sans);
+  color: var(--muted);
+}
+
+.raw-dependency-disclosure summary,
+.internal-record summary {
+  cursor: pointer;
+  color: var(--muted);
+  font: 11px/1.4 var(--sans);
+}
+
+.raw-constant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.raw-constant-list code {
+  font-size: 10px;
+}
+
+.quiet-build-row summary {
+  grid-template-columns: auto minmax(160px,1fr) auto minmax(140px,auto);
+}

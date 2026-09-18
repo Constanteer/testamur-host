@@ -1,0 +1,4 @@
+.graph-registry-coverage{margin:14px 0 16px;padding:12px 13px;border:1px solid var(--line,#ddd);border-radius:10px;background:rgba(120,120,110,.03)}
+.graph-registry-coverage>div:first-child{display:flex;align-items:baseline;gap:8px}.graph-registry-coverage>div:first-child strong{font-size:20px;font-variant-numeric:tabular-nums}.graph-registry-coverage>div:first-child span{font-size:11px;color:var(--muted,#666);text-transform:uppercase;letter-spacing:.04em}
+.graph-registry-meter{height:4px;margin:9px 0 8px;border-radius:999px;background:rgba(120,120,110,.13);overflow:hidden}.graph-registry-meter span{display:block;height:100%;background:currentColor;opacity:.52}
+.graph-registry-coverage p{margin:0;font-size:11px;line-height:1.45;color:var(--muted,#666)}.graph-registry-coverage.unavailable{opacity:.7}

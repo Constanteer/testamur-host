@@ -1,0 +1,24 @@
+.history-more-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0 2px;
+}
+
+.history-more-row span {
+  font: 11px/1.45 var(--sans);
+  color: var(--muted);
+}
+
+.btn-quiet-history {
+  margin-left: 6px;
+  padding: 6px 9px;
+  font-size: 10px;
+}
+
+@media (max-width: 720px) {
+  .history-more-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
