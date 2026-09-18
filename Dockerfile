@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    TESTAMUR_ALLOWED_HOSTS=testamur.org,www.testamur.org
+    TESTAMUR_ALLOWED_HOSTS=*
 WORKDIR /app
 COPY . /app
 RUN mkdir -p /data
