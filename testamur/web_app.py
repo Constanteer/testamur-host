@@ -323,7 +323,22 @@ def _host_allowed(value: str | None, bind_host: str) -> bool:
         hostname = host.split("]", 1)[0] + "]"
     else:
         hostname = host.split(":", 1)[0]
-    allowed = {bind_host.lower(), "localhost", "127.0.0.1", "[::1]"}
+
+    configured = {
+        item.strip().lower()
+        for item in os.environ.get("TESTAMUR_ALLOWED_HOSTS", "").split(",")
+        if item.strip()
+    }
+    if "*" in configured:
+        return True
+
+    allowed = {
+        bind_host.lower(),
+        "localhost",
+        "127.0.0.1",
+        "[::1]",
+        *configured,
+    }
     return hostname in allowed
 
 
