@@ -164,7 +164,7 @@ function helpNav() {
       <a data-nav href="/docs"><strong>Concept reference</strong><small>Sources, revisions, reliance, impact and agents</small></a>
       <div class="user-menu-divider"></div>
       ${mathHub}
-      <a href="https://github.com/Constanteer/testamur-plugins" target="_blank" rel="noreferrer"><strong>Integrations</strong><small>Codex, MCP and agent setup</small></a>
+      <a data-nav href="/integrations"><strong>Integrations</strong><small>Codex, MCP and agent setup</small></a>
       <div class="user-menu-divider"></div>
       <div class="help-shortcuts"><span><kbd>/</kbd> Search</span><span><kbd>?</kbd> Help</span></div>
     </div>
@@ -1820,7 +1820,7 @@ function docsPage() {
 
         <section id="revalidation" class="docs-section"><h2>Revalidation</h2><p>Revalidation is the explicit review after the basis changes. You inspect the change, rerun or reconsider downstream work where necessary, then record what happened against the new basis. This is where judgment belongs.</p><div class="docs-flow"><span>exact basis</span><b>→</b><span>change</span><b>→</b><span>affected work</span><b>→</b><span>review</span><b>→</b><span>new evidence</span></div></section>
 
-        <section id="agents" class="docs-section"><h2>Agents and integrations</h2><p>Codex and MCP-capable hosts can use Testamur's Source Gateway and integration contracts. The host may observe tool events and source access, but durable reliance remains an explicit semantic step rather than an inference from everything that appeared in context.</p><p><a href="https://github.com/Constanteer/testamur-plugins" target="_blank" rel="noreferrer">Open Testamur integrations →</a></p></section>
+        <section id="agents" class="docs-section"><h2>Agents and integrations</h2><p>Codex and MCP-capable hosts can use Testamur's Source Gateway and integration contracts. The host may observe tool events and source access, but durable reliance remains an explicit semantic step rather than an inference from everything that appeared in context.</p><p><a data-nav href="/integrations">Open Testamur integrations →</a></p></section>
 
         <section id="advanced" class="docs-section"><h2>Advanced model</h2><div class="docs-definition-grid">
           <div><strong>Record</strong><span>A persistent assertion, requirement, observation, result, or other referable object with version history.</span></div>
@@ -1837,6 +1837,90 @@ function docsPage() {
   </div>`);
 }
 
+function integrationsPage() {
+  const hosted = accountState.mode === 'hosted';
+  const commandCard = (id, label, command, copy) => `<div class="integration-command"><div><span>${esc(label)}</span><code id="${esc(id)}">${esc(command)}</code></div><button class="btn btn-secondary btn-compact" type="button" data-copy-command="${esc(command)}">${esc(copy || 'Copy')}</button></div>`;
+  shell(`<div class="integrations-shell">
+    <section class="integrations-hero">
+      <div><span class="onboarding-kicker">AGENT INTEGRATIONS</span><h1>Connect Testamur without changing its evidence model.</h1><p>Codex gets a native plugin. Claude Code, OpenCode, and other MCP-capable hosts can start the same local Source Gateway over stdio. The integration adds host UX; Testamur still owns Source, Revision, Reliance, and revalidation semantics.</p></div>
+      <div class="integrations-status">
+        <span>${hosted ? 'Hosted workspace' : 'Local workspace'}</span>
+        <strong>Agent runtime stays explicit</strong>
+        <small>${hosted ? 'Your agent host still needs the local Testamur core / gateway on the machine where the host runs.' : 'The commands below use the same local Testamur state as this product surface.'}</small>
+      </div>
+    </section>
+
+    <section class="integration-prereq">
+      <div><span class="onboarding-kicker">0 · PREREQUISITE</span><h2>Install Testamur core first.</h2><p>The host needs both the CLI and the stdio Source Gateway on its PATH.</p></div>
+      ${commandCard('core-check','Verify executables','command -v testamur && command -v testamur-gateway-mcp','Copy check')}
+      <div class="integration-note"><strong>Source install</strong><code>python -m pip install -e .</code><span>from a Testamur checkout. The gateway process is not an interactive CLI; an MCP host starts it over stdio.</span></div>
+    </section>
+
+    <section class="integration-grid">
+      <article class="integration-card integration-featured">
+        <div class="integration-card-head"><span class="integration-mark">CX</span><span class="badge badge-good">native plugin</span></div>
+        <h2>Codex</h2>
+        <p>Lifecycle hooks capture observable session/tool activity, the bundled MCP launcher exposes exact source/revision operations, and the plugin can register monitor providers.</p>
+        ${commandCard('codex-marketplace','1. Add marketplace','codex plugin marketplace add Constanteer/testamur-plugins')}
+        <div class="integration-manual-step"><strong>2. Install <code>testamur-codex</code></strong><span>Open the Codex plugin manager and install the package from that marketplace. Pin a release/tag when reproducibility matters.</span></div>
+      </article>
+
+      <article class="integration-card">
+        <div class="integration-card-head"><span class="integration-mark">CC</span><span class="badge badge-neutral">MCP</span></div>
+        <h2>Claude Code</h2>
+        <p>Connect the local gateway directly over stdio. This gives Claude Code the same exact-revision source surface without inventing a second Testamur store.</p>
+        ${commandCard('claude-mcp','Add local MCP server','claude mcp add --transport stdio testamur -- testamur-gateway-mcp')}
+        ${commandCard('claude-verify','Verify','claude mcp list')}
+      </article>
+
+      <article class="integration-card">
+        <div class="integration-card-head"><span class="integration-mark">OC</span><span class="badge badge-neutral">MCP</span></div>
+        <h2>OpenCode</h2>
+        <p>OpenCode can start the same stdio gateway. Native host hooks can be layered later without changing durable Testamur state.</p>
+        ${commandCard('opencode-mcp','Add local MCP server','opencode mcp add testamur -- testamur-gateway-mcp')}
+        ${commandCard('opencode-verify','Verify','opencode mcp list')}
+      </article>
+
+      <article class="integration-card">
+        <div class="integration-card-head"><span class="integration-mark">M</span><span class="badge badge-neutral">portable</span></div>
+        <h2>Any MCP client</h2>
+        <p>If the client can launch a local stdio MCP process, configure it to run this executable:</p>
+        ${commandCard('generic-mcp','stdio command','testamur-gateway-mcp')}
+        <div class="integration-manual-step"><strong>Transport</strong><span>stdio · local process. The host owns process configuration; Testamur owns the evidence semantics.</span></div>
+      </article>
+    </section>
+
+    <section class="integration-first-use">
+      <div><span class="onboarding-kicker">FIRST USE</span><h2>Test the semantic boundary, not just the connection.</h2><p>A successful connection is not enough. The first workflow should prove that exact source access works while exposure remains distinct from durable reliance.</p></div>
+      <div class="integration-prompts">
+        <button type="button" data-copy-command="Fetch this documentation through Testamur and preserve the exact revision used."><strong>Fetch exact evidence</strong><span>Fetch this documentation through Testamur and preserve the exact revision used.</span></button>
+        <button type="button" data-copy-command="Show what observable provenance Testamur captured for this session without treating every fetched source as relied upon."><strong>Inspect provenance</strong><span>Show captured observable provenance without turning every fetched source into reliance.</span></button>
+        <button type="button" data-copy-command="Which watched sources changed, and which downstream work may need review?"><strong>Follow change</strong><span>Show changed upstream sources and downstream review candidates.</span></button>
+      </div>
+    </section>
+
+    <section class="semantic-firewall"><h2>Integration invariants</h2><div><code>recorded ≠ verified</code><code>fetched ≠ relied</code><code>EXPOSED_TO_MODEL ≠ RELIED</code><code>changed ≠ invalid</code></div></section>
+
+    <section class="guide-next"><div><h2>Need package details or release pins?</h2><p>The plugin repository remains the inspectable distribution source for host adapters.</p></div><a class="btn btn-secondary" href="https://github.com/Constanteer/testamur-plugins" target="_blank" rel="noreferrer">Open plugin repository ↗</a></section>
+  </div>`);
+
+  document.querySelectorAll('[data-copy-command]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const value = button.dataset.copyCommand || '';
+      const previous = button.textContent;
+      try {
+        await navigator.clipboard.writeText(value);
+        button.textContent = 'Copied';
+        window.setTimeout(() => { button.textContent = previous; }, 1200);
+      } catch (_) {
+        button.title = value;
+        button.textContent = 'Copy failed';
+        window.setTimeout(() => { button.textContent = previous; }, 1600);
+      }
+    });
+  });
+}
+
 function quickstartPage() {
   shell(`<div class="guide-shell">
     <div class="page-title"><div><span class="onboarding-kicker">5-MINUTE QUICKSTART</span><h1>Track one dependency end to end.</h1><p>At the end, Testamur has one project, one monitored dependency, and one recorded observation it can compare against later.</p></div><a data-nav class="btn btn-secondary" href="/learn">Why this works</a></div>
@@ -1845,7 +1929,7 @@ function quickstartPage() {
       <li><div class="quickstart-number">2</div><div><h2>Add something the work depends on</h2><p>Open the Project's Monitors tab. Paste a documentation URL, repository locator, or select a plugin-provided target.</p><div class="quickstart-example"><strong>Example</strong><code>https://example.com/api/spec</code></div></div></li>
       <li><div class="quickstart-number">3</div><div><h2>Record the first observation</h2><p>Choose <strong>Refresh</strong> for the monitor. This creates the baseline Testamur can compare with future observations.</p><a data-nav class="btn btn-secondary" href="/monitoring">Open monitoring</a></div></li>
       <li><div class="quickstart-number">4</div><div><h2>Come back after it changes</h2><p>A changed monitor gives you a history trail and, where reliance data exists, an affectedness view. Review the evidence before drawing a conclusion.</p><div class="quickstart-rules"><span>changed ≠ invalid</span><span>stale ≠ false</span></div></div></li>
-      <li><div class="quickstart-number">5</div><div><h2>Connect your agent workflow</h2><p>Once the manual loop makes sense, install the Codex plugin or MCP gateway so agent work can use the same source/revision model.</p><a href="https://github.com/Constanteer/testamur-plugins" class="btn btn-secondary" target="_blank" rel="noreferrer">Open integrations</a></div></li>
+      <li><div class="quickstart-number">5</div><div><h2>Connect your agent workflow</h2><p>Once the manual loop makes sense, install the Codex plugin or MCP gateway so agent work can use the same source/revision model.</p><a data-nav href="/integrations" class="btn btn-secondary">Open integrations</a></div></li>
     </ol>
     <section class="guide-next"><div><h2>Want to see the whole loop immediately?</h2><p>The example project starts after an upstream API spec has changed, so you can inspect history, compare the revisions, and see the downstream review path without waiting.</p></div><a data-nav class="btn btn-primary" href="/demo">Open example project</a></section>
   </div>`);
@@ -1930,6 +2014,7 @@ async function render() {
   const publicHostedRoute =
     path === '/learn' ||
     path === '/docs' ||
+    path === '/integrations' ||
     path === '/quickstart' ||
     path === '/demo' ||
     path === '/status' ||
@@ -1953,6 +2038,7 @@ async function render() {
   if (path === '/monitoring') return monitoringPage();
   if (path === '/learn') return learnPage();
   if (path === '/docs') return docsPage();
+  if (path === '/integrations') return integrationsPage();
   if (path === '/quickstart') return quickstartPage();
   if (path === '/demo') return demoPage();
   if (path === '/status') return statusPage();
