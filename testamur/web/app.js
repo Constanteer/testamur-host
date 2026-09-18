@@ -1266,6 +1266,7 @@ function supplyChainPanel(project, supplyChain) {
   const warnings = supplyChain.warnings || [];
   const dependencies = supplyChain.dependencies || [];
   const manifests = supplyChain.manifests || [];
+  const advisoryMatches = supplyChain.advisory_identity_matches || [];
   const exactCount = dependencies.filter(item => item.is_exact_revision).length;
   const directCount = dependencies.filter(item => item.direct === true).length;
   const dependencyRows = dependencies.map(item => {
@@ -1325,6 +1326,21 @@ function supplyChainPanel(project, supplyChain) {
     <section class="manifest-card">
       <div class="section-head compact"><div><h2>Observed manifests</h2><p>Each manifest record pins the exact local bytes by SHA-256.</p></div><span>${manifests.length}</span></div>
       <div class="manifest-list">${manifestRows || '<div class="dependency-empty">No manifest records were projected from this scan.</div>'}</div>
+    </section>
+
+    <section class="supply-advisory-card">
+      <div class="supply-advisory-head"><div><span class="onboarding-kicker">ADVISORY CROSS-REFERENCE</span><h2>Exact advisory identity matches</h2><p>Only advisories that explicitly reference a canonical component revision in this recorded inventory appear here. Identity match alone does not establish applicability or affectedness.</p></div>${badge(`${advisoryMatches.length} match${advisoryMatches.length === 1 ? '' : 'es'}`, advisoryMatches.length ? 'warn' : 'neutral')}</div>
+      <div class="supply-advisory-list">
+        ${advisoryMatches.length ? advisoryMatches.map(item => {
+          const matched = (item.matched_component_revision_ids || []).map(ref => dependencies.find(dep => dep.component_revision_id === ref)).filter(Boolean);
+          const matchedText = matched.map(dep => `${dep.ecosystem || 'package'}:${dep.name || dep.component_revision_id}@${dep.version || '?'}`).join(', ');
+          return `<article class="supply-advisory-row">
+            <div class="supply-advisory-id"><strong>${esc(item.external_id || item.event_revision_id || 'advisory')}</strong><small>${esc(item.provider || 'provider')} · ${esc(item.event_class || 'adverse event')}</small></div>
+            <div class="supply-advisory-match"><span>Exact identity match</span><code>${esc(matchedText || (item.matched_component_revision_ids || []).join(', '))}</code></div>
+            <div class="supply-advisory-state">${badge('assessment required', 'warn')}</div>
+          </article>`;
+        }).join('') : '<div class="dependency-empty"><strong>No exact local advisory identity matches recorded.</strong><br />This is not evidence that the inventory is unaffected; unresolved provider identities and unimported advisories remain outside this view.</div>'}
+      </div>
     </section>
 
     <section class="supply-chain-boundary-card">
