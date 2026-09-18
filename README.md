@@ -1,18 +1,65 @@
-# apps/
+# Testamur Host
 
-Deployment-facing Testamur applications live here.
+Private hosted deployment bundle for Testamur.
 
-This directory is intentionally separate from the canonical `testamur/` Python package. Applications may depend on Testamur core, but must not redefine Testamur semantics.
+This repository is intentionally self-contained for deployment. It contains:
 
-Planned split:
+- the hosted Testamur account/workspace service;
+- a pinned snapshot of the private Testamur core runtime;
+- a bundled MathHub runtime;
+- one Docker image for Zeabur.
 
-- `apps/web/` — hosted/product web frontend
-- `apps/api/` — hosted API boundary
-- `apps/worker/` — background jobs, ingestion, alerts, hosted sync
+## Public routes
 
-Rules:
+```text
+/                       Testamur hosted workspace
+/signin                 Sign in
+/signup                 Create account
+/sources/mathhub/        Bundled public MathHub
+/healthz                 Service health
+```
 
-1. `testamur/` remains the semantic source of truth.
-2. Hosted auth, billing, accounts, tenancy, and deployment configuration belong here, not in core.
-3. Public/local Web projections may call Testamur product APIs; they must not create a parallel policy/reliance/lineage engine.
-4. This directory is a migration boundary. Production code should move here only after the 0.1 convergence branch lands cleanly.
+`/scources/mathhub[/...]` redirects to the canonical `/sources/mathhub[/...]` path.
+
+The hosted entrypoint does not reject writes based on the public `Host` header. Authentication and workspace/organization authorization remain enforced by the account layer.
+
+## Zeabur
+
+Deploy this repository as **one service** using the root `Dockerfile`.
+
+The container runs two local processes:
+
+```text
+0.0.0.0:$PORT
+  └─ Testamur hosted gateway
+       ├─ Testamur UI/API
+       └─ /sources/mathhub/* → 127.0.0.1:8001
+
+127.0.0.1:8001
+  └─ MathHub
+```
+
+Attach one persistent volume at:
+
+```text
+/data
+```
+
+Persistent state is separated inside that volume:
+
+```text
+/data/testamur
+/data/mathhub
+```
+
+The production start command is already defined by the Docker image:
+
+```text
+/app/deploy/start.sh
+```
+
+Use `https://testamur.org` as the public custom domain. No second Zeabur service or public MathHub domain is required.
+
+## Repository boundaries
+
+`testamur/` is a deployment snapshot of the private canonical core; it is not a second semantic implementation. Hosted account, tenancy, deployment and routing code lives under `apps/`. MathHub remains a separate product/ontology even though it is bundled into the same deployment unit for cost and routing.
