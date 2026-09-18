@@ -749,10 +749,24 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                     mathhub_ok = 200 <= int(getattr(response, "status", response.getcode())) < 500
             except Exception as exc:
                 mathhub_error = str(getattr(exc, "reason", exc))
+            mathhub_last_log = None
+            if not mathhub_ok:
+                try:
+                    log_path = Path("/data/mathhub/startup.log")
+                    if log_path.is_file():
+                        lines = [line.strip() for line in log_path.read_text(errors="replace").splitlines() if line.strip()]
+                        if lines:
+                            mathhub_last_log = lines[-1][-600:]
+                except OSError:
+                    pass
             self._send(_json({
                 "ok": True,
                 "service": "testamur-host",
-                "mathhub": {"ok": mathhub_ok, "error": mathhub_error},
+                "mathhub": {
+                    "ok": mathhub_ok,
+                    "error": mathhub_error,
+                    "last_log": mathhub_last_log,
+                },
             }))
             return
         if path == "/scources/mathhub" or path.startswith("/scources/mathhub/"):
