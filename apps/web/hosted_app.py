@@ -741,6 +741,9 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         split = urlsplit(self.path)
         path = unquote(split.path or "/")
         name = path.lstrip("/")
+        if path == "/healthz":
+            self._send(_json({"ok": True, "service": "testamur-host"}))
+            return
         if path == _MATHHUB_PREFIX:
             self._send(_redirect(_MATHHUB_PREFIX + "/"))
             return
