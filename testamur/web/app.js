@@ -372,45 +372,85 @@ async function projectsPage() {
 function newProjectFields() {
   const workspace = accountState.activeWorkspace;
   const owner = workspace?.label || (accountState.mode === 'hosted' ? 'Personal workspace' : 'Local workspace');
+  const ownerInitial = String(owner).trim().slice(0, 1).toUpperCase() || 'W';
+  const ownerMeta = workspace?.kind === 'organization' ? 'organization' : 'workspace';
   return `<form class="new-project-form" data-new-project>
-    <div class="create-project-name-row">
-      <label><span>Workspace</span><input value="${esc(owner)}" disabled /></label>
-      <span class="create-project-slash">/</span>
-      <label class="grow"><span>Project name</span><input name="name" type="text" autocomplete="off" placeholder="my-project" maxlength="100" required /></label>
-    </div>
-    <p class="form-help">Projects are containers. A project can be empty, or contain many independent monitors.</p>
-    <label><span>Description <small>optional</small></span><input name="description" type="text" autocomplete="off" maxlength="500" placeholder="What are you monitoring and why?" /></label>
-    <fieldset class="visibility-options">
-      <legend>Visibility</legend>
-      <label><input type="radio" name="visibility" value="private" checked /><span><strong>Private</strong><small>Only members of this workspace can access the project.</small></span></label>
-      <label><input type="radio" name="visibility" value="public" /><span><strong>Public</strong><small>Project metadata may be exposed publicly; monitor evidence remains permission-scoped.</small></span></label>
-    </fieldset>
-    <section class="initialize-monitor">
-      <label class="check-row"><input type="checkbox" name="initialize_monitor" /><span><strong>Add an initial monitor</strong><small>Optional. Create an empty project now, or attach the first monitored source here.</small></span></label>
+    <section class="project-create-block">
+      <div class="project-create-section-head">
+        <div><strong>Project</strong><span>Name the container. Monitors are added inside it.</span></div>
+      </div>
+      <div class="create-project-path">
+        <div class="project-owner-prefix" title="${esc(ownerMeta)}">
+          <span class="project-owner-avatar" aria-hidden="true">${esc(ownerInitial)}</span>
+          <strong>${esc(owner)}</strong>
+          <span class="project-path-slash">/</span>
+        </div>
+        <label class="project-name-field"><span class="sr-only">Project name</span><input name="name" type="text" autocomplete="off" placeholder="project-name" maxlength="100" required /></label>
+      </div>
+      <label class="project-description-field">
+        <span>Description <small>optional</small></span>
+        <textarea name="description" autocomplete="off" maxlength="500" rows="3" placeholder="What is this project for?"></textarea>
+      </label>
+    </section>
+
+    <section class="project-create-block project-create-block-tight">
+      <div class="project-create-section-head">
+        <div><strong>Visibility</strong><span>Controls who can open the project itself.</span></div>
+      </div>
+      <fieldset class="visibility-options">
+        <legend class="sr-only">Visibility</legend>
+        <label>
+          <input type="radio" name="visibility" value="private" checked />
+          <span class="visibility-radio-mark" aria-hidden="true"></span>
+          <span><strong>Private</strong><small>Only this workspace can open it.</small></span>
+        </label>
+        <label>
+          <input type="radio" name="visibility" value="public" />
+          <span class="visibility-radio-mark" aria-hidden="true"></span>
+          <span><strong>Public</strong><small>Project metadata can be viewed publicly.</small></span>
+        </label>
+      </fieldset>
+    </section>
+
+    <section class="project-create-block project-create-block-tight initialize-monitor">
+      <label class="monitor-toggle">
+        <input type="checkbox" name="initialize_monitor" />
+        <span class="monitor-toggle-box" aria-hidden="true">+</span>
+        <span><strong>Add the first monitor now</strong><small>Optional — you can also create an empty project and add monitors later.</small></span>
+      </label>
       <div class="initial-monitor-fields" data-initial-monitor-fields hidden>
         <label><span>URL or locator</span><input name="locator" type="text" autocomplete="off" placeholder="https://example.com/spec" /></label>
-        <label><span>Monitor label <small>optional</small></span><input name="monitor_label" type="text" autocomplete="off" placeholder="Production spec" /></label>
+        <label><span>Label <small>optional</small></span><input name="monitor_label" type="text" autocomplete="off" placeholder="Production spec" /></label>
       </div>
     </section>
+
     <div data-write-result></div>
-    <div class="new-project-actions"><a data-nav class="btn btn-secondary" href="/projects">Cancel</a><button class="btn btn-primary" type="submit">Create project</button></div>
+    <div class="new-project-actions">
+      <a data-nav class="btn btn-secondary" href="/projects">Cancel</a>
+      <button class="btn btn-primary" type="submit">Create project</button>
+    </div>
   </form>`;
 }
 
 async function newProjectPage() {
+  if (accountState.mode === 'hosted' && !accountState.authenticated) {
+    shell(`<div class="create-auth-gate">
+      <div class="create-auth-mark" aria-hidden="true">T</div>
+      <h1>Sign in to create a project</h1>
+      <p>Your session is no longer active. Sign in again before making workspace changes.</p>
+      <div class="create-auth-actions"><a data-nav class="btn btn-primary" href="/signin">Sign in</a><a data-nav class="btn btn-secondary" href="/projects">Back to projects</a></div>
+    </div>`);
+    return;
+  }
   shell(`<div class="new-project-page">
     <div class="new-project-heading">
-      <div><h1>Create a new project</h1><p>A Testamur project groups related monitors, evidence and change history.</p></div>
-      <a data-nav href="/projects">← Back to projects</a>
+      <div>
+        <a data-nav class="new-project-back" href="/projects">Projects</a>
+        <h1>New project</h1>
+        <p>Create the container first; monitors can be attached now or later.</p>
+      </div>
     </div>
     <section class="new-project-card">${newProjectFields()}</section>
-    <aside class="new-project-help">
-      <h2>What goes in a project?</h2>
-      <p>Put monitors that belong to the same thing you are trying to observe together. Each monitor can target a different URL, repository, artifact, source, or plugin-provided target.</p>
-      <div><strong>Project</strong><span>Container, name, description, visibility.</span></div>
-      <div><strong>Monitor</strong><span>One operational watch with its own target and alert policy.</span></div>
-      <div><strong>Source</strong><span>Canonical target resolved by a monitor; not the project identity.</span></div>
-    </aside>
   </div>`, true);
   bindNavigation();
   const form = document.querySelector('[data-new-project]');

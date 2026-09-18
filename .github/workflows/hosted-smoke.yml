@@ -2,6 +2,9 @@ name: hosted-smoke
 
 on:
   workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
 
 jobs:
   compile-hosted:
@@ -11,7 +14,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: python -m py_compile apps/web/hosted_app.py apps/web/identity.py testamur/web_app.py
+      - run: node --check testamur/web/app.js
 
   compile-mathhub:
     runs-on: ubuntu-latest

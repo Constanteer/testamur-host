@@ -806,9 +806,15 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                             mathhub_last_log = lines[-1][-600:]
                 except OSError:
                     pass
+            data_root = Path("/data")
             self._send(_json({
                 "ok": True,
                 "service": "testamur-host",
+                "storage": {
+                    "data_root": str(data_root),
+                    "persistent_volume_mounted": os.path.ismount(data_root),
+                    "accounts_db": str(self.hosted_server.account_store.path),
+                },
                 "mathhub": {
                     "ok": mathhub_ok,
                     "error": mathhub_error,
