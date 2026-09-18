@@ -5,6 +5,8 @@ import json
 import os
 import shutil
 import threading
+import urllib.error
+import urllib.request
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer
@@ -34,6 +36,7 @@ from .identity import AccountError, AccountStore
 
 SESSION_COOKIE = "testamur_session"
 WORKSPACE_COOKIE = "testamur_workspace"
+_MATHHUB_PREFIX = "/sources/mathhub"
 _ACCOUNT_ROUTES = {"signin", "signup", "settings"}
 _PUBLIC_ASSETS = {"index.html", "app.js", "styles.css"}
 
@@ -649,6 +652,59 @@ class HostedTestamurServer(ThreadingHTTPServer):
 class HostedTestamurWebHandler(TestamurWebHandler):
     server_version = "TestamurHostedWeb/1"
 
+    def _proxy_mathhub(self) -> dict[str, Any]:
+        split = urlsplit(self.path)
+        upstream_path = split.path[len(_MATHHUB_PREFIX):] or "/"
+        target = "http://127.0.0.1:8001" + upstream_path
+        if split.query:
+            target += "?" + split.query
+
+        body = None
+        if self.command in {"POST", "PUT", "PATCH"}:
+            try:
+                length = int(self.headers.get("Content-Length") or "0")
+            except ValueError:
+                return _error("invalid_content_length", "invalid Content-Length", status=400)
+            if length > 0:
+                body = self.rfile.read(length)
+
+        headers = {
+            "Accept": self.headers.get("Accept", "*/*"),
+            "Accept-Encoding": "identity",
+            "User-Agent": self.headers.get("User-Agent", "Testamur-MathHub-Gateway/1"),
+        }
+        content_type = self.headers.get("Content-Type")
+        if content_type:
+            headers["Content-Type"] = content_type
+
+        request = urllib.request.Request(target, data=body, headers=headers, method=self.command)
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                status = int(getattr(response, "status", response.getcode()))
+                payload = response.read()
+                upstream_headers = response.headers
+        except urllib.error.HTTPError as exc:
+            status = int(exc.code)
+            payload = exc.read()
+            upstream_headers = exc.headers
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            return _error(
+                "mathhub_unavailable",
+                f"MathHub upstream is unavailable: {getattr(exc, 'reason', exc)}",
+                status=502,
+            )
+
+        response_headers = {
+            "Cache-Control": upstream_headers.get("Cache-Control", "no-cache"),
+            "Content-Type": upstream_headers.get("Content-Type", "application/octet-stream"),
+            **_SECURITY_HEADERS,
+        }
+        for key in ("ETag", "Last-Modified"):
+            value = upstream_headers.get(key)
+            if value:
+                response_headers[key] = value
+        return {"status": status, "headers": response_headers, "body": payload}
+
     @property
     def hosted_server(self) -> HostedTestamurServer:
         return self.server  # type: ignore[return-value]
@@ -682,6 +738,12 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         split = urlsplit(self.path)
         path = unquote(split.path or "/")
         name = path.lstrip("/")
+        if path == _MATHHUB_PREFIX:
+            self._send(_redirect(_MATHHUB_PREFIX + "/"))
+            return
+        if path.startswith(_MATHHUB_PREFIX + "/"):
+            self._send(self._proxy_mathhub())
+            return
         if path.startswith("/v1/account/") or path.startswith("/v1/users/"):
             self._send(
                 dispatch_account_get(
@@ -732,6 +794,11 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         if not _host_allowed(self.headers.get("Host"), bind_host):
             self._send(_error("host_not_allowed", "request host is not allowed", status=403))
             return
+        path = urlsplit(self.path).path.rstrip("/") or "/"
+        if path == _MATHHUB_PREFIX or path.startswith(_MATHHUB_PREFIX + "/"):
+            self._send(self._proxy_mathhub())
+            return
+
         try:
             payload = self._read_json()
         except AccountError as exc:
