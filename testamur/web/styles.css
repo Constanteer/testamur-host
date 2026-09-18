@@ -807,3 +807,15 @@ body.modal-open { overflow: hidden; }
   .supply-chain-stats { grid-template-columns: 1fr; }
   .supply-chain-stats div + div { border-left: 0; border-top: 1px solid var(--line); }
 }
+
+
+.supply-chain-advisories { border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); overflow: hidden; }
+.supply-chain-advisories .section-head { padding: 12px 16px; margin: 0; background: var(--soft); border-bottom: 1px solid var(--line); }
+.supply-chain-advisory-note { margin: 0; padding: 12px 16px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line); }
+.advisory-candidate-list { display: grid; }
+.advisory-candidate-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 12px 16px; color: var(--ink); }
+.advisory-candidate-row + .advisory-candidate-row { border-top: 1px solid var(--line); }
+.advisory-candidate-row:hover { background: var(--soft); text-decoration: none; }
+.advisory-candidate-row strong, .advisory-candidate-row small { display: block; }
+.advisory-candidate-row small { margin-top: 2px; color: var(--muted); font-size: 10px; }
+.advisory-empty { margin: 12px; }
