@@ -157,6 +157,7 @@ function helpNav() {
       <a data-nav href="/quickstart"><strong>5-minute quickstart</strong><small>Track one dependency end to end</small></a>
       <a data-nav href="/demo"><strong>Example project</strong><small>See a source change and downstream review</small></a>
       <a data-nav href="/learn"><strong>What is Testamur?</strong><small>Concepts without the internal jargon</small></a>
+      <a data-nav href="/docs"><strong>Concept reference</strong><small>Sources, revisions, reliance, impact and agents</small></a>
       <div class="user-menu-divider"></div>
       ${mathHub}
       <a href="https://github.com/Constanteer/testamur-plugins" target="_blank" rel="noreferrer"><strong>Integrations</strong><small>Codex, MCP and agent setup</small></a>
@@ -1622,6 +1623,55 @@ function learnPage() {
   </div>`);
 }
 
+function docsPage() {
+  shell(`<div class="docs-shell">
+    <div class="docs-layout">
+      <aside class="docs-nav">
+        <strong>Testamur concepts</strong>
+        <a href="#watch">What it watches</a>
+        <a href="#project-monitor">Project vs Monitor</a>
+        <a href="#source-revision">Source & Revision</a>
+        <a href="#change">Change</a>
+        <a href="#reliance">Reliance</a>
+        <a href="#impact">Impact</a>
+        <a href="#revalidation">Revalidation</a>
+        <a href="#agents">Agents</a>
+        <a href="#advanced">Advanced model</a>
+      </aside>
+      <article class="docs-content">
+        <header class="docs-hero"><span class="onboarding-kicker">CONCEPT REFERENCE</span><h1>The model behind the UI.</h1><p>Start with the Quickstart if you have not completed the basic loop. This page explains the concepts you will encounter as Testamur records more history and provenance.</p><div class="learn-actions"><a data-nav class="btn btn-primary" href="/quickstart">5-minute quickstart</a><a data-nav class="btn btn-secondary" href="/demo">Example project</a></div></header>
+
+        <section id="watch" class="docs-section"><h2>What Testamur watches</h2><p>A monitor points at something observable: a documentation URL, repository branch, specification, artifact, package, model release, or another target supplied by an integration. Monitoring records change and availability states; it does not automatically decide whether the new state is better, worse, true, or false.</p><div class="docs-rule">Monitor target → observed Source → recorded version/state</div></section>
+
+        <section id="project-monitor" class="docs-section"><h2>Project vs Monitor</h2><p>A <strong>Project</strong> is the work you care about. A <strong>Monitor</strong> is one upstream thing around that work. One Project can therefore contain many Monitors.</p><div class="docs-diagram"><span>api-client</span><b>contains</b><span>API docs monitor</span><span>SDK repository monitor</span><span>schema artifact monitor</span></div></section>
+
+        <section id="source-revision" class="docs-section"><h2>Source and Revision</h2><p>A Source gives an upstream object persistent identity. A Revision or Snapshot records what Testamur actually observed at a particular point. The locator can stay the same while the recorded revision changes.</p><div class="docs-rule">same URL ≠ same recorded revision</div><p>History is therefore first-class: an old result can remain tied to the basis that existed when the work happened.</p></section>
+
+        <section id="change" class="docs-section"><h2>What “changed” means</h2><p>Change is mechanical evidence: hashes, stored fields, revision identity, or another provider-specific observation differs. The Compare surface deliberately reports those facts before interpretation.</p><div class="docs-invariants"><code>changed ≠ invalid</code><code>stale ≠ false</code></div><p>Whether a change matters depends on what downstream work relied on and which part of the basis moved.</p></section>
+
+        <section id="reliance" class="docs-section"><h2>Reliance</h2><p>Reliance is stronger than exposure. A source may have been fetched, displayed, or present in an agent context without becoming a durable dependency of the result.</p><div class="docs-invariants"><code>fetched ≠ relied</code><code>EXPOSED_TO_MODEL ≠ RELIED</code></div><p>When Testamur records reliance, it creates an inspectable reason that later change can propagate into a review candidate.</p></section>
+
+        <section id="impact" class="docs-section"><h2>Impact / affectedness</h2><p>Impact asks: given a recorded change or object, what downstream work is reachable through the available reliance/lineage evidence? It narrows attention. It is not a global trust score and it is not a proof of failure.</p><div class="docs-rule">upstream change + recorded reliance → review candidates</div></section>
+
+        <section id="revalidation" class="docs-section"><h2>Revalidation</h2><p>Revalidation is the explicit review after the basis changes. You inspect the change, rerun or reconsider downstream work where necessary, then record what happened against the new basis. This is where judgment belongs.</p><div class="docs-flow"><span>exact basis</span><b>→</b><span>change</span><b>→</b><span>affected work</span><b>→</b><span>review</span><b>→</b><span>new evidence</span></div></section>
+
+        <section id="agents" class="docs-section"><h2>Agents and integrations</h2><p>Codex and MCP-capable hosts can use Testamur's Source Gateway and integration contracts. The host may observe tool events and source access, but durable reliance remains an explicit semantic step rather than an inference from everything that appeared in context.</p><p><a href="https://github.com/Constanteer/testamur-plugins" target="_blank" rel="noreferrer">Open Testamur integrations →</a></p></section>
+
+        <section id="advanced" class="docs-section"><h2>Advanced model</h2><div class="docs-definition-grid">
+          <div><strong>Record</strong><span>A persistent assertion, requirement, observation, result, or other referable object with version history.</span></div>
+          <div><strong>WorkSession</strong><span>A bounded episode of work in which evidence may be observed and reliance may be recorded.</span></div>
+          <div><strong>Lineage</strong><span>The recorded derivational/provenance structure behind an object.</span></div>
+          <div><strong>Affectedness</strong><span>A downstream projection from explicit evidence relationships; not a truth verdict.</span></div>
+          <div><strong>Temporal clauses</strong><span>Queries such as KNOWN_AT / AVAILABLE_BY / EFFECTIVE_AT that keep different notions of time separate.</span></div>
+          <div><strong>Canonical IDs / Raw</strong><span>Machine-facing identity and envelopes exposed for inspection, debugging, and integrations.</span></div>
+        </div></section>
+
+        <section class="semantic-firewall"><h2>The semantic firewall</h2><div><code>recorded ≠ verified</code><code>fetched ≠ relied</code><code>changed ≠ invalid</code><code>stale ≠ false</code></div></section>
+      </article>
+    </div>
+  </div>`);
+}
+
 function quickstartPage() {
   shell(`<div class="guide-shell">
     <div class="page-title"><div><span class="onboarding-kicker">5-MINUTE QUICKSTART</span><h1>Track one dependency end to end.</h1><p>At the end, Testamur has one project, one monitored dependency, and one recorded observation it can compare against later.</p></div><a data-nav class="btn btn-secondary" href="/learn">Why this works</a></div>
@@ -1723,6 +1773,7 @@ async function render() {
   if (path === '/explore') return explorePage();
   if (path === '/monitoring') return monitoringPage();
   if (path === '/learn') return learnPage();
+  if (path === '/docs') return docsPage();
   if (path === '/quickstart') return quickstartPage();
   if (path === '/demo') return demoPage();
   if (path === '/status') return statusPage();
