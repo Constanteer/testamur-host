@@ -3,8 +3,7 @@ set -u
 
 mkdir -p /data/testamur /data/mathhub /data/mathhub/lake /data/lean/elan
 MATHHUB_LOG=/data/mathhub/startup.log
-BOOTSTRAP_LOG=/data/mathhub/bootstrap.log
-touch "$MATHHUB_LOG" "$BOOTSTRAP_LOG"
+touch "$MATHHUB_LOG"
 
 
 if python - <<'PY'
