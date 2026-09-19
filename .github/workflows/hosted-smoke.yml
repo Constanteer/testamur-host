@@ -17,7 +17,7 @@ jobs:
           path: canonical-testamur
       - name: Guard canonical shared Web assets
         run: |
-          for asset in index.html contextual-guide.js contextual-guide.css demo-handoff.js demo-handoff.css; do
+          for asset in index.html contextual-guide.js contextual-guide.css demo-handoff.js demo-handoff.css supply-chain-guidance.js supply-chain-guidance.css; do
             cmp "canonical-testamur/testamur/web/$asset" "testamur/web/$asset" || {
               echo "Hosted shared Web asset drifted from canonical Testamur: $asset" >&2
               exit 1
@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: "22"
       - run: python -m py_compile apps/web/hosted_app.py apps/web/identity.py apps/web/mail.py testamur/web_app.py
-      - run: node --check testamur/web/app.js testamur/web/contextual-guide.js testamur/web/demo-handoff.js
+      - run: node --check testamur/web/app.js testamur/web/contextual-guide.js testamur/web/demo-handoff.js testamur/web/supply-chain-guidance.js
       - run: python -m unittest tests.test_email_verification tests.test_hosted_onboarding_web_contract
 
   compile-mathhub:
