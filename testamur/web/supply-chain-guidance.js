@@ -15,7 +15,7 @@
 
     const note = document.createElement('div');
     note.className = 'supply-chain-guidance-note';
-    note.innerHTML = `<strong>What happens next</strong><ol><li>Run the command from the repository root.</li><li>Refresh this tab to inspect the recorded manifests and dependency revisions.</li><li>Review advisory candidates explicitly; a package identity match is not an affectedness verdict.</li></ol>`;
+    note.innerHTML = `<strong>What happens next</strong><ol><li>Run the command from the repository root.</li><li>Refresh this tab to inspect the recorded manifests and dependency revisions.</li><li>Review advisory candidates explicitly; a package identity match is not an affectedness verdict.</li></ol><p><strong>Rescans are observations.</strong> Every successful scan is recorded even when it sees the same dependency state. An identical rescan does not by itself verify dependencies, establish reliance, or prove that an earlier assessment is still valid.</p>`;
     actions.after(note);
 
     actions.querySelector('[data-copy-supply-command]')?.addEventListener('click', async event => {
