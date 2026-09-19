@@ -174,7 +174,7 @@ def dispatch_api_write(
         return _error("invalid_argument", "write routes do not accept query parameters")
     try:
         if path == "/v1/advisory-assessments":
-            return _json(record_advisory_assessment(service, payload))
+            return _json(record_advisory_assessment(service, payload), status=HTTPStatus.OK)
         if path == "/v1/projects/refresh":
             unknown = set(payload) - {"project_ref"}
             if unknown:
