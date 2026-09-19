@@ -16,6 +16,8 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
 
     assert "Explore formal mathematics." in argument
     assert "Browse library" in library
+    assert "Exact Lean record" in library
+    assert '<code class="library-lean-name">' not in library
     assert "Browse by area" in library
     assert "Advanced Lean settings" in library
     assert "data-library-retry-setup" in library
@@ -48,4 +50,4 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 0d58c20cd438bb75f6bf953655f69aaaac7cf45f"
+    assert marker == "Constanteer/Mathub main @ fc2e278688262e1bd79bbd515378eb94905f56ed"
