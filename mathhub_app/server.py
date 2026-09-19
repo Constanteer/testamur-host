@@ -668,6 +668,10 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             payload = self.read_json()
+            if path == "/api/runtime/setup":
+                request_runtime_setup(force=True)
+                self.json_response(202, runtime_status())
+                return
             if path == "/api/lean/check":
                 self.json_response(200, audit(payload))
                 return
