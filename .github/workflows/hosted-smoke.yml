@@ -11,6 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Constanteer/testamur
+          path: canonical-testamur
+      - name: Guard canonical shared Web assets
+        run: |
+          for asset in index.html contextual-guide.js contextual-guide.css demo-handoff.js demo-handoff.css; do
+            cmp "canonical-testamur/testamur/web/$asset" "testamur/web/$asset" || {
+              echo "Hosted shared Web asset drifted from canonical Testamur: $asset" >&2
+              exit 1
+            }
+          done
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -18,8 +30,8 @@ jobs:
         with:
           node-version: "22"
       - run: python -m py_compile apps/web/hosted_app.py apps/web/identity.py apps/web/mail.py testamur/web_app.py
-      - run: node --check testamur/web/app.js
-      - run: python -m unittest tests.test_email_verification
+      - run: node --check testamur/web/app.js testamur/web/contextual-guide.js testamur/web/demo-handoff.js
+      - run: python -m unittest tests.test_email_verification tests.test_hosted_onboarding_web_contract
 
   compile-mathhub:
     runs-on: ubuntu-latest
