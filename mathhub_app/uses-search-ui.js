@@ -119,7 +119,7 @@
       hint.outerHTML=structuralSearchHint();
     }
     const input=document.querySelector('#search');
-    if(input)input.placeholder='Search mathematics · uses:Nat.add_comm · used-by:CLM-000123 · head:Eq';
+    if(input)input.placeholder='Search by theorem, topic, author, or keyword…';
   }
 
   decorateStructuralSearch=function graphDecorateStructuralSearch(){

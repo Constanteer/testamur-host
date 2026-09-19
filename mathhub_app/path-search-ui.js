@@ -135,7 +135,7 @@ function pathSearchWitnessHtml(filter,witness){
       hint.outerHTML=structuralSearchHint();
     }
     const input=document.querySelector('#search');
-    if(input)input.placeholder='Search mathematics · path:2:Nat.add_comm via:Nat.succ route-through:Nat.zero · route-uses:Nat.add_comm';
+    if(input)input.placeholder='Search by theorem, topic, author, or keyword…';
   }
 
   decorateStructuralSearch=function pathDecorateStructuralSearch(){

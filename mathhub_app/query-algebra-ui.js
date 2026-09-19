@@ -179,7 +179,7 @@ function quantifierWitnessHtml(filters,witness){
       hint.outerHTML=structuralSearchHint();
     }
     const input=document.querySelector('#search');
-    if(input)input.placeholder='Search mathematics · not-uses:Nat.mul_comm · route-uses:Nat.add_comm · route-not-uses:Nat.mul_comm';
+    if(input)input.placeholder='Search by theorem, topic, author, or keyword…';
   }
 
   decorateStructuralSearch=function quantifierDecorateStructuralSearch(){
