@@ -388,3 +388,26 @@
 .graph-formal-details{margin:10px 0 4px}
 .graph-formal-details code{display:block;margin-top:6px;color:var(--muted);font:9px/1.5 var(--mono);overflow-wrap:anywhere}
 .argument-graph-inspector p{color:var(--muted);font-size:11px;line-height:1.5}
+
+
+/* Contribution flow: readable mathematics first, formalization on demand. */
+.contribution-head{padding-top:4px}
+.contribution-form .field textarea.human-editor{font:12px/1.6 var(--sans);min-height:92px}
+.field-optional{color:var(--muted);font-weight:500}
+.contribution-formal{
+  margin:6px 0 18px;border:1px solid var(--line);border-radius:8px;background:var(--canvas-subtle)
+}
+.contribution-formal>summary{
+  display:flex;justify-content:space-between;align-items:center;gap:16px;padding:13px 14px;cursor:pointer;list-style:none
+}
+.contribution-formal>summary::-webkit-details-marker{display:none}
+.contribution-formal>summary div{display:grid;gap:2px}
+.contribution-formal>summary strong{font-size:12px}
+.contribution-formal>summary span{color:var(--muted);font-size:10px}
+.disclosure-arrow{font-size:18px!important;transition:transform .15s ease}
+.contribution-formal[open] .disclosure-arrow{transform:rotate(90deg)}
+.contribution-formal-body{padding:0 14px 14px;border-top:1px solid var(--line)}
+.contribution-help{margin:12px 0 14px;color:var(--muted);font-size:11px;line-height:1.55}
+.contribution-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.contribution-submit{min-height:40px;padding-inline:16px}
+.contribution-aside-copy{margin:0;color:var(--muted);font-size:11px;line-height:1.55}
