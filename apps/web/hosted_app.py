@@ -34,6 +34,7 @@ from testamur.web_app import (
 )
 
 from .identity import AccountError, AccountStore
+from .mail import MailDeliveryError, ResendMailer
 
 SESSION_COOKIE = "testamur_session"
 WORKSPACE_COOKIE = "testamur_workspace"
@@ -269,11 +270,18 @@ def dispatch_account_write(
     secure_cookie: bool = False,
     delete_workspace: Callable[[str], None] | None = None,
     delete_org_workspace: Callable[[str], None] | None = None,
+    mailer: ResendMailer | None = None,
 ) -> dict[str, Any]:
     path = urlsplit(target).path.rstrip("/") or "/"
     token = _session_token(cookie_header)
     try:
         if path == "/v1/account/signup":
+            if mailer is None:
+                return _error(
+                    "email_delivery_unavailable",
+                    "Email verification is not configured on this deployment.",
+                    status=503,
+                )
             unknown = set(payload) - {"username", "email", "password", "display_name"}
             if unknown:
                 raise AccountError("invalid_argument", f"Unknown signup fields: {', '.join(sorted(unknown))}")
@@ -285,22 +293,86 @@ def dispatch_account_write(
                 raise AccountError("invalid_argument", "username, email and password are required strings")
             if display_name is not None and not isinstance(display_name, str):
                 raise AccountError("invalid_argument", "display_name must be a string")
-            user, session = store.sign_up(
+            user, verification_token = store.sign_up(
                 username=username,
                 email=email,
                 password=password,
                 display_name=display_name,
             )
-            response = _json(
+            email_sent = True
+            try:
+                mailer.send_verification(user=user, token=verification_token)
+                store.confirm_email_verification_delivery(token=verification_token)
+            except MailDeliveryError:
+                store.reject_email_verification_delivery(token=verification_token)
+                email_sent = False
+            return _json(
                 {
                     "ok": True,
                     "schema": "testamur.hosted.account.v1",
+                    "authenticated": False,
+                    "verification_required": True,
+                    "email_sent": email_sent,
+                    "user": user,
+                },
+                status=202,
+            )
+
+        if path == "/v1/account/email-verification/verify":
+            unknown = set(payload) - {"token"}
+            if unknown:
+                raise AccountError("invalid_argument", f"Unknown verification fields: {', '.join(sorted(unknown))}")
+            verification_token = payload.get("token")
+            if not isinstance(verification_token, str):
+                raise AccountError("invalid_argument", "token must be a string")
+            user, session = store.verify_email(token=verification_token)
+            response = _json(
+                {
+                    "ok": True,
+                    "schema": "testamur.hosted.email-verification.v1",
                     "authenticated": True,
+                    "verified": True,
                     "user": user,
                 }
             )
             response["headers"]["Set-Cookie"] = _set_cookie(session, secure=secure_cookie)
             return response
+
+        if path == "/v1/account/email-verification/resend":
+            if mailer is None:
+                return _error(
+                    "email_delivery_unavailable",
+                    "Email verification is not configured on this deployment.",
+                    status=503,
+                )
+            unknown = set(payload) - {"identifier"}
+            if unknown:
+                raise AccountError("invalid_argument", f"Unknown resend fields: {', '.join(sorted(unknown))}")
+            identifier = payload.get("identifier")
+            if not isinstance(identifier, str):
+                raise AccountError("invalid_argument", "identifier must be a string")
+            try:
+                pending = store.request_email_verification(identifier=identifier)
+            except AccountError as exc:
+                if exc.code != "verification_rate_limited":
+                    raise
+                pending = None
+            if pending is not None:
+                pending_user, verification_token = pending
+                try:
+                    mailer.send_verification(user=pending_user, token=verification_token)
+                    store.confirm_email_verification_delivery(token=verification_token)
+                except MailDeliveryError:
+                    store.reject_email_verification_delivery(token=verification_token)
+            return _json(
+                {
+                    "ok": True,
+                    "schema": "testamur.hosted.email-verification.v1",
+                    "accepted": True,
+                    "message": "If that account still needs verification, a fresh link has been requested.",
+                },
+                status=202,
+            )
 
         if path == "/v1/account/signin":
             unknown = set(payload) - {"identifier", "password"}
@@ -604,6 +676,7 @@ class HostedTestamurServer(ThreadingHTTPServer):
         account_store: AccountStore,
         workspace_root: Path,
         secure_cookie: bool = False,
+        mailer: ResendMailer | None = None,
         monitor_target_providers: Mapping[str, MonitorTargetProvider] | None = None,
         monitor_target_provider_specs: Mapping[str, Mapping[str, Any]] | None = None,
         monitor_scheduler_enabled: bool = False,
@@ -614,6 +687,7 @@ class HostedTestamurServer(ThreadingHTTPServer):
         self.workspace_root = workspace_root
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         self.secure_cookie = secure_cookie
+        self.mailer = mailer
         self.monitor_target_providers = dict(monitor_target_providers or {})
         self.monitor_target_provider_specs = {
             str(name): dict(spec)
@@ -828,6 +902,10 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                     "accounts_db_exists": accounts_db.is_file(),
                     "accounts_db_size_bytes": accounts_db_size,
                 },
+                "email_delivery": {
+                    "provider": "resend" if self.hosted_server.mailer is not None else None,
+                    "configured": self.hosted_server.mailer is not None,
+                },
                 "mathhub": {
                     "ok": mathhub_ok,
                     "error": mathhub_error,
@@ -858,7 +936,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                 )
             )
             return
-        if path in {"/signin", "/signup", "/settings/profile", "/settings/security", "/settings/organizations"} or path.startswith("/users/") or path.startswith("/organizations/"):
+        if path in {"/signin", "/signup", "/verify-email", "/verify-email-pending", "/settings/profile", "/settings/security", "/settings/organizations"} or path.startswith("/users/") or path.startswith("/organizations/"):
             self._send(_static(WEB_ROOT / "index.html", cache="no-cache"))
             return
         if name in _PUBLIC_ASSETS:
@@ -920,6 +998,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                     secure_cookie=self.hosted_server.secure_cookie,
                     delete_workspace=self.hosted_server.delete_user_workspace,
                     delete_org_workspace=self.hosted_server.delete_organization_workspace,
+                    mailer=self.hosted_server.mailer,
                 )
             )
             return
@@ -948,6 +1027,7 @@ def build_hosted_server(
     host: str = "127.0.0.1",
     port: int = 8788,
     secure_cookie: bool = False,
+    mailer: ResendMailer | None = None,
     monitor_target_providers: Mapping[str, MonitorTargetProvider] | None = None,
     monitor_target_provider_specs: Mapping[str, Mapping[str, Any]] | None = None,
     monitor_scheduler_enabled: bool = False,
@@ -960,11 +1040,14 @@ def build_hosted_server(
         registry = load_monitor_provider_registry()
         monitor_target_providers = registry.providers
         monitor_target_provider_specs = registry.specs
+    if mailer is None:
+        mailer = ResendMailer.from_env()
     return HostedTestamurServer(
         (host, int(port)),
         account_store=AccountStore(root / "accounts.sqlite3"),
         workspace_root=root / "workspaces",
         secure_cookie=secure_cookie,
+        mailer=mailer,
         monitor_target_providers=monitor_target_providers,
         monitor_target_provider_specs=monitor_target_provider_specs,
         monitor_scheduler_enabled=monitor_scheduler_enabled,

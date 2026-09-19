@@ -1,0 +1,203 @@
+from __future__ import annotations
+
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+
+from apps.web.hosted_app import dispatch_account_write
+from apps.web.identity import AccountError, AccountStore
+
+
+class FakeMailer:
+    def __init__(self) -> None:
+        self.sent: list[tuple[dict[str, object], str]] = []
+        self.fail = False
+
+    def send_verification(self, *, user: dict[str, object], token: str) -> str:
+        from apps.web.mail import MailDeliveryError
+
+        self.sent.append((user, token))
+        if self.fail:
+            raise MailDeliveryError("simulated delivery failure")
+        return "email_test"
+
+
+def body(response: dict[str, object]) -> dict[str, object]:
+    return dict(response["body"])
+
+
+class EmailVerificationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.store = AccountStore(Path(self.tempdir.name) / "accounts.sqlite3")
+        self.mailer = FakeMailer()
+
+    def signup(self, *, username: str = "hank", email: str = "hank@example.com") -> tuple[dict[str, object], str]:
+        response = dispatch_account_write(
+            self.store,
+            "/v1/account/signup",
+            {
+                "username": username,
+                "email": email,
+                "password": "a-long-test-password",
+                "display_name": "Hank",
+            },
+            cookie_header=None,
+            mailer=self.mailer,
+        )
+        payload = body(response)
+        self.assertEqual(response["status"], 202)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["authenticated"])
+        self.assertTrue(payload["verification_required"])
+        self.assertTrue(payload["email_sent"])
+        self.assertEqual(len(self.mailer.sent), 1)
+        return payload, self.mailer.sent[-1][1]
+
+    def test_signup_requires_email_verification_before_signin(self) -> None:
+        payload, token = self.signup()
+        self.assertFalse(payload["user"]["email_verified"])
+
+        with self.assertRaises(AccountError) as raised:
+            self.store.sign_in(identifier="hank@example.com", password="a-long-test-password")
+        self.assertEqual(raised.exception.code, "email_verification_required")
+
+        verify_response = dispatch_account_write(
+            self.store,
+            "/v1/account/email-verification/verify",
+            {"token": token},
+            cookie_header=None,
+            mailer=self.mailer,
+        )
+        verified = body(verify_response)
+        self.assertTrue(verified["authenticated"])
+        self.assertTrue(verified["verified"])
+        self.assertTrue(verified["user"]["email_verified"])
+        self.assertIn("Set-Cookie", verify_response["headers"])
+
+        user, _session = self.store.sign_in(
+            identifier="hank@example.com",
+            password="a-long-test-password",
+        )
+        self.assertTrue(user["email_verified"])
+
+        replay = dispatch_account_write(
+            self.store,
+            "/v1/account/email-verification/verify",
+            {"token": token},
+            cookie_header=None,
+            mailer=self.mailer,
+        )
+        replay_payload = body(replay)
+        self.assertEqual(replay["status"], 400)
+        self.assertEqual(replay_payload["error"]["code"], "verification_token_used")
+
+    def test_resend_invalidates_previous_token(self) -> None:
+        _payload, original = self.signup()
+        resend = dispatch_account_write(
+            self.store,
+            "/v1/account/email-verification/resend",
+            {"identifier": "hank@example.com"},
+            cookie_header=None,
+            mailer=self.mailer,
+        )
+        resend_payload = body(resend)
+        # Cooldown is intentionally non-enumerating at the HTTP boundary.
+        self.assertEqual(resend["status"], 202)
+        self.assertTrue(resend_payload["accepted"])
+        self.assertEqual(len(self.mailer.sent), 1)
+
+        # Age the first token so the deterministic test can exercise replacement.
+        with self.store._connect() as connection:
+            connection.execute(
+                "UPDATE email_verification_tokens SET created_at = created_at - 120"
+            )
+        resend = dispatch_account_write(
+            self.store,
+            "/v1/account/email-verification/resend",
+            {"identifier": "hank@example.com"},
+            cookie_header=None,
+            mailer=self.mailer,
+        )
+        self.assertEqual(resend["status"], 202)
+        replacement = self.mailer.sent[-1][1]
+        self.assertNotEqual(original, replacement)
+
+        with self.assertRaises(AccountError) as raised:
+            self.store.verify_email(token=original)
+        self.assertEqual(raised.exception.code, "verification_token_used")
+
+        user, _session = self.store.verify_email(token=replacement)
+        self.assertTrue(user["email_verified"])
+
+    def test_failed_resend_preserves_previous_delivered_link(self) -> None:
+        _payload, original = self.signup()
+        with self.store._connect() as connection:
+            connection.execute(
+                "UPDATE email_verification_tokens SET created_at = created_at - 120"
+            )
+
+        self.mailer.fail = True
+        resend = dispatch_account_write(
+            self.store,
+            "/v1/account/email-verification/resend",
+            {"identifier": "hank@example.com"},
+            cookie_header=None,
+            mailer=self.mailer,
+        )
+        self.assertEqual(resend["status"], 202)
+
+        user, _session = self.store.verify_email(token=original)
+        self.assertTrue(user["email_verified"])
+
+    def test_existing_accounts_are_grandfathered_during_schema_migration(self) -> None:
+        legacy_path = Path(self.tempdir.name) / "legacy.sqlite3"
+        with sqlite3.connect(legacy_path) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE users (
+                    user_id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    email TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL,
+                    password_digest TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                """
+            )
+        # Use the store's password encoder by creating a temporary current-schema user,
+        # then copy only the encoded digest into the legacy-shaped database.
+        current_user, token = self.store.sign_up(
+            username="digest-source",
+            email="digest@example.com",
+            password="a-long-test-password",
+        )
+        del current_user, token
+        with self.store._connect() as connection:
+            digest = connection.execute(
+                "SELECT password_digest FROM users WHERE username = 'digest-source'"
+            ).fetchone()["password_digest"]
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO users(
+                    user_id, username, email, display_name, password_digest, created_at, updated_at
+                ) VALUES ('usr_0123456789abcdef01234567', 'legacy', 'legacy@example.com', 'Legacy', ?, 100, 100)
+                """,
+                (digest,),
+            )
+
+        migrated = AccountStore(legacy_path)
+        user, _session = migrated.sign_in(
+            identifier="legacy@example.com",
+            password="a-long-test-password",
+        )
+        self.assertTrue(user["email_verified"])
+        self.assertEqual(user["email_verified_at"], 100)
+
+
+if __name__ == "__main__":
+    unittest.main()

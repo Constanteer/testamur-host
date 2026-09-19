@@ -15,6 +15,8 @@ This repository is intentionally self-contained for deployment. It contains:
 /                       Testamur hosted workspace
 /signin                 Sign in
 /signup                 Create account
+/verify-email            Consume a short-lived email verification link
+/verify-email-pending    Verification / resend state
 /sources/mathhub/        Bundled public MathHub
 /healthz                 Service health
 ```
@@ -65,6 +67,22 @@ The production start command is already defined by the Docker image:
 ```
 
 Use `https://testamur.org` as the public custom domain. No second Zeabur service or public MathHub domain is required.
+
+## Hosted email verification
+
+New hosted accounts are pending until their email address is verified. Testamur stores only a SHA-256 digest of each high-entropy verification token; links expire after 30 minutes and are single-use. A resend is rate-limited and only supersedes the previous delivered link after the mail provider accepts the replacement.
+
+Production delivery uses Resend through its HTTPS API. Configure these as deployment secrets/environment variables, never in the repository:
+
+```text
+RESEND_API_KEY=...
+TESTAMUR_PUBLIC_ORIGIN=https://testamur.org
+TESTAMUR_MAIL_FROM=Testamur <accounts@testamur.org>
+```
+
+For an initial private smoke test, Resend's `onboarding@resend.dev` sender can be used where the Resend account permits it. Public signup requires a verified sending domain/address; set `TESTAMUR_MAIL_FROM` to that verified sender before launch.
+
+If `RESEND_API_KEY` is absent, hosted signup fails closed with `email_delivery_unavailable` rather than creating accounts that cannot receive a verification link. Existing accounts created before this schema migration are explicitly grandfathered with `email_verification_source=legacy_migration` so deployment does not lock them out.
 
 ## Repository boundaries
 
