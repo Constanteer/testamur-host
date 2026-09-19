@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,6 +21,19 @@ DEFAULT_INGESTION_CHUNK_SIZE = 400
 MAX_INGESTION_CHUNK_SIZE = 500
 MIN_INGESTION_CHUNK_SIZE = 40
 MAX_INGESTION_PLAN_ROOTS = MAX_NAMESPACE_INDEX_ITEMS
+
+_NAMESPACE_SCAN_LOCKS_GUARD = threading.Lock()
+_NAMESPACE_SCAN_LOCKS: dict[tuple[str, str, str], threading.Lock] = {}
+
+
+def _namespace_scan_lock(environment_hash: str, imports_hash: str, namespace: str) -> threading.Lock:
+    key = (environment_hash, imports_hash, namespace)
+    with _NAMESPACE_SCAN_LOCKS_GUARD:
+        lock = _NAMESPACE_SCAN_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _NAMESPACE_SCAN_LOCKS[key] = lock
+        return lock
 
 LEAN_NAMESPACE_COMMAND = r'''
 open Lean Elab Command
@@ -371,18 +385,24 @@ def list_namespace_declarations(payload: dict[str, Any]) -> dict[str, Any]:
     cache_hit = scan is not None
     scan_duration_ms = 0
     if scan is None:
-        scanned = _scan_namespace(
-            imports=imports,
-            namespace=namespace,
-            environment_hash=environment_hash,
-            imports_hash=imports_hash,
-        )
-        if not scanned.get("ok"):
-            return scanned
-        scan_duration_ms = int(scanned.get("duration_ms") or 0)
-        scan = _scan_record(environment_hash, imports_hash, namespace)
-        if scan is None:
-            raise RuntimeError("namespace index scan was not persisted")
+        with _namespace_scan_lock(environment_hash, imports_hash, namespace):
+            # A background warmup and a first browser request may arrive together.
+            # Recheck after acquiring the lock so they never launch duplicate Lean scans.
+            scan = None if payload.get("refresh") else _scan_record(environment_hash, imports_hash, namespace)
+            cache_hit = scan is not None
+            if scan is None:
+                scanned = _scan_namespace(
+                    imports=imports,
+                    namespace=namespace,
+                    environment_hash=environment_hash,
+                    imports_hash=imports_hash,
+                )
+                if not scanned.get("ok"):
+                    return scanned
+                scan_duration_ms = int(scanned.get("duration_ms") or 0)
+                scan = _scan_record(environment_hash, imports_hash, namespace)
+                if scan is None:
+                    raise RuntimeError("namespace index scan was not persisted")
 
     if payload.get("ingestion_plan"):
         plan = _ingestion_plan_cached(
