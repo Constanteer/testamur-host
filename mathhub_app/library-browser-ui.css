@@ -37,3 +37,23 @@
   .library-query.friendly,.library-advanced-grid{grid-template-columns:1fr}
 }
 @media(max-width:480px){.library-topic-grid{grid-template-columns:1fr}}
+
+
+/* Empty registry onboarding: product action first, ontology second. */
+.mathhub-empty-start{
+  margin-top:20px;display:grid;grid-template-columns:minmax(0,1.45fr) minmax(250px,.55fr);
+  gap:18px;padding:28px;border:1px solid var(--line);border-radius:10px;background:var(--canvas)
+}
+.mathhub-empty-copy h2{margin:5px 0 9px;font-size:24px;line-height:1.2;letter-spacing:-.02em}
+.mathhub-empty-copy p{max-width:720px;margin:0;color:var(--muted);font-size:13px;line-height:1.65}
+.mathhub-empty-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:20px}
+.mathhub-empty-primary{min-height:42px;padding:8px 18px;font-size:13px}
+.mathhub-empty-example{
+  display:flex;flex-direction:column;gap:6px;padding:15px;border-radius:8px;background:var(--canvas-subtle)
+}
+.mathhub-empty-example>span{margin-bottom:3px;color:var(--muted);font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}
+.mathhub-empty-example button{
+  border:0;border-radius:6px;padding:8px 9px;background:transparent;color:var(--ink);text-align:left;font-size:11px;font-weight:600
+}
+.mathhub-empty-example button:hover{background:var(--canvas)}
+@media(max-width:760px){.mathhub-empty-start{grid-template-columns:1fr;padding:20px}}

@@ -19,6 +19,8 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
     assert "Browse by area" in library
     assert "Advanced Lean settings" in library
     assert "data-library-retry-setup" in library
+    assert "Your MathHub is ready for mathematics." in library
+    assert "Browse the math library" in library
     assert "<summary>Advanced formal search</summary>" in structural
     assert "button.textContent='Import tasks'" not in tasks
 
@@ -39,4 +41,4 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 10b4db8ed1691b598d0a6b3d271b33eda62f3df6"
+    assert marker == "Constanteer/Mathub main @ 1443f2d76ad1c4d2343fafcb5c4ce6e09014c4b2"

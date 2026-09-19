@@ -157,14 +157,32 @@ function bindLibraryBrowserOverlay(host){
   host.querySelector('[data-library-import]')?.addEventListener('click',()=>importLibrarySelection());
 }
 
+function openLibraryBrowser(){
+  libraryBrowserState.open=true;renderLibraryBrowser();
+  if(state.runtime.ready&&!libraryBrowserState.result)void previewLibraryNamespace();
+  else if(!state.runtime.ready&&typeof checkRuntime==='function')void checkRuntime();
+}
+
 function mountLibraryBrowserButton(){
   const top=document.querySelector('.topbar');if(!top||top.querySelector('[data-library-browser]'))return;
   const newClaim=top.querySelector('[data-view="submit"]');if(!newClaim)return;
   const button=document.createElement('button');button.className='btn btn-primary';button.dataset.libraryBrowser='';button.textContent='Browse library';button.title='Browse Mathlib; MathHub prepares the pinned library automatically';
-  newClaim.before(button);button.addEventListener('click',()=>{libraryBrowserState.open=true;renderLibraryBrowser();if(state.runtime.ready&&!libraryBrowserState.result)void previewLibraryNamespace();else if(!state.runtime.ready&&typeof checkRuntime==='function')void checkRuntime();});
+  newClaim.before(button);button.addEventListener('click',openLibraryBrowser);
+}
+
+function mountLibraryEmptyStart(){
+  if(state.view!=='registry'||claims.length)return;
+  document.querySelector('.overview-line')?.remove();
+  const layout=document.querySelector('.registry-layout');if(!layout)return;
+  const section=document.createElement('section');section.className='mathhub-empty-start';
+  section.innerHTML=`<div class="mathhub-empty-copy"><div class="eyebrow">Start here</div><h2>Your MathHub is ready for mathematics.</h2><p>There is nothing in this workspace yet. Start from the public Mathlib library—choose an area, search for a result, and add the statements you want to explore. MathHub prepares Lean and proof dependencies in the background.</p><div class="mathhub-empty-actions"><button class="btn btn-primary mathhub-empty-primary" data-empty-browse>Browse the math library</button><button class="btn" data-empty-add>Add your own statement</button></div></div><div class="mathhub-empty-example"><span>Try an area</span><button data-empty-topic="Nat">Numbers & arithmetic</button><button data-empty-topic="LinearAlgebra">Linear algebra</button><button data-empty-topic="Topology">Topology</button><button data-empty-topic="Probability">Probability</button></div>`;
+  layout.replaceWith(section);
+  section.querySelector('[data-empty-browse]')?.addEventListener('click',openLibraryBrowser);
+  section.querySelector('[data-empty-add]')?.addEventListener('click',()=>{state.view='submit';render();});
+  section.querySelectorAll('[data-empty-topic]').forEach(button=>button.addEventListener('click',()=>{libraryBrowserState.namespace=button.dataset.emptyTopic||'Nat';libraryBrowserState.result=null;libraryBrowserState.search='';openLibraryBrowser();}));
 }
 
 const libraryBrowserBaseBind=bind;
-bind=function bindLibraryBrowser(){libraryBrowserBaseBind();mountLibraryBrowserButton();};
+bind=function bindLibraryBrowser(){libraryBrowserBaseBind();mountLibraryBrowserButton();mountLibraryEmptyStart();};
 window.addEventListener('keydown',event=>{if(event.key==='Escape'&&libraryBrowserState.open&&!libraryBrowserState.importing){libraryBrowserState.open=false;renderLibraryBrowser();}});
 mountLibraryBrowserButton();
