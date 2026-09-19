@@ -23,6 +23,11 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
     assert "Browse the math library" in library
     assert "Show Lean proof" in argument
     assert "How these results connect." in argument
+    registry = read(MATHHUB / "registry-client.js")
+    catalog = read(MATHHUB / "catalog-client.js")
+    assert "Browse existing mathematics" in registry
+    assert "Formalization needed before publishing." in registry
+    assert "Statements loaded" in catalog
     assert "<summary>Advanced formal search</summary>" in structural
     assert "button.textContent='Import tasks'" not in tasks
 
@@ -43,4 +48,4 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 5b07323e586673af49efb0e654aec7965547eaa2"
+    assert marker == "Constanteer/Mathub main @ 0d58c20cd438bb75f6bf953655f69aaaac7cf45f"

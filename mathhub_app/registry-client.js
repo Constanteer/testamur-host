@@ -184,18 +184,32 @@ async function buildProof(proofId) {
 const baseRenderSubmit = renderSubmit;
 renderSubmit = function persistentSubmit() {
   if (!registryState.ready) return baseRenderSubmit();
-  return `<main class="shell page"><div class="page-narrow"><div class="eyebrow">Register</div><h1 class="display-title">Create a durable Claim identity.</h1><p class="display-deck">Registration creates CLM-xxxxxx and Claim version v1. A supplied proof becomes a separate immutable PRF record; MathHub compiles it once and stores the resulting BLD record.</p>
-    <div class="submit-layout"><form id="claim-form">
-      <div class="field"><label>Title</label><input id="draft-title" required placeholder="Claim title"/></div>
-      <div class="registry-two-col"><div class="field"><label>Claim author</label><input id="draft-author" placeholder="name / handle"/></div><div class="field"><label>Field</label><input id="draft-area" placeholder="e.g. Number theory"/></div></div>
-      <div class="field"><label>Natural-language statement</label><textarea id="draft-human" style="font-family:var(--serif)" required></textarea></div>
-      <div class="field"><label>LaTeX statement</label><textarea id="draft-latex" style="font-family:var(--serif)" placeholder="\\forall n ..."></textarea></div>
-      <div class="field"><label>Lean imports</label><textarea id="draft-imports">Mathlib</textarea></div>
-      <div class="field"><label>Formal Lean declaration</label><textarea id="draft-decl" required placeholder="theorem my_claim : ..."></textarea></div>
-      <div class="field"><label>Proof / formalization author</label><input id="draft-proof-author" placeholder="optional"/></div>
-      <div class="field"><label>Lean proof</label><textarea id="draft-proof" style="min-height:230px" placeholder="by\n  ..."></textarea></div>
-      <div class="workbench-actions"><button class="btn" type="button" id="draft-test">Compile draft</button><button class="btn btn-primary" type="submit">Register + build</button></div><div id="draft-result" style="margin-top:24px"></div>
-    </form><aside><div class="callout"><strong>Append-only provenance.</strong><br>Editing a formal Claim later creates Claim v2; editing a proof creates a new PRF record. Previous builds remain addressable.</div><div class="schema registry-schema">CLM-000123\n ├─ VER-000123  Claim v1\n ├─ VER-000130  Claim v2\n └─ PRF-000201\n     ├─ BLD-000401\n     └─ BLD-000419</div></aside></div></div></main>`;
+  return `<main class="shell page"><div class="argument-reading-column submit-simple">
+    <section class="page-head contribution-head"><div><div class="eyebrow">Contribute</div><h1 class="page-heading">Add a mathematical statement.</h1><p>Write the mathematics first. MathHub keeps the exact Lean formalization and proof evidence underneath so the published statement can be checked and connected to the rest of the library.</p></div></section>
+    <div class="submit-layout"><form id="claim-form" class="argument-submit-form submit-form contribution-form">
+      <div class="field"><label>Title</label><input id="draft-title" required placeholder="A short name for the result"/></div>
+      <div class="field"><label>Statement</label><textarea id="draft-human" class="human-editor" required placeholder="State the result in ordinary mathematical language."></textarea></div>
+      <div class="registry-two-col"><div class="field"><label>Author</label><input id="draft-author" placeholder="name / handle"/></div><div class="field"><label>Field</label><input id="draft-area" placeholder="Number theory, topology, probability…"/></div></div>
+      <div class="field"><label>Display formula <span class="field-optional">optional</span></label><textarea id="draft-latex" class="human-editor" placeholder="LaTeX for the main formula, if useful"></textarea></div>
+
+      <details class="contribution-formal" id="contribution-formal">
+        <summary><div><strong>Formalization</strong><span>required to publish · Lean details</span></div><span class="disclosure-arrow">›</span></summary>
+        <div class="contribution-formal-body">
+          <p class="contribution-help">MathHub currently publishes statements only when they have an exact Lean theorem or lemma. This is verification infrastructure, not a confidence score. If you are only exploring existing mathematics, use the library browser instead.</p>
+          <div class="field"><label>Lean theorem / lemma</label><textarea id="draft-decl" placeholder="theorem my_result : ..."></textarea></div>
+          <div class="field"><label>Lean imports</label><textarea id="draft-imports">Mathlib</textarea></div>
+          <hr class="submission-separator"/>
+          <div class="field"><label>Proof author <span class="field-optional">optional</span></label><input id="draft-proof-author" placeholder="name / handle"/></div>
+          <div class="field"><label>Lean proof <span class="field-optional">optional</span></label><textarea id="draft-proof" class="proof-draft" placeholder="by\n  ..."></textarea></div>
+          <button class="btn" type="button" id="draft-test">Check formalization</button>
+        </div>
+      </details>
+
+      <div class="contribution-actions"><button class="btn btn-primary contribution-submit" type="submit">Add statement</button><button class="btn" type="button" data-contribution-browse>Browse existing mathematics</button></div>
+      <div id="draft-result" class="draft-result" aria-live="polite"></div>
+    </form>
+    <aside class="submit-side"><section class="side-card"><div class="side-card-title">What happens when you publish?</div><ol class="verification-steps"><li><strong>Statement</strong><span>Your readable mathematical statement gets a durable identity.</span></li><li><strong>Formalization</strong><span>The Lean theorem is stored as the exact formal meaning.</span></li><li><strong>Verification</strong><span>If you include a proof, Lean checks it and MathHub records the dependencies it actually uses.</span></li></ol></section><section class="side-card side-card-quiet"><strong>You do not need Lean to browse.</strong><p>Most readers should start from Browse library and open existing statements, proofs, and connections.</p></section></aside></div>
+  </div></main>`;
 };
 
 const baseBind = bind;
@@ -208,19 +222,30 @@ bind = function persistentBind() {
     try { await buildProof(el.dataset.buildProof); } catch (err) { alert(`Build failed to start: ${err.message}`); }
   }));
 
+  document.querySelector('[data-contribution-browse]')?.addEventListener('click', () => {
+    if (typeof openLibraryBrowser === 'function') openLibraryBrowser();
+    else { state.view = 'registry'; render(); }
+  });
+
   const form = document.querySelector('#claim-form');
   if (form && registryState.ready) {
     form.addEventListener('submit', async event => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const decl = document.querySelector('#draft-decl')?.value.trim() || '';
+      const result = document.querySelector('#draft-result');
+      const formal = document.querySelector('#contribution-formal');
+      const declInput = document.querySelector('#draft-decl');
+      const decl = declInput?.value.trim() || '';
       const match = decl.match(/\b(?:theorem|lemma)\s+([^\s:(]+)/u);
       if (!match) {
-        alert('MathHub Claim nodes must be Lean theorem or lemma declarations. Definitions stay in the formal substrate.');
+        if (formal) formal.open = true;
+        if (result) result.innerHTML = '<div class="callout warn"><strong>Formalization needed before publishing.</strong><br>Add a Lean theorem or lemma in the Formalization section. You can still browse and read MathHub without doing this.</div>';
+        declInput?.focus();
         return;
       }
       const button = form.querySelector('button[type="submit"]');
-      if (button) { button.disabled = true; button.textContent = 'Registering…'; }
+      if (button) { button.disabled = true; button.textContent = 'Adding…'; }
+      if (result) result.innerHTML = '<div class="callout">Checking and recording the statement…</div>';
       try {
         const created = await apiJson('/api/claims', {
           method:'POST', headers:{'Content-Type':'application/json'},
@@ -243,12 +268,12 @@ bind = function persistentBind() {
         registryState.details.set(created.claim_id, await apiJson(`/api/claims/${created.claim_id}`));
         state.selected = created.claim_id; state.graphSelected = created.claim_id; state.view = 'claim';
         if (build) markPresentationStale(created.claim_id);
-        alert(`${created.claim_id} registered${build ? `; ${build.build_id}: ${build.status}` : created.build_error ? `; build pending: ${created.build_error}` : ''}.`);
         render();
       } catch (err) {
-        alert(`Registration failed: ${err.message}`);
+        if (formal) formal.open = true;
+        if (result) result.innerHTML = `<div class="callout bad"><strong>Could not add this statement.</strong><br>${esc(err.message)}</div>`;
       } finally {
-        if (button) { button.disabled = false; button.textContent = 'Register + build'; }
+        if (button) { button.disabled = false; button.textContent = 'Add statement'; }
       }
     }, true);
   }

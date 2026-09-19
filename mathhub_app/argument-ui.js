@@ -127,20 +127,20 @@ renderClaim=function(){
 
 renderSubmit=function(){
   return `<main class="shell page"><div class="argument-reading-column submit-simple">
-    <section class="page-head"><div><div class="eyebrow">New Claim</div><h1 class="page-heading">Register a mathematical statement.</h1><p>A Claim is the durable mathematical object. A Proof is a separate route that may be attached now or later.</p></div></section>
-    <div class="submit-layout"><form id="claim-form" class="argument-submit-form submit-form">
-      <div class="field"><label>Title</label><input id="draft-title" required placeholder="Claim title"/></div>
-      <div class="registry-two-col"><div class="field"><label>Claim author</label><input id="draft-author" placeholder="name / handle"/></div><div class="field"><label>Field</label><input id="draft-area" placeholder="Number theory"/></div></div>
-      <div class="field"><label>Statement</label><textarea id="draft-human" class="human-editor" required placeholder="Human-readable statement"></textarea></div>
-      <div class="field"><label>LaTeX display</label><textarea id="draft-latex" placeholder="Optional display formula"></textarea></div>
-      <div class="field"><label>Formal Lean theorem / lemma</label><textarea id="draft-decl" required placeholder="theorem my_claim : ..."></textarea></div>
-      <div class="field"><label>Imports</label><textarea id="draft-imports">Mathlib</textarea></div>
-      <hr class="submission-separator"/>
-      <div class="eyebrow">Optional Proof</div>
-      <div class="field"><label>Proof author</label><input id="draft-proof-author" placeholder="name / handle"/></div>
-      <div class="field"><label>Proof source</label><textarea id="draft-proof" class="proof-draft" placeholder="by\n  ..."></textarea></div>
-      <div class="workbench-actions"><button class="btn" type="button" id="draft-test">Compile draft</button><button class="btn btn-primary" type="submit">Register Claim</button></div><div id="draft-result" class="draft-result"></div>
-    </form><aside class="submit-side"><section class="side-card"><div class="side-card-title">Before registration</div><ol class="verification-steps"><li><strong>Declare</strong><span>Define the Claim precisely in Lean.</span></li><li><strong>Compile</strong><span>Attach and test an optional Proof route.</span></li><li><strong>Audit</strong><span>Record dependencies and trust evidence.</span></li></ol></section></aside></div>
+    <section class="page-head contribution-head"><div><div class="eyebrow">Contribute</div><h1 class="page-heading">Add a mathematical statement.</h1><p>Write the mathematics first. Formal Lean details stay behind a disclosure until you need them.</p></div></section>
+    <div class="submit-layout"><form id="claim-form" class="argument-submit-form submit-form contribution-form">
+      <div class="field"><label>Title</label><input id="draft-title" required placeholder="A short name for the result"/></div>
+      <div class="field"><label>Statement</label><textarea id="draft-human" class="human-editor" required placeholder="State the result in ordinary mathematical language."></textarea></div>
+      <div class="registry-two-col"><div class="field"><label>Author</label><input id="draft-author" placeholder="name / handle"/></div><div class="field"><label>Field</label><input id="draft-area" placeholder="Number theory, topology, probability…"/></div></div>
+      <div class="field"><label>Display formula <span class="field-optional">optional</span></label><textarea id="draft-latex" class="human-editor" placeholder="LaTeX for the main formula, if useful"></textarea></div>
+      <details class="contribution-formal" id="contribution-formal"><summary><div><strong>Formalization</strong><span>Lean details</span></div><span class="disclosure-arrow">›</span></summary><div class="contribution-formal-body">
+        <div class="field"><label>Lean theorem / lemma</label><textarea id="draft-decl" placeholder="theorem my_result : ..."></textarea></div>
+        <div class="field"><label>Lean imports</label><textarea id="draft-imports">Mathlib</textarea></div>
+        <div class="field"><label>Lean proof <span class="field-optional">optional</span></label><textarea id="draft-proof" class="proof-draft" placeholder="by\n  ..."></textarea></div>
+        <button class="btn" type="button" id="draft-test">Check formalization</button>
+      </div></details>
+      <div class="contribution-actions"><button class="btn btn-primary contribution-submit" type="submit">Add statement</button></div><div id="draft-result" class="draft-result"></div>
+    </form><aside class="submit-side"><section class="side-card"><div class="side-card-title">Math first</div><p class="contribution-aside-copy">Readers can browse MathHub without Lean. Formalization is only needed when publishing a new exact mathematical statement.</p></section></aside></div>
   </div></main>`;
 };
 
