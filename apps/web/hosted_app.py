@@ -807,13 +807,26 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                 except OSError:
                     pass
             data_root = Path("/data")
+            accounts_db = self.hosted_server.account_store.path
+            marker_path = data_root / "testamur" / ".volume-id"
+            try:
+                volume_marker = marker_path.read_text(encoding="utf-8").strip() if marker_path.is_file() else None
+            except OSError:
+                volume_marker = None
+            try:
+                accounts_db_size = accounts_db.stat().st_size if accounts_db.is_file() else 0
+            except OSError:
+                accounts_db_size = None
             self._send(_json({
                 "ok": True,
                 "service": "testamur-host",
                 "storage": {
                     "data_root": str(data_root),
                     "persistent_volume_mounted": os.path.ismount(data_root),
-                    "accounts_db": str(self.hosted_server.account_store.path),
+                    "volume_marker": volume_marker,
+                    "accounts_db": str(accounts_db),
+                    "accounts_db_exists": accounts_db.is_file(),
+                    "accounts_db_size_bytes": accounts_db_size,
                 },
                 "mathhub": {
                     "ok": mathhub_ok,
