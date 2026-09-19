@@ -600,7 +600,7 @@ async function signUpPage() {
   shell(`<div class="account-page"><section class="account-card">
     <div class="account-mark">T</div>
     <h1>Create your Testamur account</h1>
-    <p>Your hosted workspace is isolated from other users by default.</p>
+    <p>Your hosted workspace is isolated from other users by default. We will send a short-lived verification link to your email before the account can sign in.</p>
     <form class="account-form" data-signup data-next="${esc(safeNextPath(next))}">
       <label><span>Username</span><input name="username" autocomplete="username" minlength="3" maxlength="39" required /></label>
       <label><span>Email</span><input name="email" type="email" autocomplete="email" required /></label>
@@ -612,6 +612,81 @@ async function signUpPage() {
     <div class="account-switch">Already have an account? <a data-nav href="/signin${next ? `?next=${encodeURIComponent(next)}` : ''}">Sign in</a></div>
   </section></div>`);
   document.querySelector('[data-signup]')?.addEventListener('submit', submitSignUp);
+}
+
+async function verifyEmailPendingPage() {
+  if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Verify email');
+  if (accountState.authenticated) return navigate('/');
+  const identifier = params().get('identifier') || '';
+  const deliveryFailed = params().get('delivery') === 'failed';
+  const next = safeNextPath(params().get('next'));
+  shell(`<div class="account-page"><section class="account-card">
+    <div class="account-mark">T</div>
+    <h1>Check your email</h1>
+    <p>${deliveryFailed
+      ? 'Your account was created, but the verification email could not be delivered. You can retry below.'
+      : `We sent a 30-minute verification link${identifier ? ` to <strong>${esc(identifier)}</strong>` : ''}.`}</p>
+    <form class="account-form" data-resend-verification data-next="${esc(next)}">
+      <label><span>Email or username</span><input name="identifier" autocomplete="username" value="${esc(identifier)}" required /></label>
+      <div data-account-result></div>
+      <button class="btn btn-secondary account-submit" type="submit">Resend verification email</button>
+    </form>
+    <div class="account-switch">Already verified? <a data-nav href="/signin${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}">Sign in</a></div>
+  </section></div>`);
+  document.querySelector('[data-resend-verification]')?.addEventListener('submit', submitResendVerification);
+}
+
+async function submitResendVerification(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const result = form.querySelector('[data-account-result]');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  result.innerHTML = loading('Sending verification email…');
+  try {
+    await apiWrite('/v1/account/email-verification/resend', {
+      identifier: form.elements.identifier.value.trim(),
+    });
+    result.innerHTML = '<div class="flash flash-success"><strong>Sent</strong><span>If that account still needs verification, a new link is on its way.</span></div>';
+  } catch (error) {
+    accountError(result, error);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function verifyEmailPage() {
+  if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Verify email');
+  if (accountState.authenticated) return navigate('/');
+  const token = params().get('token') || '';
+  if (!token) {
+    shell(`<div class="account-page"><section class="account-card">
+      <div class="account-mark">T</div>
+      <h1>Verification link is incomplete</h1>
+      <p>This URL does not contain an email verification token.</p>
+      <a data-nav class="btn btn-secondary" href="/verify-email-pending">Request another link</a>
+    </section></div>`);
+    return;
+  }
+  shell(`<div class="account-page"><section class="account-card">
+    <div class="account-mark">T</div>
+    <h1>Verifying your email…</h1>
+    ${loading('Checking the verification link…')}
+  </section></div>`);
+  try {
+    await apiWrite('/v1/account/email-verification/verify', { token });
+    history.replaceState({}, '', '/');
+    await loadAccountState();
+    cache.dashboard = null;
+    navigate('/');
+  } catch (error) {
+    shell(`<div class="account-page"><section class="account-card">
+      <div class="account-mark">T</div>
+      <h1>Verification link did not work</h1>
+      <div class="flash flash-danger"><strong>${esc(error.code || 'verification_failed')}</strong><span>${esc(error.message || error)}</span></div>
+      <a data-nav class="btn btn-secondary" href="/verify-email-pending">Request another link</a>
+    </section></div>`);
+  }
 }
 
 function settingsNav(selected) {
@@ -1032,6 +1107,11 @@ async function submitSignIn(event) {
     const next = form.dataset.next;
     navigate(safeNextPath(next));
   } catch (error) {
+    if (error.code === 'email_verification_required') {
+      const identifier = form.elements.identifier.value.trim();
+      navigate(`/verify-email-pending?identifier=${encodeURIComponent(identifier)}`);
+      return;
+    }
     accountError(result, error);
     button.disabled = false;
   }
@@ -1045,16 +1125,21 @@ async function submitSignUp(event) {
   button.disabled = true;
   result.innerHTML = loading('Creating account…');
   try {
+    const email = form.elements.email.value.trim();
     const response = await apiWrite('/v1/account/signup', {
       username: form.elements.username.value.trim(),
-      email: form.elements.email.value.trim(),
+      email,
       display_name: form.elements.display_name.value.trim() || null,
       password: form.elements.password.value,
     });
-    await loadAccountState();
     cache.dashboard = null;
     const next = form.dataset.next;
-    navigate(safeNextPath(next));
+    const query = new URLSearchParams({
+      identifier: email,
+      next: safeNextPath(next),
+    });
+    if (response.email_sent === false) query.set('delivery', 'failed');
+    navigate(`/verify-email-pending?${query.toString()}`);
   } catch (error) {
     accountError(result, error);
     button.disabled = false;
@@ -2010,6 +2095,8 @@ async function render() {
   const path = location.pathname;
   if (path === '/signin') return signInPage();
   if (path === '/signup') return signUpPage();
+  if (path === '/verify-email') return verifyEmailPage();
+  if (path === '/verify-email-pending') return verifyEmailPendingPage();
 
   const publicHostedRoute =
     path === '/learn' ||
@@ -2018,6 +2105,8 @@ async function render() {
     path === '/quickstart' ||
     path === '/demo' ||
     path === '/status' ||
+    path === '/verify-email' ||
+    path === '/verify-email-pending' ||
     path.startsWith('/users/');
   if (accountState.mode === 'hosted' && !accountState.authenticated && !publicHostedRoute) {
     const next = `${path}${location.search || ''}`;

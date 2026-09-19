@@ -17,8 +17,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: python -m py_compile apps/web/hosted_app.py apps/web/identity.py testamur/web_app.py
+      - run: python -m py_compile apps/web/hosted_app.py apps/web/identity.py apps/web/mail.py testamur/web_app.py
       - run: node --check testamur/web/app.js
+      - run: python -m unittest tests.test_email_verification
 
   compile-mathhub:
     runs-on: ubuntu-latest
@@ -46,21 +47,22 @@ jobs:
             --data-dir /tmp/testamur \
             --no-monitor-scheduler >/tmp/testamur.log 2>&1 &
           echo $! >/tmp/testamur.pid
-      - name: Wait and exercise signup
+      - name: Wait and verify signup fails closed without mail configuration
         run: |
           for i in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:8788/healthz >/dev/null 2>&1; then break; fi
             sleep 0.25
           done
           curl -fsS -H 'Host: testamur.org' http://127.0.0.1:8788/signup >/dev/null
-          response="$(
-            curl -fsS \
+          status="$(
+            curl -sS -o /tmp/signup-response.json -w '%{http_code}' \
               -H 'Host: testamur.org' \
               -H 'Content-Type: application/json' \
               -d '{"username":"smoke-user","email":"smoke@example.test","password":"smoke-password-123"}' \
               http://127.0.0.1:8788/v1/account/signup
           )"
-          python -c 'import json,sys; b=json.loads(sys.argv[1]); assert b.get("ok") is True and b.get("authenticated") is True, b' "$response"
+          test "$status" = "503"
+          python -c 'import json; b=json.load(open("/tmp/signup-response.json")); assert b["error"]["code"] == "email_delivery_unavailable", b'
       - if: failure()
         run: cat /tmp/testamur.log || true
 

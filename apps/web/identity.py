@@ -15,6 +15,8 @@ _USERNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{1,37}[a-z0-9])?$")
 _ORG_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{1,37}[a-z0-9])?$")
 _ORG_ROLES = {"owner", "admin", "member"}
 _SESSION_SECONDS = 60 * 60 * 24 * 30
+_EMAIL_VERIFICATION_SECONDS = 60 * 30
+_EMAIL_RESEND_COOLDOWN_SECONDS = 60
 
 
 @dataclass
@@ -109,6 +111,8 @@ class AccountStore:
                     email TEXT NOT NULL UNIQUE,
                     display_name TEXT NOT NULL,
                     password_digest TEXT NOT NULL,
+                    email_verified_at INTEGER,
+                    email_verification_source TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -123,6 +127,20 @@ class AccountStore:
 
                 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
                 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
+                CREATE TABLE IF NOT EXISTS email_verification_tokens (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    consumed_at INTEGER,
+                    invalidated_at INTEGER
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_email_verification_user
+                    ON email_verification_tokens(user_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_email_verification_expires
+                    ON email_verification_tokens(expires_at);
 
                 CREATE TABLE IF NOT EXISTS organizations (
                     org_id TEXT PRIMARY KEY,
@@ -157,6 +175,22 @@ class AccountStore:
                 CREATE INDEX IF NOT EXISTS idx_org_invitations_org ON organization_invitations(org_id, status);
                 """
             )
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()}
+            migrated_legacy = False
+            if "email_verified_at" not in columns:
+                connection.execute("ALTER TABLE users ADD COLUMN email_verified_at INTEGER")
+                migrated_legacy = True
+            if "email_verification_source" not in columns:
+                connection.execute("ALTER TABLE users ADD COLUMN email_verification_source TEXT")
+                migrated_legacy = True
+            if migrated_legacy:
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET email_verified_at = COALESCE(email_verified_at, created_at),
+                        email_verification_source = COALESCE(email_verification_source, 'legacy_migration')
+                    """
+                )
 
     @staticmethod
     def _public_user(row: sqlite3.Row) -> dict[str, Any]:
@@ -165,6 +199,8 @@ class AccountStore:
             "username": row["username"],
             "email": row["email"],
             "display_name": row["display_name"],
+            "email_verified": row["email_verified_at"] is not None,
+            "email_verified_at": None if row["email_verified_at"] is None else int(row["email_verified_at"]),
             "created_at": int(row["created_at"]),
         }
 
@@ -481,6 +517,86 @@ class AccountStore:
         )
         return token
 
+    def _new_email_verification(
+        self,
+        connection: sqlite3.Connection,
+        user_id: str,
+        *,
+        enforce_cooldown: bool = False,
+    ) -> str:
+        now = _now()
+        if enforce_cooldown:
+            latest = connection.execute(
+                """
+                SELECT created_at
+                FROM email_verification_tokens
+                WHERE user_id = ?
+                  AND consumed_at IS NULL
+                  AND invalidated_at IS NULL
+                  AND expires_at > ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (user_id, now),
+            ).fetchone()
+            if latest is not None and now - int(latest["created_at"]) < _EMAIL_RESEND_COOLDOWN_SECONDS:
+                retry_after = _EMAIL_RESEND_COOLDOWN_SECONDS - (now - int(latest["created_at"]))
+                raise AccountError(
+                    "verification_rate_limited",
+                    f"Wait {retry_after} seconds before requesting another verification email.",
+                    429,
+                )
+        token = secrets.token_urlsafe(32)
+        connection.execute(
+            """
+            INSERT INTO email_verification_tokens(
+                token_hash, user_id, created_at, expires_at, consumed_at, invalidated_at
+            ) VALUES (?, ?, ?, ?, NULL, NULL)
+            """,
+            (_session_hash(token), user_id, now, now + _EMAIL_VERIFICATION_SECONDS),
+        )
+        return token
+
+    def confirm_email_verification_delivery(self, *, token: str) -> None:
+        """Make the delivered token canonical and retire older active links."""
+        token_hash = _session_hash(token)
+        now = _now()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT user_id
+                FROM email_verification_tokens
+                WHERE token_hash = ? AND consumed_at IS NULL AND invalidated_at IS NULL
+                LIMIT 1
+                """,
+                (token_hash,),
+            ).fetchone()
+            if row is None:
+                return
+            connection.execute(
+                """
+                UPDATE email_verification_tokens
+                SET invalidated_at = ?
+                WHERE user_id = ?
+                  AND token_hash <> ?
+                  AND consumed_at IS NULL
+                  AND invalidated_at IS NULL
+                """,
+                (now, row["user_id"], token_hash),
+            )
+
+    def reject_email_verification_delivery(self, *, token: str) -> None:
+        """Retire a token that was never successfully handed to the mail provider."""
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE email_verification_tokens
+                SET invalidated_at = COALESCE(invalidated_at, ?)
+                WHERE token_hash = ? AND consumed_at IS NULL
+                """,
+                (_now(), _session_hash(token)),
+            )
+
     def sign_up(
         self,
         *,
@@ -500,10 +616,15 @@ class AccountStore:
         try:
             with self._connect() as connection:
                 connection.execute(
-                    "INSERT INTO users(user_id, username, email, display_name, password_digest, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO users(
+                        user_id, username, email, display_name, password_digest,
+                        email_verified_at, email_verification_source, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+                    """,
                     (user_id, normalized_username, normalized_email, name, digest, now, now),
                 )
-                token = self._new_session(connection, user_id)
+                verification_token = self._new_email_verification(connection, user_id)
                 row = connection.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
         except sqlite3.IntegrityError as exc:
             text = str(exc).lower()
@@ -513,7 +634,75 @@ class AccountStore:
                 raise AccountError("email_taken", "That email address is already in use.", 409) from exc
             raise AccountError("account_conflict", "Account already exists.", 409) from exc
         assert row is not None
-        return self._public_user(row), token
+        return self._public_user(row), verification_token
+
+    def request_email_verification(self, *, identifier: str) -> tuple[dict[str, Any], str] | None:
+        normalized = identifier.strip().casefold()
+        if not normalized:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE username = ? OR email = ? LIMIT 1",
+                (normalized, normalized),
+            ).fetchone()
+            if row is None or row["email_verified_at"] is not None:
+                return None
+            token = self._new_email_verification(connection, row["user_id"], enforce_cooldown=True)
+            return self._public_user(row), token
+
+    def verify_email(self, *, token: str) -> tuple[dict[str, Any], str]:
+        if not isinstance(token, str) or len(token) < 20 or len(token) > 512:
+            raise AccountError("invalid_verification_token", "Invalid email verification token.", 400)
+        now = _now()
+        token_hash = _session_hash(token)
+        with self._connect() as connection:
+            record = connection.execute(
+                """
+                SELECT email_verification_tokens.*, users.*
+                FROM email_verification_tokens
+                JOIN users ON users.user_id = email_verification_tokens.user_id
+                WHERE email_verification_tokens.token_hash = ?
+                LIMIT 1
+                """,
+                (token_hash,),
+            ).fetchone()
+            if record is None:
+                raise AccountError("invalid_verification_token", "Invalid email verification token.", 400)
+            if record["consumed_at"] is not None or record["invalidated_at"] is not None:
+                raise AccountError("verification_token_used", "This verification link is no longer active.", 400)
+            if int(record["expires_at"]) <= now:
+                connection.execute(
+                    "UPDATE email_verification_tokens SET invalidated_at = ? WHERE token_hash = ?",
+                    (now, token_hash),
+                )
+                raise AccountError("verification_token_expired", "This verification link has expired.", 400)
+            user_id = record["user_id"]
+            connection.execute(
+                """
+                UPDATE users
+                SET email_verified_at = COALESCE(email_verified_at, ?),
+                    email_verification_source = COALESCE(email_verification_source, 'email_link'),
+                    updated_at = ?
+                WHERE user_id = ?
+                """,
+                (now, now, user_id),
+            )
+            connection.execute(
+                """
+                UPDATE email_verification_tokens
+                SET consumed_at = CASE WHEN token_hash = ? THEN ? ELSE consumed_at END,
+                    invalidated_at = CASE
+                        WHEN token_hash <> ? AND consumed_at IS NULL AND invalidated_at IS NULL THEN ?
+                        ELSE invalidated_at
+                    END
+                WHERE user_id = ?
+                """,
+                (token_hash, now, token_hash, now, user_id),
+            )
+            row = connection.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            assert row is not None
+            session = self._new_session(connection, user_id)
+            return self._public_user(row), session
 
     def sign_in(self, *, identifier: str, password: str) -> tuple[dict[str, Any], str]:
         normalized = identifier.strip().casefold()
@@ -524,6 +713,12 @@ class AccountStore:
             ).fetchone()
             if row is None or not _verify_password(password, row["password_digest"]):
                 raise AccountError("invalid_credentials", "Incorrect username/email or password.", 401)
+            if row["email_verified_at"] is None:
+                raise AccountError(
+                    "email_verification_required",
+                    "Verify your email address before signing in.",
+                    403,
+                )
             token = self._new_session(connection, row["user_id"])
             return self._public_user(row), token
 
