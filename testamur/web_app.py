@@ -13,10 +13,11 @@ from .environment import DB_FILE_NAME, ENV_DIR_NAME, discover
 from .product_actions import create_monitor, create_project, refresh_monitor, refresh_project_monitors, run_due_monitors
 from .monitor_provider_manifest import load_monitor_provider_registry
 from .product_service import TestamurProductService
+from .project_review_surface import project_with_advisory_reviews
 
 WEB_ROOT = Path(__file__).with_name("web")
 
-_STATIC_ASSETS = {"index.html", "app.js", "styles.css"}
+_STATIC_ASSETS = {"index.html", "app.js", "styles.css", "advisory-review-ui.js"}
 _SPA_PREFIXES = {"app", "object", "compare", "impact", "temporal", "projects", "explore", "monitoring", "learn", "docs", "integrations", "quickstart", "demo", "status"}
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -132,7 +133,7 @@ def dispatch_api(service: TestamurProductService, target: str) -> dict[str, Any]
             unknown = set(query) - {"ref"}
             if unknown:
                 raise ValueError(f"project does not accept query parameters: {', '.join(sorted(unknown))}")
-            return _json(service.project(_one(query, "ref") or ""))
+            return _json(project_with_advisory_reviews(service, _one(query, "ref") or ""))
         if path == "/v1/object":
             return _json(service.get_object(_one(query, "ref") or ""))
         if path == "/v1/history":
