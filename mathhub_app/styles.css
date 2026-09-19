@@ -121,7 +121,9 @@ a:hover { text-decoration: underline; }
 .runtime-pill > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #6e7681; }
 .runtime-dot.ready { background: #3fb950; box-shadow: 0 0 0 2px rgba(63,185,80,.12); }
+.runtime-dot.working { background: #d29922; box-shadow: 0 0 0 2px rgba(210,153,34,.12); animation: mathhub-pulse 1.4s ease-in-out infinite; }
 .runtime-dot.bad { background: #f85149; }
+@keyframes mathhub-pulse { 0%,100% { opacity:.55; } 50% { opacity:1; } }
 .top-register { flex: 0 0 auto; }
 
 .shell { width: min(1280px, calc(100% - 48px)); margin: 0 auto; }
@@ -670,3 +672,47 @@ a:hover { text-decoration: underline; }
   .audit-cell:nth-child(3) { border-top: 1px solid var(--line); }
   .graph-canvas, .graph-canvas svg { min-height: 480px; height: 480px; }
 }
+
+
+/* Progressive disclosure: ordinary users search by mathematics, not query syntax. */
+.structural-search-hint {
+  margin: 8px 0 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.structural-search-hint > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--blue);
+  font-weight: 600;
+  list-style-position: inside;
+}
+.structural-search-options {
+  margin-top: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--canvas);
+}
+.structural-search-options code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--canvas-subtle);
+  font: 10px/1.4 var(--mono);
+}
+.structural-search-label { font-weight: 650; color: var(--ink); }
+.structural-search-note { width: 100%; color: var(--muted); }
+
+.formal-details { margin-top: 10px; }
+.formal-details > summary {
+  cursor: pointer;
+  width: fit-content;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 600;
+}
+.formal-details .formal-declaration { margin-top: 9px; }

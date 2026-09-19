@@ -1,6 +1,6 @@
 /* Deterministic formal-search affordances and lazy, evidence-only hit explanations. */
 function structuralSearchHint(){
-  return `<div class="structural-search-hint" aria-label="Deterministic formal search filters"><span class="structural-search-label">Formal filters</span><code>namespace:Nat</code><span aria-hidden="true">·</span><code>statement-ref:Eq</code><span aria-hidden="true">·</span><code>proof-ref:Nat.add_comm</code><span aria-hidden="true">·</span><code>head:Eq</code><span aria-hidden="true">·</span><code>binders:2</code><span aria-hidden="true">·</span><code>binder-domain:Nat</code><span aria-hidden="true">·</span><code>result-ref:Eq</code><span class="structural-search-note">combine with ordinary text · formal filters read recorded Lean evidence</span></div>`;
+  return `<details class="structural-search-hint" aria-label="Advanced formal search"><summary>Advanced formal search</summary><div class="structural-search-options"><span class="structural-search-label">Exact Lean filters</span><code>namespace:Nat</code><span aria-hidden="true">·</span><code>statement-ref:Eq</code><span aria-hidden="true">·</span><code>proof-ref:Nat.add_comm</code><span aria-hidden="true">·</span><code>head:Eq</code><span aria-hidden="true">·</span><code>binders:2</code><span aria-hidden="true">·</span><code>binder-domain:Nat</code><span aria-hidden="true">·</span><code>result-ref:Eq</code><span class="structural-search-note">Optional expert syntax. Ordinary search works without any of these filters.</span></div></details>`;
 }
 
 function structuralFiltersFromQuery(raw){
@@ -178,7 +178,7 @@ function decorateStructuralSearch(){
     hero.insertAdjacentHTML('afterend',structuralSearchHint());
   }
   const input=document.querySelector('#search');
-  if(input) input.placeholder='Search mathematics · proof-ref:Nat.add_comm · head:Eq · result-ref:Eq';
+  if(input) input.placeholder='Search by theorem, topic, author, or keyword…';
   decorateStructuralEvidence();
 }
 

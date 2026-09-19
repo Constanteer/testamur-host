@@ -1,7 +1,6 @@
-/* Whole-namespace ingestion is planned from the cached theorem index, then split
-   into ordinary durable ImportTasks. The child tasks run sequentially so a large
-   namespace never starts many Lean workers at once. */
-const namespaceImportState={planning:false,creating:false,queueRunning:false,error:'',created:0,totalTasks:0};
+/* Whole-area ingestion is planned from the cached theorem index, then split into
+   ordinary durable ImportTasks. The server background worker advances them. */
+const namespaceImportState={planning:false,creating:false,queueRunning:false,error:'',notice:'',created:0,totalTasks:0};
 const NAMESPACE_IMPORT_CHUNK_SIZE=400;
 
 async function loadImportTasks(){
@@ -17,10 +16,9 @@ async function loadImportTasks(){
 }
 
 function namespaceImportStatusText(){
-  if(namespaceImportState.planning)return 'Planning namespace…';
-  if(namespaceImportState.creating)return `Creating durable tasks ${namespaceImportState.created}/${namespaceImportState.totalTasks||'…'}…`;
-  if(namespaceImportState.queueRunning)return 'Namespace queue running sequentially…';
-  return namespaceImportState.error||'';
+  if(namespaceImportState.planning)return 'Preparing this area…';
+  if(namespaceImportState.creating)return `Adding in the background ${namespaceImportState.created}/${namespaceImportState.totalTasks||'…'}…`;
+  return namespaceImportState.error||namespaceImportState.notice||'';
 }
 
 function mountNamespaceImportControl(){
@@ -29,8 +27,9 @@ function mountNamespaceImportControl(){
   if(!result||!actions||actions.querySelector('[data-library-import-namespace]'))return;
   const wrapper=document.createElement('div');wrapper.className='namespace-import-control';
   const button=document.createElement('button');button.className='btn';button.dataset.libraryImportNamespace='';
-  button.textContent=`Import namespace (${Number(result.total_theorems||0).toLocaleString()})`;
-  button.title=result.index_complete?`Create durable tasks for all unregistered theorem declarations under ${result.namespace}`:'Whole-namespace import requires a complete theorem index; use a narrower namespace.';
+  const topic=typeof libraryTopicForNamespace==='function'?libraryTopicForNamespace(result.namespace):null;
+  button.textContent=`Add all from this area (${Number(result.total_theorems||0).toLocaleString()})`;
+  button.title=result.index_complete?`Add every unregistered theorem from ${topic?.label||'this area'} in the background`:'This area is too broad for a complete local index. Choose a more specific area under Advanced settings.';
   button.disabled=!result.index_complete||libraryBrowserState.importing||namespaceImportState.planning||namespaceImportState.creating;
   wrapper.appendChild(button);
   const status=document.createElement('span');status.className='namespace-import-status';status.textContent=namespaceImportStatusText();wrapper.appendChild(status);
@@ -55,24 +54,9 @@ async function namespaceIngestionPlan(){
   });
 }
 
-async function runNamespaceTaskQueue(taskIds){
-  if(namespaceImportState.queueRunning)return;
-  namespaceImportState.queueRunning=true;namespaceImportState.error='';renderLibraryBrowser();
-  try{
-    for(const taskId of taskIds){
-      if(!importTaskState.open)break;
-      importTaskState.selected=taskId;renderImportTasks();
-      await runImportTask(taskId);
-      const task=await fetchImportTask(taskId);
-      if(!importTaskState.open||task.status==='paused'||task.status==='cancelled')break;
-    }
-  }catch(error){namespaceImportState.error=error.message||String(error);importTaskState.error=namespaceImportState.error;}
-  finally{namespaceImportState.queueRunning=false;renderImportTasks();renderLibraryBrowser();}
-}
-
 async function importWholeNamespace(){
   if(namespaceImportState.planning||namespaceImportState.creating)return;
-  namespaceImportState.planning=true;namespaceImportState.error='';libraryBrowserState.error='';renderLibraryBrowser();
+  namespaceImportState.planning=true;namespaceImportState.error='';namespaceImportState.notice='';libraryBrowserState.error='';renderLibraryBrowser();
   let plan;
   try{
     plan=await namespaceIngestionPlan();
@@ -86,11 +70,12 @@ async function importWholeNamespace(){
   }
 
   const taskCount=Number(plan.task_count||0),roots=Number(plan.unregistered_roots||0),known=Number(plan.already_registered||0);
+  const topic=typeof libraryTopicForNamespace==='function'?libraryTopicForNamespace(plan.namespace):null;
   const accepted=window.confirm(
-    `Import the entire ${plan.namespace} namespace?\n\n`+
-    `${roots.toLocaleString()} unregistered theorem roots will be split into ${taskCount} durable tasks.\n`+
-    `${known.toLocaleString()} theorem declarations are already registered and will be skipped.\n`+
-    `Tasks run sequentially; closing the task drawer stops auto-continue after the current durable step.`
+    `Add all available statements from ${topic?.label||'this area'}?\n\n`+
+    `${roots.toLocaleString()} new theorem statements will be queued in ${taskCount} background batches.\n`+
+    `${known.toLocaleString()} are already in MathHub and will be skipped.\n\n`+
+    `You can close this page after the queue is created; MathHub will continue automatically.`
   );
   if(!accepted){renderLibraryBrowser();return;}
 
@@ -111,9 +96,12 @@ async function importWholeNamespace(){
       }
       taskIds.push(task.task_id);namespaceImportState.created=taskIds.length;renderLibraryBrowser();
     }
-    namespaceImportState.creating=false;libraryBrowserState.importing=false;libraryBrowserState.open=false;
-    importTaskState.open=true;importTaskState.selected=taskIds[0]||'';renderLibraryBrowser();renderImportTasks();
-    if(taskIds.length)void runNamespaceTaskQueue(taskIds);
+    namespaceImportState.creating=false;libraryBrowserState.importing=false;
+    namespaceImportState.notice=taskIds.length
+      ?`Added ${taskIds.length} background batch${taskIds.length===1?'':'es'}. MathHub will keep importing even if you leave this page.`
+      :'Nothing new needed to be queued.';
+    renderLibraryBrowser();
+    try{if(typeof loadImportTasks==='function')void loadImportTasks();}catch(_){}
   }catch(error){
     namespaceImportState.creating=false;libraryBrowserState.importing=false;namespaceImportState.error=error.message||String(error);libraryBrowserState.error=namespaceImportState.error;renderLibraryBrowser();
   }

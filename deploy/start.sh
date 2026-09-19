@@ -3,8 +3,7 @@ set -u
 
 mkdir -p /data/testamur /data/mathhub /data/mathhub/lake /data/lean/elan
 MATHHUB_LOG=/data/mathhub/startup.log
-BOOTSTRAP_LOG=/data/mathhub/bootstrap.log
-touch "$MATHHUB_LOG" "$BOOTSTRAP_LOG"
+touch "$MATHHUB_LOG"
 
 
 if python - <<'PY'
@@ -41,28 +40,6 @@ if [ ! -e /app/mathhub_app/.lake ]; then
   ln -s /data/mathhub/lake /app/mathhub_app/.lake
 fi
 
-bootstrap_mathhub() {
-  if [ -f /data/mathhub/.lean-ready ] && [ -d /data/mathhub/lake/packages/mathlib ]; then
-    return 0
-  fi
-  {
-    printf '\n[%s] hydrating pinned Lean/mathlib environment\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    cd /app/mathhub_app || exit 1
-    toolchain="$(tr -d '\r\n' < lean-toolchain)"
-    printf '[%s] installing pinned Lean toolchain: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$toolchain"
-    if elan toolchain install "$toolchain" \
-      && elan default "$toolchain" \
-      && lake update \
-      && lake exe cache get; then
-      touch /data/mathhub/.lean-ready
-      printf '[%s] Lean/mathlib environment ready\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    else
-      code=$?
-      printf '[%s] Lean/mathlib bootstrap failed with code %s; MathHub stays online in read-only/runtime-unready mode\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$code"
-    fi
-  } >>"$BOOTSTRAP_LOG" 2>&1
-}
-
 run_mathhub() {
   while true; do
     {
@@ -79,14 +56,13 @@ run_mathhub() {
   done
 }
 
-# Start serving immediately; hydrate Lean/mathlib independently in the background.
-bootstrap_mathhub &
-BOOTSTRAP_PID=$!
+# Start MathHub immediately. Its runtime owns pinned Lean/Mathlib hydration
+# and reports preparation progress through /api/runtime while staying online.
 run_mathhub &
 MATHHUB_SUPERVISOR_PID=$!
 
 cleanup() {
-  kill "$BOOTSTRAP_PID" "$MATHHUB_SUPERVISOR_PID" 2>/dev/null || true
+  kill "$MATHHUB_SUPERVISOR_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 

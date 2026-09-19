@@ -2,7 +2,8 @@
 """Canonical MathHub local server: public IDs + bounded mathematical reads."""
 from __future__ import annotations
 
-import json,re,sqlite3
+import json,os,re,sqlite3,threading,time
+from datetime import datetime,timezone
 from http.server import ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs,urlparse
@@ -26,6 +27,11 @@ from public_identity import PublicIdentity
 from source_provenance import SourceProvenance
 
 IDENTITY=PublicIdentity(core.DB_PATH); CATALOG=Catalog(core.DB_PATH); HISTORY=HistoryReader(core.DB_PATH); PRESENTATIONS=PresentationIndex(core.DB_PATH); WORLD=GraphWorld(core.DB_PATH,core.ARGUMENT); GRAPH_DISPLAY=GraphDisplay(core.DB_PATH); TASKS=ImportTaskStore(core.DB_PATH); COVERAGE=CoverageIndex(core.DB_PATH); SOURCE_PROVENANCE=SourceProvenance(core.DB_PATH)
+AUTO_IMPORT_TASKS=os.environ.get("MATHHUB_AUTO_IMPORT_TASKS","1").strip().lower() not in {"0","false","no","off"}
+IMPORT_WORKER_INTERVAL_SECONDS=max(0.5,float(os.environ.get("MATHHUB_IMPORT_WORKER_INTERVAL","1.5")))
+IMPORT_LEASE_STALE_SECONDS=max(60,float(os.environ.get("MATHHUB_IMPORT_LEASE_STALE_SECONDS","900")))
+_IMPORT_WORKER_STARTED=False
+_IMPORT_WORKER_LOCK=threading.Lock()
 install_classifier_cache(COVERAGE,dependency_import_module,import_tasks_module,core.runtime_status)
 INTERNAL_RE=re.compile(r"^(CLM|VER|PRF|BLD)-(\d+)$",re.I); PUBLICISH=r"(?:CLM|VER|PRF|BLD)-[A-Z0-9-]+"; TASKISH=r"IMT-[A-F0-9]{16}"
 P2K={"CLM":"claim","VER":"version","PRF":"proof","BLD":"build"}; K2P={v:k for k,v in P2K.items()}
@@ -174,6 +180,59 @@ def import_claim(payload:dict[str,Any])->dict[str,Any]:
     if not imported.get("already_registered"):return imported
     existing=core.REGISTRY.get_claim(str(imported["claim_id"])); existing["already_registered"]=True; existing["external_declaration"]=str(payload.get("declaration_name") or payload.get("lean_name") or payload.get("name") or ""); existing["external_binding"]=imported.get("external_binding"); return existing
 
+
+def _lease_is_stale(task:dict[str,Any])->bool:
+    raw=str(task.get("lease_started_at") or "").strip()
+    if not raw:
+        return bool(task.get("leased"))
+    try:
+        started=datetime.fromisoformat(raw.replace("Z","+00:00"))
+        if started.tzinfo is None:
+            started=started.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc)-started).total_seconds()>=IMPORT_LEASE_STALE_SECONDS
+    except ValueError:
+        return True
+
+
+def _import_worker_loop()->None:
+    """Advance active durable import tasks even when no browser is open."""
+    while True:
+        try:
+            if core.runtime_status().get("ready"):
+                tasks=(TASKS.list(limit=100) or {}).get("tasks") or []
+                for task in tasks:
+                    if task.get("status")!="active":
+                        continue
+                    task_id=str(task["task_id"])
+                    if task.get("leased"):
+                        if _lease_is_stale(task):
+                            try:TASKS.recover(task_id)
+                            except (KeyError,ValueError,sqlite3.Error):pass
+                        else:
+                            continue
+                    try:
+                        TASKS.step(task_id)
+                    except (KeyError,ValueError,sqlite3.Error):
+                        # step() already persists a safe paused/error state when it owns the lease.
+                        pass
+        except Exception:
+            # Import work is best-effort background activity; HTTP service stays available.
+            pass
+        time.sleep(IMPORT_WORKER_INTERVAL_SECONDS)
+
+
+def start_import_worker()->bool:
+    global _IMPORT_WORKER_STARTED
+    if not AUTO_IMPORT_TASKS:
+        return False
+    with _IMPORT_WORKER_LOCK:
+        if _IMPORT_WORKER_STARTED:
+            return False
+        _IMPORT_WORKER_STARTED=True
+    threading.Thread(target=_import_worker_loop,name="mathhub-import-worker",daemon=True).start()
+    return True
+
+
 class Handler(core.Handler):
     def do_GET(self)->None:
         p=urlparse(self.path); path=p.path
@@ -240,4 +299,6 @@ class Handler(core.Handler):
         except (ValueError,json.JSONDecodeError,sqlite3.Error) as e:self.json_response(400,{"error":str(e),"ok":False})
 
 if __name__=="__main__":
+    core.request_runtime_setup()
+    start_import_worker()
     print(f"MathHub: http://{core.HOST}:{core.PORT}"); print(core.runtime_status()["message"]); print("Ontology: Claim / Proof / ProofDependency."); ThreadingHTTPServer((core.HOST,core.PORT),Handler).serve_forever()

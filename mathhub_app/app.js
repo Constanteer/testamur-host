@@ -151,16 +151,16 @@ function workFor(c) {
 }
 
 function topbar() {
-  const nav = [['registry','Claims'],['graph','Graph'],['authors','People']];
-  const dot = state.runtime.checked ? (state.runtime.ready ? 'ready' : 'bad') : '';
+  const nav = [['registry','Statements'],['graph','Connections'],['authors','People']];
+  const dot = state.runtime.checked ? (state.runtime.ready ? 'ready' : state.runtime.setupRunning ? 'working' : 'bad') : '';
   const hosted = location.pathname.startsWith('/sources/mathhub');
   const parent = hosted ? '<a class="parent-link" href="/">Testamur</a><span class="product-separator">/</span>' : '';
   return `<header class="topbar"><div class="topbar-inner">
-    <div class="product-lockup">${parent}<button class="wordmark" data-view="registry">MathHub</button><span class="product-tag">formal source</span></div>
+    <div class="product-lockup">${parent}<button class="wordmark" data-view="registry">MathHub</button><span class="product-tag">formal mathematics</span></div>
     <nav class="topnav" aria-label="MathHub navigation">${nav.map(([v,t]) => `<button class="${state.view===v?'active':''}" data-view="${v}">${t}</button>`).join('')}</nav>
     <div class="top-spacer"></div>
     <div class="runtime-pill" title="Lean runtime status"><span class="runtime-dot ${dot}"></span><span>${esc(state.runtime.label)}</span></div>
-    <button class="btn btn-primary btn-small top-register" data-view="submit">New claim</button>
+    <button class="btn btn-small top-register" data-view="submit">Add statement</button>
   </div></header>`;
 }
 
@@ -340,12 +340,25 @@ function bind() {
   document.querySelector('#claim-form')?.addEventListener('submit',e=>{e.preventDefault();alert('Prototype: the registry persistence layer is not implemented yet. Compile/audit the draft first; the next backend step is storing the checked artifact and dependency lock.');});
 }
 
+let runtimePollTimer=null;
 async function checkRuntime() {
+  if(runtimePollTimer){clearTimeout(runtimePollTimer);runtimePollTimer=null;}
   try {
     const res=await fetch('/api/runtime'); const d=await res.json();
-    state.runtime={checked:true,ready:!!d.ready,label:d.ready?`${d.lean_version||'Lean'} · local engine`:(d.message||'Lean engine unavailable')};
-  } catch (_) { state.runtime={checked:true,ready:false,label:'static mode · start server.py for Lean'}; }
+    state.runtime={
+      checked:true,
+      ready:!!d.ready,
+      label:d.ready?'Math library ready':(d.message||'Preparing the math library…'),
+      autoSetup:!!d.auto_setup,
+      setupRunning:!!d.setup_running,
+      setupError:d.setup_error||'',
+    };
+    if(!d.ready&&d.auto_setup&&!d.setup_error)runtimePollTimer=setTimeout(()=>checkRuntime(),2500);
+  } catch (_) {
+    state.runtime={checked:true,ready:false,label:'Math library service is unavailable',autoSetup:false,setupRunning:false,setupError:''};
+  }
   render();
+  if(typeof libraryBrowserState==='object'&&libraryBrowserState.open&&typeof renderLibraryBrowser==='function')renderLibraryBrowser();
 }
 
 render();

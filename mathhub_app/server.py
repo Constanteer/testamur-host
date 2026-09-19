@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,6 +32,8 @@ HOST = os.environ.get("MATHHUB_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MATHHUB_PORT", "8000"))
 COMPILE_TIMEOUT_SECONDS = int(os.environ.get("MATHHUB_COMPILE_TIMEOUT", "45"))
 INDEX_TIMEOUT_SECONDS = int(os.environ.get("MATHHUB_INDEX_TIMEOUT", "120"))
+SETUP_TIMEOUT_SECONDS = int(os.environ.get("MATHHUB_SETUP_TIMEOUT", "1800"))
+AUTO_SETUP = os.environ.get("MATHHUB_AUTO_SETUP", "1").strip().lower() not in {"0", "false", "no", "off"}
 MAX_SOURCE_CHARS = 200_000
 IMPORT_RE = re.compile(r"^[A-Za-z0-9_.]+$")
 DECL_NAME_RE = re.compile(r"\b(?:theorem|lemma|def)\s+([^\s:(]+)")
@@ -43,6 +46,123 @@ REGISTRY = Registry(DB_PATH)
 FORMAL = FormalIndex(DB_PATH)
 ARGUMENT = ArgumentIndex(DB_PATH)
 PRESENTATION_BUILDS = BuildPresentationRecorder(DB_PATH)
+RUNTIME_SETUP_MARKER = DATA_ROOT / "runtime-setup.json"
+
+_RUNTIME_SETUP_LOCK = threading.Lock()
+_RUNTIME_SETUP_STATE: dict[str, Any] = {
+    "running": False,
+    "attempted": False,
+    "error": "",
+    "started_at": 0.0,
+    "finished_at": 0.0,
+}
+
+
+def runtime_setup_status() -> dict[str, Any]:
+    with _RUNTIME_SETUP_LOCK:
+        return dict(_RUNTIME_SETUP_STATE)
+
+
+def _runtime_setup_fingerprint() -> str:
+    payload = {
+        "lean_toolchain": file_hash(ROOT / "lean-toolchain"),
+        "lakefile": file_hash(ROOT / "lakefile.toml"),
+        "manifest": file_hash(ROOT / "lake-manifest.json"),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _runtime_setup_marker_current() -> bool:
+    try:
+        data = json.loads(RUNTIME_SETUP_MARKER.read_text(encoding="utf-8"))
+        return bool(data.get("complete")) and data.get("fingerprint") == _runtime_setup_fingerprint()
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return False
+
+
+def _write_runtime_setup_marker() -> None:
+    RUNTIME_SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    RUNTIME_SETUP_MARKER.write_text(
+        json.dumps({"complete": True, "fingerprint": _runtime_setup_fingerprint()}),
+        encoding="utf-8",
+    )
+
+
+def _runtime_setup_worker(lake: str) -> None:
+    error = ""
+    try:
+        commands: list[list[str]] = []
+        elan = shutil.which("elan")
+        toolchain_file = ROOT / "lean-toolchain"
+        if elan and toolchain_file.is_file():
+            toolchain = toolchain_file.read_text(encoding="utf-8").strip()
+            if toolchain:
+                commands.extend(
+                    ([elan, "toolchain", "install", toolchain], [elan, "default", toolchain])
+                )
+        commands.extend(([lake, "update"], [lake, "exe", "cache", "get"]))
+        for command in commands:
+            proc = subprocess.run(
+                command,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=SETUP_TIMEOUT_SECONDS,
+                env={**os.environ, "NO_COLOR": "1"},
+            )
+            if proc.returncode != 0:
+                output = "\n".join(
+                    chunk for chunk in [(proc.stdout or "").strip(), (proc.stderr or "").strip()] if chunk
+                )
+                tail = output[-4000:] if output else f"exit code {proc.returncode}"
+                raise RuntimeError(f"{' '.join(command[1:])} failed: {tail}")
+        _write_runtime_setup_marker()
+    except subprocess.TimeoutExpired:
+        error = f"Math library setup timed out after {SETUP_TIMEOUT_SECONDS}s"
+    except Exception as exc:
+        error = str(exc)
+    finally:
+        with _RUNTIME_SETUP_LOCK:
+            _RUNTIME_SETUP_STATE["running"] = False
+            _RUNTIME_SETUP_STATE["attempted"] = True
+            _RUNTIME_SETUP_STATE["error"] = error
+            _RUNTIME_SETUP_STATE["finished_at"] = time.time()
+
+
+def request_runtime_setup(*, force: bool = False) -> bool:
+    """Start a best-effort background setup of the pinned Lean/Mathlib environment.
+
+    Normal users should never need to run Lake commands manually. The worker is
+    deliberately started only by the running server, never merely by importing
+    this module in tests or tooling.
+    """
+    if not AUTO_SETUP:
+        return False
+    lake = shutil.which("lake")
+    if not lake:
+        return False
+    if _runtime_setup_marker_current():
+        return False
+    now = time.time()
+    with _RUNTIME_SETUP_LOCK:
+        if _RUNTIME_SETUP_STATE["running"]:
+            return False
+        if (
+            not force
+            and _RUNTIME_SETUP_STATE["attempted"]
+            and now - float(_RUNTIME_SETUP_STATE["finished_at"] or 0.0) < 300
+        ):
+            return False
+        _RUNTIME_SETUP_STATE.update(
+            {"running": True, "attempted": True, "error": "", "started_at": now, "finished_at": 0.0}
+        )
+    threading.Thread(
+        target=_runtime_setup_worker,
+        args=(lake,),
+        name="mathhub-runtime-setup",
+        daemon=True,
+    ).start()
+    return True
 
 
 def file_hash(path: Path) -> str | None:
@@ -89,13 +209,20 @@ def runtime_status() -> dict[str, Any]:
     lean = shutil.which("lean")
     manifest = (ROOT / "lake-manifest.json").exists()
     mathlib_checkout = (ROOT / ".lake/packages/mathlib").exists()
-    ready = bool(lake and manifest and mathlib_checkout)
+    environment_present = bool(lake and manifest and mathlib_checkout)
+    prepared = _runtime_setup_marker_current()
+    ready = bool(environment_present and (prepared or not AUTO_SETUP))
+    setup = runtime_setup_status()
     if ready:
-        message = "Pinned Lake environment available"
+        message = "Math library ready"
+    elif setup.get("running"):
+        message = "Preparing the Math library automatically…"
     elif not lake:
-        message = "Lake not found; install Lean/elan first"
+        message = "Lean runtime unavailable"
+    elif setup.get("error"):
+        message = "Math library setup needs attention"
     else:
-        message = "Run `lake update` and `lake exe cache get` once"
+        message = "Math library is not ready yet"
     return {
         "ready": ready,
         "message": message,
@@ -106,6 +233,10 @@ def runtime_status() -> dict[str, Any]:
         "compile_timeout_seconds": COMPILE_TIMEOUT_SECONDS,
         "index_timeout_seconds": INDEX_TIMEOUT_SECONDS,
         "registry": str(REGISTRY.path),
+        "auto_setup": AUTO_SETUP,
+        "setup_prepared": prepared,
+        "setup_running": bool(setup.get("running")),
+        "setup_error": str(setup.get("error") or ""),
         **environment_metadata(),
     }
 
@@ -528,6 +659,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(404)
             return
         if path == "/api/runtime":
+            request_runtime_setup()
             self.json_response(200, runtime_status())
             return
         super().do_GET()
@@ -550,6 +682,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    request_runtime_setup()
     print(f"MathHub engine: http://{HOST}:{PORT}")
     print(runtime_status()["message"])
     print("Semantic evidence writes: FormalBinding + FormalTypeShape/Partition + ProofDependency.")

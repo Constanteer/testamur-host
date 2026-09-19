@@ -10,7 +10,7 @@ importLibrarySelection=async function taskBackedLibrarySelection(){
       imports:libraryImports(),
       max_depth:LIBRARY_DEPENDENCY_DEPTH,
       max_claims:Math.max(LIBRARY_DEPENDENCY_BUDGET,names.length),
-    },{open:true,run:true});
+    },{open:true,run:false});
     for(const name of names)libraryBrowserState.selected.delete(name);
     libraryBrowserState.importing=false;libraryBrowserState.open=false;renderLibraryBrowser();
     importTaskState.selected=task.task_id;importTaskState.open=true;renderImportTasks();
@@ -28,7 +28,7 @@ importProofConstant=async function taskBackedProofConstant(name,proofId,button){
       imports:proofImports(proofId),
       max_depth:2,
       max_claims:160,
-    },{open:true,run:true});
+    },{open:true,run:false});
     button.textContent='Import task started';
     importTaskState.selected=task.task_id;importTaskState.open=true;renderImportTasks();
   }catch(error){
