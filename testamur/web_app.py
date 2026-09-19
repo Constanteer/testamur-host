@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from .advisory_write_route import record_advisory_assessment
 from .environment import DB_FILE_NAME, ENV_DIR_NAME, discover
 from .product_actions import create_monitor, create_project, refresh_monitor, refresh_project_monitors, run_due_monitors
 from .monitor_provider_manifest import load_monitor_provider_registry
@@ -172,6 +173,8 @@ def dispatch_api_write(
     if split.query:
         return _error("invalid_argument", "write routes do not accept query parameters")
     try:
+        if path == "/v1/advisory-assessments":
+            return _json(record_advisory_assessment(service, payload))
         if path == "/v1/projects/refresh":
             unknown = set(payload) - {"project_ref"}
             if unknown:
