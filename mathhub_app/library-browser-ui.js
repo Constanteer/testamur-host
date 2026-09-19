@@ -32,15 +32,15 @@ function librarySelectedAvailable(){return [...libraryBrowserState.selected].fil
 
 function libraryInspectionHtml(name){
   const value=libraryBrowserState.inspections.get(name);if(!value)return '';
-  if(value.loading)return '<div class="library-inspection quiet-empty">Inspecting with Lean…</div>';
+  if(value.loading)return '<div class="library-inspection quiet-empty">Loading formal details…</div>';
   if(value.error)return `<div class="library-inspection library-error">${esc(value.error)}</div>`;
-  return `<div class="library-inspection"><div class="library-inspection-type"><span>Lean type</span><code>${esc(value.pretty_type||'—')}</code></div><div class="library-inspection-meta"><span>${(value.axioms||[]).length} axioms</span><span>${(value.statement_dependencies||[]).length} statement refs</span><span>${(value.proof_dependencies||[]).length} proof refs</span></div></div>`;
+  return `<div class="library-inspection"><div class="library-inspection-type"><span>Formal statement</span><code>${esc(value.pretty_type||'—')}</code></div><details class="library-machine-details"><summary>Exact Lean record</summary><div><span>Lean name</span><code>${esc(name)}</code></div><div class="library-inspection-meta"><span>${(value.axioms||[]).length} axioms</span><span>${(value.statement_dependencies||[]).length} statement references</span><span>${(value.proof_dependencies||[]).length} proof references</span></div></details></div>`;
 }
 
 function libraryRow(item){
   const name=item.declaration_name,status=libraryBrowserState.importStatus.get(name),selected=libraryBrowserState.selected.has(name),registered=item.registered||status?.ok,claimId=status?.claim_id||item.claim_id||'';
   const friendly=humanizeLeanName(item.short_name||name);
-  return `<div class="library-row ${registered?'registered':''}"><label class="library-select"><input type="checkbox" data-library-select="${esc(name)}" ${selected?'checked':''} ${registered||libraryBrowserState.importing?'disabled':''}/></label><div class="library-row-main"><div class="library-friendly-name"><strong>${esc(friendly)}</strong>${registered?'<span class="library-registered">in MathHub</span>':''}${status?.error?'<span class="library-import-failed">needs attention</span>':''}</div><code class="library-lean-name">${esc(name)}</code>${status?.error?`<div class="library-row-error">${esc(status.error)}</div>`:''}${libraryInspectionHtml(name)}</div><div class="library-row-actions"><button class="btn" data-library-inspect="${esc(name)}" ${libraryBrowserState.importing?'disabled':''}>Formal details</button>${registered&&claimId?`<button class="btn" data-library-open-claim="${esc(claimId)}">Open</button>`:''}</div></div>`;
+  return `<div class="library-row ${registered?'registered':''}"><label class="library-select"><input type="checkbox" data-library-select="${esc(name)}" ${selected?'checked':''} ${registered||libraryBrowserState.importing?'disabled':''}/></label><div class="library-row-main"><div class="library-friendly-name"><strong>${esc(friendly)}</strong>${registered?'<span class="library-registered">in MathHub</span>':''}${status?.error?'<span class="library-import-failed">needs attention</span>':''}</div><span class="library-row-kind">Mathlib theorem</span>${status?.error?`<div class="library-row-error">${esc(status.error)}</div>`:''}${libraryInspectionHtml(name)}</div><div class="library-row-actions"><button class="btn" data-library-inspect="${esc(name)}" ${libraryBrowserState.importing?'disabled':''}>Details</button>${registered&&claimId?`<button class="btn" data-library-open-claim="${esc(claimId)}">Open</button>`:''}</div></div>`;
 }
 
 function libraryIndexSummary(result){
