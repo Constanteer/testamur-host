@@ -89,7 +89,10 @@
         <div><strong>${competing}</strong><span>with competing heads</span></div>
       </div>
       <p class="supply-chain-advisory-note"><strong>Recorded assessment state.</strong> Identity overlap only nominates work for review. Assessment heads below are immutable recorded conclusions about specific component revisions—not generic verification, validity, or trust scores.</p>
-      <div class="advisory-review-list">${reviews.map(reviewCard).join('')}</div>`;
+      <div class="advisory-review-list">${reviews.map(reviewCard).join('')}</div>
+      <div class="advisory-review-next form-help">
+        <strong>What next?</strong> Inspect the exact Source/Revision and its Compare before recording applicability evidence. Then use <a href="/impact">Impact</a> to inspect downstream consequences and <a href="/learn#advisory-review">Learn</a> for the review → revalidation workflow. A changed revision is not automatically invalid, and an unassessed candidate is not an affectedness verdict.
+      </div>`;
     const note = host.querySelector('.supply-chain-advisory-note');
     (note || host.firstElementChild)?.insertAdjacentElement('afterend', surface);
   }
