@@ -30,8 +30,14 @@ IDENTITY=PublicIdentity(core.DB_PATH); CATALOG=Catalog(core.DB_PATH); HISTORY=Hi
 AUTO_IMPORT_TASKS=os.environ.get("MATHHUB_AUTO_IMPORT_TASKS","1").strip().lower() not in {"0","false","no","off"}
 IMPORT_WORKER_INTERVAL_SECONDS=max(0.5,float(os.environ.get("MATHHUB_IMPORT_WORKER_INTERVAL","1.5")))
 IMPORT_LEASE_STALE_SECONDS=max(60,float(os.environ.get("MATHHUB_IMPORT_LEASE_STALE_SECONDS","900")))
+AUTO_INDEX_NAMESPACES=tuple(
+    part.strip() for part in os.environ.get("MATHHUB_AUTO_INDEX_NAMESPACES","Nat").split(",") if part.strip()
+)
+LIBRARY_WARMUP_POLL_SECONDS=max(0.5,float(os.environ.get("MATHHUB_LIBRARY_WARMUP_POLL","2")))
 _IMPORT_WORKER_STARTED=False
 _IMPORT_WORKER_LOCK=threading.Lock()
+_LIBRARY_WARMUP_STARTED=False
+_LIBRARY_WARMUP_LOCK=threading.Lock()
 install_classifier_cache(COVERAGE,dependency_import_module,import_tasks_module,core.runtime_status)
 INTERNAL_RE=re.compile(r"^(CLM|VER|PRF|BLD)-(\d+)$",re.I); PUBLICISH=r"(?:CLM|VER|PRF|BLD)-[A-Z0-9-]+"; TASKISH=r"IMT-[A-F0-9]{16}"
 P2K={"CLM":"claim","VER":"version","PRF":"proof","BLD":"build"}; K2P={v:k for k,v in P2K.items()}
@@ -233,6 +239,42 @@ def start_import_worker()->bool:
     return True
 
 
+def _library_warmup_loop()->None:
+    """Prime a small default theorem index once the pinned runtime is ready.
+
+    This never imports Claims. It only fills the disposable namespace read cache
+    so the first human library browse does not pay the full Lean scan startup.
+    """
+    while True:
+        runtime=core.runtime_status()
+        if runtime.get("ready"):
+            break
+        if runtime.get("setup_error"):
+            return
+        time.sleep(LIBRARY_WARMUP_POLL_SECONDS)
+    for namespace in AUTO_INDEX_NAMESPACES:
+        try:
+            list_namespace_declarations({
+                "namespace":namespace,
+                "imports":["Mathlib"],
+                "limit":1,
+            })
+        except (ValueError,RuntimeError,sqlite3.Error):
+            pass
+
+
+def start_library_warmup()->bool:
+    global _LIBRARY_WARMUP_STARTED
+    if not AUTO_INDEX_NAMESPACES:
+        return False
+    with _LIBRARY_WARMUP_LOCK:
+        if _LIBRARY_WARMUP_STARTED:
+            return False
+        _LIBRARY_WARMUP_STARTED=True
+    threading.Thread(target=_library_warmup_loop,name="mathhub-library-warmup",daemon=True).start()
+    return True
+
+
 class Handler(core.Handler):
     def do_GET(self)->None:
         p=urlparse(self.path); path=p.path
@@ -301,4 +343,5 @@ class Handler(core.Handler):
 if __name__=="__main__":
     core.request_runtime_setup()
     start_import_worker()
+    start_library_warmup()
     print(f"MathHub: http://{core.HOST}:{core.PORT}"); print(core.runtime_status()["message"]); print("Ontology: Claim / Proof / ProofDependency."); ThreadingHTTPServer((core.HOST,core.PORT),Handler).serve_forever()

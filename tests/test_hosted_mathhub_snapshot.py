@@ -43,6 +43,8 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert '[elan, "toolchain", "install", toolchain]' in server
     assert '[lake, "exe", "cache", "get"]' in server
     assert "start_import_worker()" in mathhub
+    assert "start_library_warmup()" in mathhub
+    assert 'MATHHUB_AUTO_INDEX_NAMESPACES","Nat"' in mathhub
     assert "TASKS.step(task_id)" in mathhub
     assert "bootstrap_mathhub()" not in start
     assert "MathHub immediately" in start
@@ -50,4 +52,4 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ fc2e278688262e1bd79bbd515378eb94905f56ed"
+    assert marker == "Constanteer/Mathub main @ 64c04ea545db1e74d27df5fc1e5713e872672292"
