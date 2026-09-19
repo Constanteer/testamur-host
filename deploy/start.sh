@@ -14,8 +14,25 @@ PY
 then
   printf '[testamur] persistent volume detected at /data\n'
 else
-  printf >&2 '[testamur] WARNING: /data is not a mount point. Accounts, projects and history WILL be lost on redeploy. Mount a persistent Zeabur Volume at /data before using hosted Testamur.\n'
+  if [ "${TESTAMUR_ALLOW_EPHEMERAL_DATA:-}" = "1" ]; then
+    printf >&2 '[testamur] WARNING: /data is not a mount point; ephemeral data explicitly allowed. Accounts, projects and history may be lost on redeploy.\n'
+  else
+    printf >&2 '[testamur] ERROR: /data is not a persistent mount. Refusing to start because account/project state would be ephemeral. Mount the Zeabur Volume at /data or set TESTAMUR_ALLOW_EPHEMERAL_DATA=1 only for disposable previews.\n'
+    exit 78
+  fi
 fi
+
+VOLUME_MARKER=/data/testamur/.volume-id
+if [ ! -s "$VOLUME_MARKER" ]; then
+  python - <<'PY'
+from pathlib import Path
+import secrets
+path = Path("/data/testamur/.volume-id")
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text("vol_" + secrets.token_hex(16) + "\n", encoding="utf-8")
+PY
+fi
+printf '[testamur] volume marker: %s\n' "$(tr -d '\r\n' < "$VOLUME_MARKER")"
 
 # Keep Lean and Lake state on the persistent Zeabur volume instead of baking
 # gigabytes of mathlib cache into every OCI image.
