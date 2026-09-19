@@ -378,3 +378,13 @@
   .route-verification{justify-content:flex-start}
   .claim-row-submeta code{width:100%}
 }
+
+
+.route-proof-source{margin-top:12px}
+.route-proof-source>summary,.graph-formal-details>summary{
+  width:fit-content;cursor:pointer;color:var(--blue);font-size:10px;font-weight:600
+}
+.route-proof-source .proof-source{margin-top:8px;margin-bottom:0}
+.graph-formal-details{margin:10px 0 4px}
+.graph-formal-details code{display:block;margin-top:6px;color:var(--muted);font:9px/1.5 var(--mono);overflow-wrap:anywhere}
+.argument-graph-inspector p{color:var(--muted);font-size:11px;line-height:1.5}
