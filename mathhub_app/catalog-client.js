@@ -79,14 +79,14 @@ function decorateCatalogFooter() {
   const footer = document.createElement('div');
   footer.className = 'catalog-footer';
   const loaded = claims.length;
-  footer.innerHTML = `<div><strong>${loaded}</strong><span>Claim${loaded === 1 ? '' : 's'} loaded in this view</span><small>cursor-paginated registry; no full-table count required</small></div>${catalogState.hasMore ? `<button class="btn" data-catalog-more ${catalogState.loading ? 'disabled' : ''}>${catalogState.loading ? 'Loading…' : 'Load more'}</button>` : '<span class="catalog-end">end of current result set</span>'}`;
+  footer.innerHTML = `<div><strong>${loaded}</strong><span>statement${loaded === 1 ? '' : 's'} loaded in this view</span><small>showing this page of the mathematical library</small></div>${catalogState.hasMore ? `<button class="btn" data-catalog-more ${catalogState.loading ? 'disabled' : ''}>${catalogState.loading ? 'Loading…' : 'Load more'}</button>` : '<span class="catalog-end">end of current result set</span>'}`;
   list.after(footer);
   footer.querySelector('[data-catalog-more]')?.addEventListener('click', () => {
     if (catalogState.nextCursor) loadCatalogPage({cursor: catalogState.nextCursor});
   });
 
   const firstMetric = document.querySelector('.overview-line .metric .metric-label');
-  if (firstMetric) firstMetric.textContent = 'Claims loaded';
+  if (firstMetric) firstMetric.textContent = 'Statements loaded';
 }
 
 const catalogBaseBind = bind;
