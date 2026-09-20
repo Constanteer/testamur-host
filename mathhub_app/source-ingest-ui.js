@@ -3,6 +3,7 @@
 state.sourceIngest = state.sourceIngest || {loading:false,error:"",result:null,selected:-1};
 state.sourceDraft = state.sourceDraft || {title:"",statement:"",imports:"Mathlib",declaration:"",proof:""};
 state.sourceRegister = state.sourceRegister || {loading:false,error:"",success:null};
+state.sourceCheck = state.sourceCheck || {running:false,result:null,error:""};
 
 function mhHumanize(value){
   return String(value || "").split(".").pop().replace(/[_-]+/g," ").replace(/([a-z0-9])([A-Z])/g,"$1 $2").replace(/\b\w/g,function(c){return c.toUpperCase();});
@@ -35,12 +36,20 @@ topbar=function(){
   '</div></header>';
 };
 
+function mhOwnedClaims(){
+  if(typeof registryState==="object" && registryState.ready){
+    return claims.filter(function(c){return c.registry===true;});
+  }
+  return claims;
+}
+
 renderRegistry=function(){
   var q=state.search.trim().toLowerCase();
-  var filtered=claims.filter(function(c){
+  var owned=mhOwnedClaims();
+  var filtered=owned.filter(function(c){
     return (state.filter==="all"||c.status===state.filter)&&(!q||[c.id,c.title,c.statement,c.area,c.author,c.formalizer].concat(c.tags||[]).join(" ").toLowerCase().includes(q));
   });
-  var verified=claims.filter(function(c){return c.status==="verified";}).length;
+  var verified=owned.filter(function(c){return c.status==="verified";}).length;
   var rows=filtered.length?filtered.map(function(c){
     return '<button class="mathhub-owned-row" data-claim="'+esc(c.id)+'"><div>'+
       '<span class="mathhub-owned-area">'+esc(c.area||"Mathematics")+'</span>'+
@@ -60,7 +69,7 @@ renderRegistry=function(){
       '<div class="mathhub-home-actions"><button class="btn btn-primary mathhub-hero-button" data-library-browser>Browse the math library</button><button class="btn mathhub-hero-button" data-view="submit">Import a file or link</button></div>'+
     '</div><aside class="mathhub-home-runtime">'+
       '<div><div class="mathhub-runtime-line"><span class="runtime-dot '+mhRuntimeTone()+'"></span><strong>'+esc(mhRuntimeCopy())+'</strong></div><p>'+esc(runtimeText)+'</p></div>'+
-      '<div class="mathhub-runtime-facts"><span><strong>'+claims.length+'</strong> statements</span><span><strong>'+verified+'</strong> verified builds</span></div>'+
+      '<div class="mathhub-runtime-facts"><span><strong>'+owned.length+'</strong> statements</span><span><strong>'+verified+'</strong> verified builds</span></div>'+
     '</aside></section>'+
     '<section class="mathhub-start-grid">'+
       '<button class="mathhub-start-card primary" data-library-browser><span class="mathhub-start-index">01</span><strong>Find mathematics</strong><p>Browse ordinary subjects and search Mathlib without knowing a namespace first.</p><span class="mathhub-start-link">Open library →</span></button>'+
@@ -108,8 +117,13 @@ renderSubmit=function(){
         '<label><span>Imports</span><textarea id="draft-imports">'+esc(d.imports||"Mathlib")+'</textarea></label>'+
         '<label><span>Declaration</span><textarea id="draft-decl" required>'+esc(d.declaration)+'</textarea></label>'+
         '<label><span>Proof</span><textarea id="draft-proof" class="proof-draft" placeholder="by&#10;  ...">'+esc(d.proof)+'</textarea></label>'+
-      '</div></details><div class="mathhub-review-actions"><button class="btn" type="button" id="draft-test" '+(state.runtime.ready?"":"disabled")+'>Check with Lean</button><button class="btn btn-primary" type="submit" '+(reg.loading?"disabled":"")+'>'+(reg.loading?"Registering…":"Register in MathHub")+'</button></div>'+
-      '<div id="draft-result" class="draft-result">'+(reg.error?'<div class="callout bad">'+esc(reg.error)+'</div>':"")+(reg.success?'<div class="callout"><strong>Registered.</strong><br>'+esc(reg.success)+'</div>':"")+'</div></form>'+
+      '</div></details><div class="mathhub-review-actions"><button class="btn" type="button" id="source-draft-test" '+(state.runtime.ready&&!state.sourceCheck.running?"":"disabled")+'>'+(state.sourceCheck.running?"Checking…":"Check with Lean")+'</button><button class="btn btn-primary" type="submit" '+(reg.loading?"disabled":"")+'>'+(reg.loading?"Registering…":"Register in MathHub")+'</button></div>'+
+      '<div id="draft-result" class="draft-result">'+
+        (state.sourceCheck.error?'<div class="callout bad"><strong>Lean check failed.</strong><br>'+esc(state.sourceCheck.error)+'</div>':"")+
+        (state.sourceCheck.result?'<div class="callout '+(state.sourceCheck.result.ok&&!state.sourceCheck.result.contains_sorry?"":"warn")+'"><strong>'+(state.sourceCheck.result.ok&&!state.sourceCheck.result.contains_sorry?"Lean check passed":"Not verified yet")+'</strong><br>'+(state.sourceCheck.result.contains_sorry?"The proof still contains sorry.":"The current formalization was checked in the pinned environment.")+'</div>':"")+
+        (reg.error?'<div class="callout bad">'+esc(reg.error)+'</div>':"")+
+        (reg.success?'<div class="callout"><strong>Registered.</strong><br>'+esc(reg.success)+'</div>':"")+
+      '</div></form>'+
     '</section></main>';
 };
 
@@ -131,6 +145,7 @@ function mhApplyCandidate(index,rerender){
     proof:item.proof||""
   };
   state.sourceRegister={loading:false,error:"",success:null};
+  state.sourceCheck={running:false,result:null,error:""};
   if(rerender!==false)render();
 }
 async function mhIngestFile(file){
@@ -139,6 +154,7 @@ async function mhIngestFile(file){
   await mhIngest({filename:file.name,source_text:await file.text()});
 }
 async function mhIngest(payload){
+  state.sourceCheck={running:false,result:null,error:""};
   state.sourceIngest={loading:true,error:"",result:null,selected:-1};render();
   try{
     var result=await mhPost("/api/source-ingest",payload);
@@ -149,6 +165,27 @@ async function mhIngest(payload){
   }
   render();
 }
+async function mhCheck(){
+  if(!state.runtime.ready)return;
+  state.sourceCheck={running:true,result:null,error:""};render();
+  try{
+    var declaration=state.sourceDraft.declaration.trim();
+    var match=declaration.match(/(?:theorem|lemma|def)\s+([^\s:(]+)/);
+    if(!match)throw new Error("The Lean declaration name could not be determined.");
+    var result=await mhPost("/api/lean/check",{
+      imports:state.sourceDraft.imports.split(/\n+/).map(function(x){return x.trim();}).filter(Boolean),
+      declaration:declaration,
+      proof:state.sourceDraft.proof.trim(),
+      theorem_name:match[1],
+      audit:true
+    });
+    state.sourceCheck={running:false,result:result,error:""};
+  }catch(error){
+    state.sourceCheck={running:false,result:null,error:error.message||String(error)};
+  }
+  render();
+}
+
 async function mhRegister(event){
   event.preventDefault();
   state.sourceRegister={loading:true,error:"",success:null};render();
@@ -167,7 +204,10 @@ async function mhRegister(event){
       build:true
     };
     var created=await mhPost("/api/claims",payload);
-    state.sourceRegister={loading:false,error:"",success:created.created_build&&created.created_build.status?("Build status: "+created.created_build.status+"."):"The statement is stored; a proof build can run when Lean is ready."};
+    var registrationMessage=created.created_build&&created.created_build.status?
+      ("Build status: "+created.created_build.status+"."):
+      (created.build_error?("Stored, but the build did not complete: "+created.build_error):"The statement is stored. No proof build was created.");
+    state.sourceRegister={loading:false,error:"",success:registrationMessage};
     if(typeof loadRegistryClaims==="function")await loadRegistryClaims();
     var claimId=created.public_id||created.claim_id;
     if(claimId){state.selected=claimId;state.view="claim";}
@@ -206,8 +246,12 @@ bind=function(){
     button.addEventListener("click",function(){mhApplyCandidate(Number(button.dataset.ingestCandidate));});
   });
   [["draft-title","title"],["draft-human","statement"],["draft-imports","imports"],["draft-decl","declaration"],["draft-proof","proof"]].forEach(function(pair){
-    var node=document.querySelector("#"+pair[0]);if(node)node.addEventListener("input",function(event){state.sourceDraft[pair[1]]=event.currentTarget.value;});
+    var node=document.querySelector("#"+pair[0]);if(node)node.addEventListener("input",function(event){
+      state.sourceDraft[pair[1]]=event.currentTarget.value;
+      if(pair[1]==="imports"||pair[1]==="declaration"||pair[1]==="proof")state.sourceCheck={running:false,result:null,error:""};
+    });
   });
+  var check=document.querySelector("#source-draft-test");if(check)check.onclick=function(){void mhCheck();};
   var form=document.querySelector("#source-claim-form");if(form)form.addEventListener("submit",mhRegister);
 };
 
