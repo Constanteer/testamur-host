@@ -34,3 +34,10 @@ def test_hosted_launch_copy_keeps_semantic_firewall():
     launch_surface = APP[launch_start:launch_end].lower()
     assert "trust score" not in launch_surface
     assert "confidence score" not in launch_surface
+
+
+def test_hosted_project_overview_keeps_primary_first_monitor_action():
+    assert "object-about-primary" in APP
+    assert "Add first monitor" in APP
+    assert "upstream things your work depends on" in APP
+    assert '<span>Slug</span><strong>${esc(project.slug)}</strong>' not in APP
