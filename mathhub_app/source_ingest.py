@@ -55,6 +55,10 @@ def _candidate_blocks(source: str) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for pos, (start, kind, name, qualified) in enumerate(starts):
         end = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
+        for cursor in range(start + 1, end):
+            if _END_RE.match(lines[cursor]):
+                end = cursor
+                break
         block = "\n".join(lines[start:end]).strip()
         proof_match = re.search(r":=\s*(by\b[\s\S]*)$", block)
         if proof_match:
