@@ -1378,15 +1378,15 @@ async function projectMonitorsPanel(project, monitors) {
   }).join('');
   return `<div class="monitoring-layout">
     ${!monitors.length ? `<section class="monitor-first-run"><div><span class="onboarding-kicker">STEP 2 OF 3</span><h2>Add the first dependency.</h2><p>Choose a target your project genuinely relies on. Testamur will observe it now, then make later change visible without pretending that change automatically invalidates your work.</p></div><div class="monitor-first-run-examples"><span>Docs URL</span><span>Repository</span><span>Specification</span><span>Plugin target</span></div></section>` : ''}
-    <section class="time-query-card">
-      <div><h2>Add monitor</h2><p>A project can contain many monitors. Each monitor resolves a target Source and owns its own change/unavailable/recovery configuration.</p></div>
-      <form data-add-project-monitor data-project-ref="${esc(project.project_id)}">
-        <label><span>Type</span><select name="provider">${providerOptions}</select></label>
-        <label class="grow" data-source-monitor-target><span>URL or locator</span><input name="locator" type="text" autocomplete="off" placeholder="https://example.com/spec" /></label>
+    <section class="time-query-card monitor-create-card">
+      <div><span class="onboarding-kicker">ADD DEPENDENCY</span><h2>What should Testamur watch?</h2><p>Add one upstream source this project relies on. Testamur records what it observes and can check again later; a detected change is not an invalidity verdict.</p></div>
+      <form class="monitor-create-form" data-add-project-monitor data-project-ref="${esc(project.project_id)}">
+        <label><span>Source type</span><select name="provider">${providerOptions}</select></label>
+        <label class="grow monitor-target-field" data-source-monitor-target><span>URL or repository locator</span><input name="locator" type="text" autocomplete="off" placeholder="https://example.com/spec or owner/repository" /></label>
         ${providerFields}
-        <label class="grow"><span>Label <small>optional</small></span><input name="label" type="text" autocomplete="off" placeholder="Production spec" /></label>
-        <label><span>Cadence</span><select name="interval"><option value="">Manual</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option><option value="3600">Hourly</option><option value="21600">Every 6 hours</option><option value="86400">Daily</option></select></label>
-        <button class="btn btn-primary" type="submit">Add monitor</button>
+        <label class="grow"><span>Name it <small>optional</small></span><input name="label" type="text" autocomplete="off" placeholder="Production API spec" /></label>
+        <label><span>Check automatically</span><select name="interval"><option value="">Only when I ask</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option><option value="3600">Hourly</option><option value="21600">Every 6 hours</option><option value="86400">Daily</option></select></label>
+        <button class="btn btn-primary monitor-submit-primary" type="submit">Add monitor</button>
       </form>
       <div data-write-result></div>
       ${providers.length ? `<p class="form-help">Plugin monitor providers registered: ${providers.map(name => esc(specs[name]?.label || name)).join(', ')}.</p>` : '<p class="form-help">No plugin monitor providers are registered in this environment yet.</p>'}
