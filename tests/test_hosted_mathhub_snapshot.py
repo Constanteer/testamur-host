@@ -48,6 +48,10 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
     assert 'id="source-draft-test"' in source_ui
     assert 'id="draft-test"' not in source_ui
     assert "created.build_error" in source_ui
+    assert "Loading your MathHub…" in source_ui
+    assert "state.runtime.setupStep" in source_ui
+    assert "state.runtime.setupSteps" in source_ui
+    assert "mathhub-home-progress" in source_css
     assert "if _END_RE.match(lines[cursor])" in source_backend
 
 
@@ -85,4 +89,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 8f4a3b163d865e6c3803b01d3e384372932c8cc1"
+    assert marker == "Constanteer/Mathub main @ 26bc2c8818af353f218303e16b119b6c0d08c75e"

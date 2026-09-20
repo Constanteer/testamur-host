@@ -16,7 +16,7 @@ function mhRuntimeTone(){
 }
 function mhRuntimeCopy(){
   if(state.runtime.ready)return "Lean + Mathlib ready";
-  if(state.runtime.setupRunning)return "Preparing Lean + Mathlib automatically";
+  if(state.runtime.setupRunning)return state.runtime.label || "Preparing Lean + Mathlib automatically";
   if(state.runtime.setupError)return "Math library setup needs attention";
   return state.runtime.label || "Checking math library";
 }
@@ -37,10 +37,10 @@ topbar=function(){
 };
 
 function mhOwnedClaims(){
-  if(typeof registryState==="object" && registryState.ready){
+  if(typeof registryState==="object"){
     return claims.filter(function(c){return c.registry===true;});
   }
-  return claims;
+  return [];
 }
 
 renderRegistry=function(){
@@ -61,6 +61,9 @@ renderRegistry=function(){
     (state.runtime.setupError?
       "Automatic setup stopped. Open the Math library and retry setup; no terminal commands are required.":
       "First launch can take a while. Lean, Mathlib and the compiled cache are downloaded in the background and kept on persistent storage.");
+  var setupProgress=(state.runtime.setupRunning&&state.runtime.setupSteps)?
+    '<div class="mathhub-home-progress"><div><span>'+esc(state.runtime.label||"Preparing math library")+'</span><strong>'+Number(state.runtime.setupStep||0)+' / '+Number(state.runtime.setupSteps||0)+'</strong></div><progress max="'+Number(state.runtime.setupSteps||1)+'" value="'+Number(state.runtime.setupStep||0)+'"></progress></div>':"";
+  var registryLoading=typeof registryState==="object"&&!registryState.ready;
   return '<main class="shell page mathhub-home">'+
     '<section class="mathhub-home-hero"><div class="mathhub-home-copy">'+
       '<div class="eyebrow">Formal mathematics, made navigable</div>'+
@@ -68,7 +71,7 @@ renderRegistry=function(){
       '<p>Start from Mathlib, bring a Lean file, or paste a public source link. MathHub keeps the exact declarations, proofs and dependencies underneath without making you begin with them.</p>'+
       '<div class="mathhub-home-actions"><button class="btn btn-primary mathhub-hero-button" data-library-browser>Browse the math library</button><button class="btn mathhub-hero-button" data-view="submit">Import a file or link</button></div>'+
     '</div><aside class="mathhub-home-runtime">'+
-      '<div><div class="mathhub-runtime-line"><span class="runtime-dot '+mhRuntimeTone()+'"></span><strong>'+esc(mhRuntimeCopy())+'</strong></div><p>'+esc(runtimeText)+'</p></div>'+
+      '<div><div class="mathhub-runtime-line"><span class="runtime-dot '+mhRuntimeTone()+'"></span><strong>'+esc(mhRuntimeCopy())+'</strong></div><p>'+esc(runtimeText)+'</p>'+setupProgress+'</div>'+
       '<div class="mathhub-runtime-facts"><span><strong>'+owned.length+'</strong> statements</span><span><strong>'+verified+'</strong> verified builds</span></div>'+
     '</aside></section>'+
     '<section class="mathhub-start-grid">'+
@@ -78,7 +81,7 @@ renderRegistry=function(){
     '</section>'+
     '<section class="mathhub-owned"><div class="mathhub-owned-head"><div><div class="eyebrow">Your MathHub</div><h2>Collected statements</h2></div>'+
       '<label class="mathhub-inline-search"><span>⌕</span><input id="search" value="'+esc(state.search)+'" placeholder="Search what you have added…"/></label></div>'+
-      '<div class="mathhub-owned-list">'+rows+'</div>'+
+      '<div class="mathhub-owned-list">'+(registryLoading?'<div class="mathhub-owned-loading"><span class="runtime-dot working"></span><div><strong>Loading your MathHub…</strong><span>Reading the persistent registry.</span></div></div>':rows)+'</div>'+
     '</section></main>';
 };
 
