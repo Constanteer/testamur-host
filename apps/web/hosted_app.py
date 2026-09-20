@@ -865,9 +865,14 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         if path == "/healthz":
             mathhub_ok = False
             mathhub_error = None
+            mathhub_runtime: dict[str, Any] = {}
             try:
                 with urllib.request.urlopen("http://127.0.0.1:8001/api/runtime", timeout=1.5) as response:
                     mathhub_ok = 200 <= int(getattr(response, "status", response.getcode())) < 500
+                    raw_runtime = response.read(128 * 1024)
+                    decoded_runtime = json.loads(raw_runtime.decode("utf-8")) if raw_runtime else {}
+                    if isinstance(decoded_runtime, dict):
+                        mathhub_runtime = decoded_runtime
             except Exception as exc:
                 mathhub_error = str(getattr(exc, "reason", exc))
             mathhub_last_log = None
@@ -908,6 +913,21 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                 },
                 "mathhub": {
                     "ok": mathhub_ok,
+                    "ready": bool(mathhub_runtime.get("ready")),
+                    "message": mathhub_runtime.get("message"),
+                    "setup_running": bool(mathhub_runtime.get("setup_running")),
+                    "setup_stage": mathhub_runtime.get("setup_stage"),
+                    "setup_step": mathhub_runtime.get("setup_step"),
+                    "setup_steps": mathhub_runtime.get("setup_steps"),
+                    "lean_version": mathhub_runtime.get("lean_version"),
+                    "mathlib_revision": mathhub_runtime.get("mathlib_revision"),
+                    "snapshot": (
+                        (Path(__file__).resolve().parents[2] / "MATHHUB_SNAPSHOT").read_text(
+                            encoding="utf-8"
+                        ).strip()
+                        if (Path(__file__).resolve().parents[2] / "MATHHUB_SNAPSHOT").is_file()
+                        else None
+                    ),
                     "error": mathhub_error,
                     "last_log": mathhub_last_log,
                 },
