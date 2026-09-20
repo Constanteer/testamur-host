@@ -41,7 +41,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m py_compile mathhub_app/mathhub.py mathhub_app/server.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python -m py_compile mathhub_app/mathhub.py mathhub_app/server.py mathhub_app/source_ingest.py
+      - run: node --check mathhub_app/source-ingest-ui.js
+      - run: python -m pytest -q tests/test_hosted_mathhub_snapshot.py
 
   signup-smoke:
     runs-on: ubuntu-latest
