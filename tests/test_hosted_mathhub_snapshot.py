@@ -67,6 +67,16 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "MathHub immediately" in start
 
 
+def test_healthz_exposes_mathhub_runtime_progress() -> None:
+    hosted = read(ROOT / "apps" / "web" / "hosted_app.py")
+    assert '"setup_running"' in hosted
+    assert '"setup_stage"' in hosted
+    assert '"setup_step"' in hosted
+    assert '"setup_steps"' in hosted
+    assert '"mathlib_revision"' in hosted
+    assert '"snapshot"' in hosted
+
+
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
     assert marker == "Constanteer/Mathub main @ 977b0daf2ac0cd407b3db4c0478fa6db6a43860d"
