@@ -600,7 +600,7 @@ async function signUpPage() {
   shell(`<div class="account-page"><section class="account-card">
     <div class="account-mark">T</div>
     <h1>Create your Testamur account</h1>
-    <p>Your hosted workspace is isolated from other users by default. We will send a short-lived verification link to your email before the account can sign in.</p>
+    <p>Your hosted workspace is isolated from other users by default.</p>
     <form class="account-form" data-signup data-next="${esc(safeNextPath(next))}">
       <label><span>Username</span><input name="username" autocomplete="username" minlength="3" maxlength="39" required /></label>
       <label><span>Email</span><input name="email" type="email" autocomplete="email" required /></label>
@@ -612,81 +612,6 @@ async function signUpPage() {
     <div class="account-switch">Already have an account? <a data-nav href="/signin${next ? `?next=${encodeURIComponent(next)}` : ''}">Sign in</a></div>
   </section></div>`);
   document.querySelector('[data-signup]')?.addEventListener('submit', submitSignUp);
-}
-
-async function verifyEmailPendingPage() {
-  if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Verify email');
-  if (accountState.authenticated) return navigate('/');
-  const identifier = params().get('identifier') || '';
-  const deliveryFailed = params().get('delivery') === 'failed';
-  const next = safeNextPath(params().get('next'));
-  shell(`<div class="account-page"><section class="account-card">
-    <div class="account-mark">T</div>
-    <h1>Check your email</h1>
-    <p>${deliveryFailed
-      ? 'Your account was created, but the verification email could not be delivered. You can retry below.'
-      : `We sent a 30-minute verification link${identifier ? ` to <strong>${esc(identifier)}</strong>` : ''}.`}</p>
-    <form class="account-form" data-resend-verification data-next="${esc(next)}">
-      <label><span>Email or username</span><input name="identifier" autocomplete="username" value="${esc(identifier)}" required /></label>
-      <div data-account-result></div>
-      <button class="btn btn-secondary account-submit" type="submit">Resend verification email</button>
-    </form>
-    <div class="account-switch">Already verified? <a data-nav href="/signin${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}">Sign in</a></div>
-  </section></div>`);
-  document.querySelector('[data-resend-verification]')?.addEventListener('submit', submitResendVerification);
-}
-
-async function submitResendVerification(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const result = form.querySelector('[data-account-result]');
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
-  result.innerHTML = loading('Sending verification email…');
-  try {
-    await apiWrite('/v1/account/email-verification/resend', {
-      identifier: form.elements.identifier.value.trim(),
-    });
-    result.innerHTML = '<div class="flash flash-success"><strong>Sent</strong><span>If that account still needs verification, a new link is on its way.</span></div>';
-  } catch (error) {
-    accountError(result, error);
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function verifyEmailPage() {
-  if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Verify email');
-  if (accountState.authenticated) return navigate('/');
-  const token = params().get('token') || '';
-  if (!token) {
-    shell(`<div class="account-page"><section class="account-card">
-      <div class="account-mark">T</div>
-      <h1>Verification link is incomplete</h1>
-      <p>This URL does not contain an email verification token.</p>
-      <a data-nav class="btn btn-secondary" href="/verify-email-pending">Request another link</a>
-    </section></div>`);
-    return;
-  }
-  shell(`<div class="account-page"><section class="account-card">
-    <div class="account-mark">T</div>
-    <h1>Verifying your email…</h1>
-    ${loading('Checking the verification link…')}
-  </section></div>`);
-  try {
-    await apiWrite('/v1/account/email-verification/verify', { token });
-    history.replaceState({}, '', '/');
-    await loadAccountState();
-    cache.dashboard = null;
-    navigate('/');
-  } catch (error) {
-    shell(`<div class="account-page"><section class="account-card">
-      <div class="account-mark">T</div>
-      <h1>Verification link did not work</h1>
-      <div class="flash flash-danger"><strong>${esc(error.code || 'verification_failed')}</strong><span>${esc(error.message || error)}</span></div>
-      <a data-nav class="btn btn-secondary" href="/verify-email-pending">Request another link</a>
-    </section></div>`);
-  }
 }
 
 function settingsNav(selected) {
@@ -1107,11 +1032,6 @@ async function submitSignIn(event) {
     const next = form.dataset.next;
     navigate(safeNextPath(next));
   } catch (error) {
-    if (error.code === 'email_verification_required') {
-      const identifier = form.elements.identifier.value.trim();
-      navigate(`/verify-email-pending?identifier=${encodeURIComponent(identifier)}`);
-      return;
-    }
     accountError(result, error);
     button.disabled = false;
   }
@@ -1125,21 +1045,16 @@ async function submitSignUp(event) {
   button.disabled = true;
   result.innerHTML = loading('Creating account…');
   try {
-    const email = form.elements.email.value.trim();
     const response = await apiWrite('/v1/account/signup', {
       username: form.elements.username.value.trim(),
-      email,
+      email: form.elements.email.value.trim(),
       display_name: form.elements.display_name.value.trim() || null,
       password: form.elements.password.value,
     });
+    await loadAccountState();
     cache.dashboard = null;
     const next = form.dataset.next;
-    const query = new URLSearchParams({
-      identifier: email,
-      next: safeNextPath(next),
-    });
-    if (response.email_sent === false) query.set('delivery', 'failed');
-    navigate(`/verify-email-pending?${query.toString()}`);
+    navigate(safeNextPath(next));
   } catch (error) {
     accountError(result, error);
     button.disabled = false;
@@ -1322,7 +1237,7 @@ function projectOverview(project, monitors, supplyChain = null) {
         <div class="field"><span>Needs attention</span><div>${attention}</div></div>
         <div class="field"><span>Created</span><div>${esc(ago(project.created_at))}</div></div>
       </div></div>
-      <aside class="object-about"><h3>About</h3><p>A project groups related monitors and recorded dependency evidence. Sources are monitor targets, not project identity.</p><div class="about-row"><span>Slug</span><strong>${esc(project.slug)}</strong></div><div class="about-row"><span>Monitors</span><strong>${monitors.length}</strong></div><div class="about-row"><span>Dependencies</span><strong>${esc(String(supplyChain?.dependency_count || 0))}</strong></div><div class="about-row"><span>Next</span><a data-nav href="${esc(projectPath(project.slug))}?tab=${supplyChain ? 'supply-chain' : 'monitors'}">${supplyChain ? 'Inspect supply chain' : monitors.length ? 'Manage monitors' : 'Add first monitor'}</a></div></aside>
+      <aside class="object-about"><h3>About</h3><p>A project keeps the upstream things your work depends on together. Add a monitor for each external source you want Testamur to observe over time.</p><div class="about-row"><span>Visibility</span><strong>${esc(project.visibility || 'private')}</strong></div><div class="about-row"><span>Monitors</span><strong>${monitors.length}</strong></div><div class="about-row"><span>Dependencies</span><strong>${esc(String(supplyChain?.dependency_count || 0))}</strong></div>${!monitors.length ? `<a data-nav class="btn btn-primary object-about-primary" href="${esc(projectPath(project.slug))}?tab=monitors">Add first monitor</a>` : `<a data-nav class="btn btn-secondary object-about-primary" href="${esc(projectPath(project.slug))}?tab=${supplyChain ? 'supply-chain' : 'monitors'}">${supplyChain ? 'Open supply chain' : 'Manage monitors'}</a>`}</aside>
     </section>
     <section><div class="section-head"><h2>Monitors</h2><a data-nav href="${esc(projectPath(project.slug))}?tab=monitors">View all</a></div>
       <div class="right-card">${monitors.length ? `<div class="monitor-list">${monitors.slice(0, 6).map(monitor => `<a data-nav class="monitor-row" href="${esc(objectPath(monitor.watch_id))}"><span class="status-dot status-${tone(monitor.latest_state)}"></span><span><strong>${esc(monitor.label || domain(monitor.locator || monitor.source_id))}</strong><small>${esc(short(monitor.locator || monitor.source_id, 80))} · ${esc(monitor.latest_state || 'not evaluated')}</small></span></a>`).join('')}</div>` : `<div class="empty-project-guide"><span class="onboarding-kicker">NEXT STEP</span><h3>This project is not watching anything yet.</h3><p>Add something this work depends on. A monitor gives Testamur a stable target to observe over time.</p><div class="monitor-examples"><span><strong>Documentation URL</strong><code>https://example.com/api</code></span><span><strong>GitHub repository</strong><code>Constanteer/slate-lang</code></span><span><strong>Agent integration</strong><small>Capture sources used by Codex or another MCP host.</small></span></div><a data-nav class="btn btn-primary" href="${esc(projectPath(project.slug))}?tab=monitors">Add first monitor</a></div>`}</div>
@@ -2095,8 +2010,6 @@ async function render() {
   const path = location.pathname;
   if (path === '/signin') return signInPage();
   if (path === '/signup') return signUpPage();
-  if (path === '/verify-email') return verifyEmailPage();
-  if (path === '/verify-email-pending') return verifyEmailPendingPage();
 
   const publicHostedRoute =
     path === '/learn' ||
@@ -2105,8 +2018,6 @@ async function render() {
     path === '/quickstart' ||
     path === '/demo' ||
     path === '/status' ||
-    path === '/verify-email' ||
-    path === '/verify-email-pending' ||
     path.startsWith('/users/');
   if (accountState.mode === 'hosted' && !accountState.authenticated && !publicHostedRoute) {
     const next = `${path}${location.search || ''}`;
