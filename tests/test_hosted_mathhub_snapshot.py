@@ -43,6 +43,12 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
     assert "normalize_remote_url" in source_backend
     assert "address.is_global" in source_backend
     assert "mathhub-dropzone" in source_css
+    assert "function mhOwnedClaims()" in source_ui
+    assert 'c.registry===true' in source_ui
+    assert 'id="source-draft-test"' in source_ui
+    assert 'id="draft-test"' not in source_ui
+    assert "created.build_error" in source_ui
+    assert "if _END_RE.match(lines[cursor])" in source_backend
 
 
 def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
@@ -79,4 +85,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 977b0daf2ac0cd407b3db4c0478fa6db6a43860d"
+    assert marker == "Constanteer/Mathub main @ 8f4a3b163d865e6c3803b01d3e384372932c8cc1"
