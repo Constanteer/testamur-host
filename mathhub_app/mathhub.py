@@ -25,6 +25,7 @@ from ontology import validate_claim_declaration
 from presentation import PresentationIndex, canonical_from_declaration, suggested_title
 from public_identity import PublicIdentity
 from source_provenance import SourceProvenance
+from source_ingest import ingest_source
 
 IDENTITY=PublicIdentity(core.DB_PATH); CATALOG=Catalog(core.DB_PATH); HISTORY=HistoryReader(core.DB_PATH); PRESENTATIONS=PresentationIndex(core.DB_PATH); WORLD=GraphWorld(core.DB_PATH,core.ARGUMENT); GRAPH_DISPLAY=GraphDisplay(core.DB_PATH); TASKS=ImportTaskStore(core.DB_PATH); COVERAGE=CoverageIndex(core.DB_PATH); SOURCE_PROVENANCE=SourceProvenance(core.DB_PATH)
 AUTO_IMPORT_TASKS=os.environ.get("MATHHUB_AUTO_IMPORT_TASKS","1").strip().lower() not in {"0","false","no","off"}
@@ -276,6 +277,13 @@ def start_library_warmup()->bool:
 
 
 class Handler(core.Handler):
+    def read_source_ingest_json(self)->dict[str,Any]:
+        try:size=int(self.headers.get("Content-Length","0"))
+        except ValueError as exc:raise ValueError("invalid request size") from exc
+        if size<1 or size>2_000_000:raise ValueError("source ingest request must be between 1 byte and 2 MB")
+        payload=json.loads(self.rfile.read(size).decode("utf-8"))
+        if not isinstance(payload,dict):raise ValueError("JSON object expected")
+        return payload
     def do_GET(self)->None:
         p=urlparse(self.path); path=p.path
         try:
@@ -308,6 +316,7 @@ class Handler(core.Handler):
     def do_POST(self)->None:
         path=urlparse(self.path).path
         try:
+            if path=="/api/source-ingest":self.json_response(201,ingest_source(self.read_source_ingest_json(),data_root=core.DATA_ROOT));return
             if path=="/api/library/namespace":self.json_response(200,publicize(list_namespace_declarations(self.read_json())));return
             if path=="/api/import-tasks":self.json_response(201,publicize(TASKS.create(self.read_json())));return
             m=re.fullmatch(rf"/api/import-tasks/({TASKISH})/(step|pause|resume|cancel|recover|retry|extend)",path,re.I)

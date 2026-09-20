@@ -32,6 +32,17 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
     assert "Statements loaded" in catalog
     assert "<summary>Advanced formal search</summary>" in structural
     assert "button.textContent='Import tasks'" not in tasks
+    source_ui = read(MATHHUB / "source-ingest-ui.js")
+    source_css = read(MATHHUB / "source-ingest-ui.css")
+    source_backend = read(MATHHUB / "source_ingest.py")
+    index = read(MATHHUB / "index.html")
+    assert "Import a file or link" in source_ui
+    assert "Browse the math library" in source_ui
+    assert "source-ingest-ui.js" in index
+    assert "source-ingest-ui.css" in index
+    assert "normalize_remote_url" in source_backend
+    assert "address.is_global" in source_backend
+    assert "mathhub-dropzone" in source_css
 
 
 def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
@@ -58,4 +69,4 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 3e76b781a80f2bc16e1d7f735d8d14ae5ce877db"
+    assert marker == "Constanteer/Mathub main @ 977b0daf2ac0cd407b3db4c0478fa6db6a43860d"
