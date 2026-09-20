@@ -12,16 +12,32 @@
 
     const feed = center.querySelector('.feed');
     if (!feed) return;
-    const hasRecordedObservation = [...feed.querySelectorAll('.feed-item')].some(item => {
+    const recordedObservations = [...feed.querySelectorAll('.feed-item')].filter(item => {
       const text = item.textContent || '';
       return /captured a new observation|recorded .*observation/i.test(text);
     });
-    if (!hasRecordedObservation) return;
+    if (!recordedObservations.length) return;
 
+    const hasComparisonCandidate = recordedObservations.length >= 2;
     const card = document.createElement('section');
     card.className = 'baseline-handoff';
     card.dataset.baselineHandoff = 'true';
-    card.innerHTML = `
+    card.innerHTML = hasComparisonCandidate ? `
+      <div class="baseline-handoff-mark" aria-hidden="true">↔</div>
+      <div class="baseline-handoff-copy">
+        <span>ANOTHER OBSERVATION IS RECORDED</span>
+        <h2>You can compare revisions now. A difference is not a verdict.</h2>
+        <p>There is now more than one recorded observation in this activity view. Open monitoring to inspect the revision history and mechanical delta, then follow explicit reliance into Impact and Revalidation where it exists. A changed source is not automatically invalid.</p>
+        <div class="baseline-handoff-flow" aria-label="Review the new observation">
+          <strong>Revision</strong><i>→</i><strong>Compare</strong><i>→</i><strong>Impact</strong><i>→</i><strong>Revalidation</strong>
+        </div>
+        <div class="baseline-handoff-actions">
+          <a data-nav class="btn btn-primary" href="/monitoring">Compare observations</a>
+          <a data-nav class="btn btn-secondary" href="/learn">Learn the review model</a>
+          <a data-nav href="/docs">Open docs →</a>
+        </div>
+        <small>recorded ≠ verified · fetched ≠ relied · changed ≠ invalid · stale ≠ false · EXPOSED_TO_MODEL ≠ RELIED</small>
+      </div>` : `
       <div class="baseline-handoff-mark" aria-hidden="true">✓</div>
       <div class="baseline-handoff-copy">
         <span>FIRST BASELINE RECORDED</span>
