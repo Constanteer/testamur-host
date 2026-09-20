@@ -26,9 +26,11 @@ class ResendMailer:
         api_key = os.environ.get("RESEND_API_KEY", "").strip()
         if not backend:
             if api_key:
-                backend = "resend"
-            else:
-                return None
+                raise RuntimeError(
+                    "RESEND_API_KEY is set but TESTAMUR_MAIL_BACKEND is not; "
+                    "set TESTAMUR_MAIL_BACKEND=resend explicitly"
+                )
+            return None
         if backend != "resend":
             raise RuntimeError(
                 f"Unsupported TESTAMUR_MAIL_BACKEND={backend!r}; supported backends: resend"
