@@ -18,6 +18,7 @@ SHARED = (
     "testamur/web/app.js",
     "testamur/web/styles.css",
     "testamur/web/advisory-review-ui.js",
+    "testamur/web/advisory-revalidation-ui.js",
 )
 
 
