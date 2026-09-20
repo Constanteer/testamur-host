@@ -351,6 +351,9 @@ async function checkRuntime() {
       label:d.ready?'Math library ready':(d.message||'Preparing the math library…'),
       autoSetup:!!d.auto_setup,
       setupRunning:!!d.setup_running,
+      setupStage:d.setup_stage||'',
+      setupStep:Number(d.setup_step||0),
+      setupSteps:Number(d.setup_steps||0),
       setupError:d.setup_error||'',
     };
     if(!d.ready&&d.auto_setup&&!d.setup_error)runtimePollTimer=setTimeout(()=>checkRuntime(),2500);
