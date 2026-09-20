@@ -52,6 +52,9 @@ _RUNTIME_SETUP_LOCK = threading.Lock()
 _RUNTIME_SETUP_STATE: dict[str, Any] = {
     "running": False,
     "attempted": False,
+    "stage": "",
+    "step": 0,
+    "steps": 0,
     "error": "",
     "started_at": 0.0,
     "finished_at": 0.0,
@@ -91,17 +94,30 @@ def _write_runtime_setup_marker() -> None:
 def _runtime_setup_worker(lake: str) -> None:
     error = ""
     try:
-        commands: list[list[str]] = []
+        commands: list[tuple[str, list[str]]] = []
         elan = shutil.which("elan")
         toolchain_file = ROOT / "lean-toolchain"
         if elan and toolchain_file.is_file():
             toolchain = toolchain_file.read_text(encoding="utf-8").strip()
             if toolchain:
                 commands.extend(
-                    ([elan, "toolchain", "install", toolchain], [elan, "default", toolchain])
+                    (
+                        ("Installing the pinned Lean toolchain…", [elan, "toolchain", "install", toolchain]),
+                        ("Selecting the Lean toolchain…", [elan, "default", toolchain]),
+                    )
                 )
-        commands.extend(([lake, "update"], [lake, "exe", "cache", "get"]))
-        for command in commands:
+        commands.extend(
+            (
+                ("Resolving Mathlib dependencies…", [lake, "update"]),
+                ("Downloading the compiled Mathlib cache…", [lake, "exe", "cache", "get"]),
+            )
+        )
+        with _RUNTIME_SETUP_LOCK:
+            _RUNTIME_SETUP_STATE["steps"] = len(commands)
+        for index, (stage, command) in enumerate(commands, start=1):
+            with _RUNTIME_SETUP_LOCK:
+                _RUNTIME_SETUP_STATE["stage"] = stage
+                _RUNTIME_SETUP_STATE["step"] = index
             proc = subprocess.run(
                 command,
                 cwd=ROOT,
@@ -117,6 +133,9 @@ def _runtime_setup_worker(lake: str) -> None:
                 tail = output[-4000:] if output else f"exit code {proc.returncode}"
                 raise RuntimeError(f"{' '.join(command[1:])} failed: {tail}")
         _write_runtime_setup_marker()
+        with _RUNTIME_SETUP_LOCK:
+            _RUNTIME_SETUP_STATE["stage"] = "Math library ready"
+            _RUNTIME_SETUP_STATE["step"] = len(commands)
     except subprocess.TimeoutExpired:
         error = f"Math library setup timed out after {SETUP_TIMEOUT_SECONDS}s"
     except Exception as exc:
@@ -154,7 +173,16 @@ def request_runtime_setup(*, force: bool = False) -> bool:
         ):
             return False
         _RUNTIME_SETUP_STATE.update(
-            {"running": True, "attempted": True, "error": "", "started_at": now, "finished_at": 0.0}
+            {
+                "running": True,
+                "attempted": True,
+                "stage": "Preparing the Math library…",
+                "step": 0,
+                "steps": 0,
+                "error": "",
+                "started_at": now,
+                "finished_at": 0.0,
+            }
         )
     threading.Thread(
         target=_runtime_setup_worker,
@@ -236,6 +264,9 @@ def runtime_status() -> dict[str, Any]:
         "auto_setup": AUTO_SETUP,
         "setup_prepared": prepared,
         "setup_running": bool(setup.get("running")),
+        "setup_stage": str(setup.get("stage") or ""),
+        "setup_step": int(setup.get("step") or 0),
+        "setup_steps": int(setup.get("steps") or 0),
         "setup_error": str(setup.get("error") or ""),
         **environment_metadata(),
     }

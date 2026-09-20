@@ -8,6 +8,12 @@
 .library-setup-card .runtime-dot{margin-top:5px}
 .library-setup-card strong,.library-setup-card span{display:block}
 .library-setup-card span{margin-top:3px;color:var(--muted);font-size:11px;line-height:1.5}
+.library-setup-content{min-width:0;flex:1}
+.library-setup-title{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.library-setup-title small{color:var(--muted);font-size:9px;white-space:nowrap}
+.library-setup-progress{height:5px;margin-top:9px;border-radius:999px;overflow:hidden;background:color-mix(in srgb,var(--line) 72%,transparent)}
+.library-setup-progress i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .2s ease}
+.library-setup-card [data-library-retry-setup]{margin-top:9px}
 .library-topic-section{padding:18px 0 4px}
 .library-section-label{margin-bottom:8px;color:var(--muted);font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}
 .library-topic-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
