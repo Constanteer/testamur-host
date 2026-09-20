@@ -184,6 +184,7 @@ button { cursor: pointer; }
 .about-row { display: flex; justify-content: space-between; gap: 14px; padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line); }
 .about-row span { color: var(--muted); }
 .about-row strong { text-align: right; font-size: 12px; }
+.object-about-primary { width: 100%; min-height: 40px; margin-top: 14px; justify-content: center; font-size: 12px; }
 .ref-link { font-size: 12px; }
 .inline-json { display: inline-block; max-width: 100%; white-space: pre-wrap; word-break: break-word; font-size: 11px; color: #57606a; }
 
@@ -973,4 +974,40 @@ body.modal-open { overflow: hidden; }
   .integration-command .btn { justify-self: start; }
   .integration-note { grid-template-columns: 1fr; }
   .integrations-hero { padding: 18px; }
+}
+
+/* Advisory assessment action */
+.advisory-review-state { display: grid; gap: 12px; border-top: 1px solid var(--line); }
+.advisory-review-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
+.advisory-review-summary > div { padding: 12px 16px; display: grid; gap: 2px; }
+.advisory-review-summary > div + div { border-left: 1px solid var(--line); }
+.advisory-review-summary strong { font-size: 18px; }
+.advisory-review-summary span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.advisory-review-list { display: grid; gap: 12px; padding: 0 12px 12px; }
+.advisory-review-card { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--canvas); }
+.advisory-review-card .section-head { margin: 0; padding: 12px 14px; background: var(--soft); border-bottom: 1px solid var(--line); }
+.advisory-review-actions { display: grid; justify-items: end; gap: 8px; min-width: 190px; }
+.advisory-review-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; font-size: 10px; }
+.advisory-review-links a { color: var(--accent); }
+.advisory-assessment { position: relative; width: min(520px, 70vw); }
+.advisory-assessment > summary { cursor: pointer; list-style: none; border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 9px; font-size: 10px; font-weight: 650; background: var(--canvas); }
+.advisory-assessment > summary::-webkit-details-marker { display: none; }
+.advisory-assessment[open] > summary { background: var(--soft); }
+.advisory-assessment form { margin-top: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); text-align: left; }
+.advisory-assessment-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+.advisory-assessment-grid label { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
+.advisory-assessment-grid label.wide { grid-column: 1 / -1; }
+.advisory-assessment-grid input,
+.advisory-assessment-grid select { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--canvas); color: var(--ink); padding: 8px 9px; font: inherit; }
+.advisory-assessment-submit { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.advisory-assessment-submit [data-assessment-status] { color: var(--muted); font-size: 10px; }
+.advisory-review-next { padding: 0 16px 14px; }
+@media (max-width: 760px) {
+  .advisory-review-summary { grid-template-columns: 1fr; }
+  .advisory-review-summary > div + div { border-left: 0; border-top: 1px solid var(--line); }
+  .advisory-candidate-row.advisory-review-subject { grid-template-columns: auto minmax(0,1fr); }
+  .advisory-review-actions { grid-column: 2; justify-items: start; min-width: 0; width: 100%; }
+  .advisory-assessment { width: 100%; }
+  .advisory-assessment-grid { grid-template-columns: 1fr; }
+  .advisory-assessment-grid label.wide { grid-column: auto; }
 }
