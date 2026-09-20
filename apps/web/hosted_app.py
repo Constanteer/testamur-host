@@ -677,6 +677,7 @@ class HostedTestamurServer(ThreadingHTTPServer):
         workspace_root: Path,
         secure_cookie: bool = False,
         mailer: ResendMailer | None = None,
+        mail_config_error: str | None = None,
         monitor_target_providers: Mapping[str, MonitorTargetProvider] | None = None,
         monitor_target_provider_specs: Mapping[str, Mapping[str, Any]] | None = None,
         monitor_scheduler_enabled: bool = False,
@@ -688,6 +689,7 @@ class HostedTestamurServer(ThreadingHTTPServer):
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         self.secure_cookie = secure_cookie
         self.mailer = mailer
+        self.mail_config_error = mail_config_error
         self.monitor_target_providers = dict(monitor_target_providers or {})
         self.monitor_target_provider_specs = {
             str(name): dict(spec)
@@ -910,6 +912,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                 "email_delivery": {
                     "provider": "resend" if self.hosted_server.mailer is not None else None,
                     "configured": self.hosted_server.mailer is not None,
+                    "configuration_error": self.hosted_server.mail_config_error,
                 },
                 "mathhub": {
                     "ok": mathhub_ok,
@@ -1060,14 +1063,20 @@ def build_hosted_server(
         registry = load_monitor_provider_registry()
         monitor_target_providers = registry.providers
         monitor_target_provider_specs = registry.specs
+    mail_config_error = None
     if mailer is None:
-        mailer = ResendMailer.from_env()
+        try:
+            mailer = ResendMailer.from_env()
+        except RuntimeError as exc:
+            mail_config_error = str(exc)
+            mailer = None
     return HostedTestamurServer(
         (host, int(port)),
         account_store=AccountStore(root / "accounts.sqlite3"),
         workspace_root=root / "workspaces",
         secure_cookie=secure_cookie,
         mailer=mailer,
+        mail_config_error=mail_config_error,
         monitor_target_providers=monitor_target_providers,
         monitor_target_provider_specs=monitor_target_provider_specs,
         monitor_scheduler_enabled=monitor_scheduler_enabled,

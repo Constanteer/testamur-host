@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
-from apps.web.hosted_app import dispatch_account_write
+from apps.web.hosted_app import build_hosted_server, dispatch_account_write
 from apps.web.identity import AccountError, AccountStore
+from apps.web.mail import ResendMailer
 
 
 class FakeMailer:
@@ -151,6 +154,44 @@ class EmailVerificationTests(unittest.TestCase):
 
         user, _session = self.store.verify_email(token=original)
         self.assertTrue(user["email_verified"])
+
+    def test_resend_backend_is_inferred_from_api_key(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "RESEND_API_KEY": "re_test",
+                "TESTAMUR_MAIL_FROM": "Testamur <onboarding@resend.dev>",
+                "TESTAMUR_PUBLIC_ORIGIN": "https://testamur.org",
+            },
+            clear=True,
+        ):
+            mailer = ResendMailer.from_env()
+        self.assertIsNotNone(mailer)
+        assert mailer is not None
+        self.assertEqual(mailer.api_key, "re_test")
+
+    def test_bad_mail_configuration_does_not_crash_host_startup(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TESTAMUR_MAIL_BACKEND": "resend",
+                "RESEND_API_KEY": "re_test",
+            },
+            clear=True,
+        ):
+            server = build_hosted_server(
+                data_dir=Path(self.tempdir.name) / "host",
+                host="127.0.0.1",
+                port=0,
+                monitor_target_providers={},
+                monitor_target_provider_specs={},
+                monitor_scheduler_enabled=False,
+            )
+        try:
+            self.assertIsNone(server.mailer)
+            self.assertIn("TESTAMUR_MAIL_FROM", server.mail_config_error or "")
+        finally:
+            server.server_close()
 
     def test_existing_accounts_are_grandfathered_during_schema_migration(self) -> None:
         legacy_path = Path(self.tempdir.name) / "legacy.sqlite3"
