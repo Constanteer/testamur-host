@@ -1376,8 +1376,10 @@ async function projectMonitorsPanel(project, monitors) {
     }).join('');
     return `<div class="provider-config-fields" data-plugin-monitor-target="${esc(name)}" hidden>${spec.description ? `<p class="form-help">${esc(spec.description)}</p>` : ''}${fields}</div>`;
   }).join('');
+  const firstUnobserved = monitors.find(monitor => !monitor.last_evaluated_at);
   return `<div class="monitoring-layout">
     ${!monitors.length ? `<section class="monitor-first-run"><div><span class="onboarding-kicker">STEP 2 OF 3</span><h2>Add the first dependency.</h2><p>Choose a target your project genuinely relies on. Testamur will observe it now, then make later change visible without pretending that change automatically invalidates your work.</p></div><div class="monitor-first-run-examples"><span>Docs URL</span><span>Repository</span><span>Specification</span><span>Plugin target</span></div></section>` : ''}
+    ${firstUnobserved ? `<section class="monitor-baseline-card"><div><span class="onboarding-kicker">STEP 3 OF 3</span><h2>Record the first observation.</h2><p>Your monitor exists, but Testamur has not observed this target yet. Check it once to record the baseline revision that later observations can be compared with.</p><small>recorded ≠ verified · fetched ≠ relied</small></div><button class="btn btn-primary monitor-baseline-primary" type="button" data-refresh-monitor="${esc(firstUnobserved.watch_id)}" data-project-ref="${esc(project.slug || project.project_id)}">Check now</button></section>` : ''}
     <section class="time-query-card monitor-create-card">
       <div><span class="onboarding-kicker">ADD DEPENDENCY</span><h2>What should Testamur watch?</h2><p>Add one upstream source this project relies on. Testamur records what it observes and can check again later; a detected change is not an invalidity verdict.</p></div>
       <form class="monitor-create-form" data-add-project-monitor data-project-ref="${esc(project.project_id)}">
