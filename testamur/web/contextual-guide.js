@@ -4,11 +4,11 @@
   // Presentation-only guidance over the canonical object model. It deliberately
   // does not infer verification, reliance, affectedness, or validity.
   const steps = [
-    ['source', 'Source', 'Identify the upstream object you are reviewing.'],
-    ['history', 'Revision', 'Choose the recorded state whose evidence you want to inspect.'],
-    ['compare', 'Compare', 'Read the mechanical delta before making a judgment.'],
-    ['impact', 'Impact', 'Follow explicit recorded reliance to find work that deserves attention.'],
-    ['revalidate', 'Revalidation', 'Record the scoped check or reconsideration that follows.'],
+    ['source', 'Source', 'Identify the upstream object you are reviewing and inspect what was actually recorded.'],
+    ['history', 'Revision', 'Choose the recorded revision whose evidence you want to inspect; a revision is not a verification result.'],
+    ['compare', 'Compare', 'Read the mechanical delta before making a judgment; change alone does not imply invalidity.'],
+    ['impact', 'Impact', 'Follow explicit recorded reliance to find work that deserves attention; fetching alone is not reliance.'],
+    ['revalidate', 'Revalidation', 'Record the scoped check or reconsideration that follows; recording evidence does not itself verify it.'],
   ];
 
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -57,15 +57,15 @@
     guide.innerHTML = `
       <div class="contextual-guide-head">
         <div><span class="contextual-guide-kicker">REVIEW WORKFLOW · ${activeIndex + 1}/5</span><strong>${esc(active[1])}</strong><p>${esc(active[2])}</p></div>
-        <a data-nav href="/learn">Why these steps?</a>
+        <div class="contextual-guide-help"><a data-nav href="/learn">Learn the model</a><a data-nav href="/docs">Docs</a></div>
       </div>
       <nav class="contextual-guide-steps" aria-label="Source to revalidation">
         ${steps.map(([key, label], index) => `<a data-nav href="${esc(href(key, objectRef))}" class="${index === activeIndex ? 'active' : ''} ${index < activeIndex ? 'visited' : ''}"${index === activeIndex ? ' aria-current="step"' : ''}><span>${index < activeIndex ? '✓' : index + 1}</span>${esc(label)}</a>`).join('')}
       </nav>
       <div class="contextual-guide-boundary">
-        <span>recorded ≠ verified</span><span>fetched ≠ relied</span><span>changed ≠ invalid</span><span>stale ≠ false</span>
+        <span>recorded ≠ verified</span><span>fetched ≠ relied</span><span>changed ≠ invalid</span><span>stale ≠ false</span><span>EXPOSED_TO_MODEL ≠ RELIED</span>
       </div>
-      ${next ? `<div class="contextual-guide-next"><span>Next: ${esc(next[1])}</span><a data-nav class="btn btn-secondary" href="${esc(href(next[0], objectRef))}">${esc(next[1])} →</a></div>` : '<div class="contextual-guide-next"><span>Review loop complete when the revalidation evidence is recorded.</span><a data-nav href="/projects">Back to projects →</a></div>'}`;
+      ${next ? `<div class="contextual-guide-next"><span>Next: ${esc(next[1])}</span><a data-nav class="btn btn-secondary" href="${esc(href(next[0], objectRef))}">${esc(next[1])} →</a></div>` : '<div class="contextual-guide-next"><span>Review loop complete when the scoped revalidation evidence is recorded. The record is evidence, not a generic trust verdict.</span><a data-nav href="/projects">Back to projects →</a></div>'}`;
     main.prepend(guide);
   }
 
