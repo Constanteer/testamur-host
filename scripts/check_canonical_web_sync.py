@@ -5,7 +5,8 @@ Usage from a checkout of testamur-host:
     python scripts/check_canonical_web_sync.py ../testamur
 
 This deliberately checks only files that are contractually shared. Hosted-only
-routing/auth assets remain outside this boundary.
+routing/auth assets remain outside this boundary. Keep this tuple as the single
+source of truth for the hosted CI drift gate.
 """
 from __future__ import annotations
 
@@ -17,6 +18,12 @@ SHARED = (
     "testamur/web/index.html",
     "testamur/web/app.js",
     "testamur/web/styles.css",
+    "testamur/web/contextual-guide.js",
+    "testamur/web/contextual-guide.css",
+    "testamur/web/demo-handoff.js",
+    "testamur/web/demo-handoff.css",
+    "testamur/web/supply-chain-guidance.js",
+    "testamur/web/supply-chain-guidance.css",
     "testamur/web/advisory-review-ui.js",
     "testamur/web/advisory-revalidation-ui.js",
 )
