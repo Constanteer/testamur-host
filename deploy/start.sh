@@ -6,22 +6,33 @@ MATHHUB_LOG=/data/mathhub/startup.log
 touch "$MATHHUB_LOG"
 
 
+VOLUME_MARKER=/data/testamur/.volume-id
 if python - <<'PY'
+import os
+from pathlib import Path
+
+marker = Path("/data/testamur/.volume-id")
+raise SystemExit(0 if os.path.ismount("/data") or marker.is_file() else 1)
+PY
+then
+  if python - <<'PY'
 import os
 raise SystemExit(0 if os.path.ismount("/data") else 1)
 PY
-then
-  printf '[testamur] persistent volume detected at /data\n'
+  then
+    printf '[testamur] persistent volume detected at /data\n'
+  else
+    printf '[testamur] persistent volume marker detected at /data/testamur/.volume-id (mountpoint probe unavailable)\n'
+  fi
 else
   if [ "${TESTAMUR_ALLOW_EPHEMERAL_DATA:-}" = "1" ]; then
-    printf >&2 '[testamur] WARNING: /data is not a mount point; ephemeral data explicitly allowed. Accounts, projects and history may be lost on redeploy.\n'
+    printf >&2 '[testamur] WARNING: /data is not a mount point and has no persistent marker; ephemeral data explicitly allowed. Accounts, projects and history may be lost on redeploy.\n'
   else
-    printf >&2 '[testamur] ERROR: /data is not a persistent mount. Refusing to start because account/project state would be ephemeral. Mount the Zeabur Volume at /data or set TESTAMUR_ALLOW_EPHEMERAL_DATA=1 only for disposable previews.\n'
+    printf >&2 '[testamur] ERROR: /data is neither a detected mount nor an existing Testamur persistent volume. Refusing to start because account/project state would be ephemeral. Mount the Zeabur Volume at /data or set TESTAMUR_ALLOW_EPHEMERAL_DATA=1 only for disposable previews.\n'
     exit 78
   fi
 fi
 
-VOLUME_MARKER=/data/testamur/.volume-id
 if [ ! -s "$VOLUME_MARKER" ]; then
   python - <<'PY'
 from pathlib import Path
