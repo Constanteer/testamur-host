@@ -72,17 +72,20 @@ Use `https://testamur.org` as the public custom domain. No second Zeabur service
 
 New hosted accounts are pending until their email address is verified. Testamur stores only a SHA-256 digest of each high-entropy verification token; links expire after 30 minutes and are single-use. A resend is rate-limited and only supersedes the previous delivered link after the mail provider accepts the replacement.
 
-Production delivery uses Resend through its HTTPS API. Configure these as deployment secrets/environment variables, never in the repository:
+Production delivery uses an explicitly selected mail backend. Resend is currently the supported backend and uses its HTTPS API. Configure all four values as deployment secrets/environment variables, never in the repository:
 
 ```text
+TESTAMUR_MAIL_BACKEND=resend
 RESEND_API_KEY=...
 TESTAMUR_PUBLIC_ORIGIN=https://testamur.org
 TESTAMUR_MAIL_FROM=Testamur <accounts@testamur.org>
 ```
 
+The service fails closed on partial or unknown mail configuration: an API key alone does not implicitly select a provider, and the Resend backend requires an explicit sender and public origin. This prevents production verification behavior from depending on development defaults.
+
 For an initial private smoke test, Resend's `onboarding@resend.dev` sender can be used where the Resend account permits it. Public signup requires a verified sending domain/address; set `TESTAMUR_MAIL_FROM` to that verified sender before launch.
 
-If `RESEND_API_KEY` is absent, hosted signup fails closed with `email_delivery_unavailable` rather than creating accounts that cannot receive a verification link. Existing accounts created before this schema migration are explicitly grandfathered with `email_verification_source=legacy_migration` so deployment does not lock them out.
+If the mail backend is not configured, hosted signup fails closed with `email_delivery_unavailable` rather than creating accounts that cannot receive a verification link. Existing accounts created before this schema migration are explicitly grandfathered with `email_verification_source=legacy_migration` so deployment does not lock them out.
 
 ## Repository boundaries
 
