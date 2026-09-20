@@ -41,3 +41,10 @@ def test_hosted_project_overview_keeps_primary_first_monitor_action():
     assert "Add first monitor" in APP
     assert "upstream things your work depends on" in APP
     assert '<span>Slug</span><strong>${esc(project.slug)}</strong>' not in APP
+
+
+def test_hosted_monitor_form_keeps_clear_primary_action():
+    assert "What should Testamur watch?" in APP
+    assert "monitor-submit-primary" in APP
+    assert "Only when I ask" in APP
+    assert "a detected change is not an invalidity verdict" in APP
