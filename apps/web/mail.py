@@ -22,19 +22,29 @@ class ResendMailer:
 
     @classmethod
     def from_env(cls) -> "ResendMailer | None":
+        backend = os.environ.get("TESTAMUR_MAIL_BACKEND", "").strip().casefold()
         api_key = os.environ.get("RESEND_API_KEY", "").strip()
-        if not api_key:
+        if not backend:
+            if api_key:
+                raise RuntimeError(
+                    "RESEND_API_KEY is set but TESTAMUR_MAIL_BACKEND is not; "
+                    "set TESTAMUR_MAIL_BACKEND=resend explicitly"
+                )
             return None
-        sender = os.environ.get(
-            "TESTAMUR_MAIL_FROM",
-            "Testamur <onboarding@resend.dev>",
-        ).strip()
-        origin = os.environ.get(
-            "TESTAMUR_PUBLIC_ORIGIN",
-            "https://testamur.org",
-        ).strip().rstrip("/")
+        if backend != "resend":
+            raise RuntimeError(
+                f"Unsupported TESTAMUR_MAIL_BACKEND={backend!r}; supported backends: resend"
+            )
+        if not api_key:
+            raise RuntimeError(
+                "TESTAMUR_MAIL_BACKEND=resend requires RESEND_API_KEY"
+            )
+        sender = os.environ.get("TESTAMUR_MAIL_FROM", "").strip()
+        origin = os.environ.get("TESTAMUR_PUBLIC_ORIGIN", "").strip().rstrip("/")
         if not sender:
-            raise RuntimeError("TESTAMUR_MAIL_FROM must not be empty when RESEND_API_KEY is configured")
+            raise RuntimeError("TESTAMUR_MAIL_FROM must be configured when TESTAMUR_MAIL_BACKEND=resend")
+        if not origin:
+            raise RuntimeError("TESTAMUR_PUBLIC_ORIGIN must be configured when TESTAMUR_MAIL_BACKEND=resend")
         if not origin.startswith(("https://", "http://")):
             raise RuntimeError("TESTAMUR_PUBLIC_ORIGIN must be an absolute http(s) origin")
         return cls(api_key=api_key, sender=sender, public_origin=origin)
