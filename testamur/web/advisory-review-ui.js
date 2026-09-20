@@ -173,7 +173,11 @@
 
         const evidence = [];
         if (signal) {
-          const item = { ref: evidenceRef, signal, evidence_class: evidenceClass };
+          const item = {
+            ref: evidenceRef,
+            signal,
+            evidence_class: evidenceClass,
+          };
           if (evidenceClass === 'DERIVED') {
             item.analyzer = analyzer;
             item.analyzer_version = analyzerVersion;
@@ -199,7 +203,9 @@
           });
           let body = null;
           try { body = await response.json(); } catch (_) {}
-          if (!response.ok) throw new Error(body?.error?.message || `HTTP ${response.status}`);
+          if (!response.ok) {
+            throw new Error(body?.error?.message || `HTTP ${response.status}`);
+          }
           status.textContent = `Recorded ${body?.state || 'assessment'}. Refreshing project…`;
           await refreshProjection();
         } catch (error) {
@@ -214,6 +220,7 @@
   function render() {
     const host = document.querySelector('.supply-chain-advisories');
     if (!host || !latestSupplyChain) return;
+
     const reviews = Array.isArray(latestSupplyChain.advisory_candidates)
       ? latestSupplyChain.advisory_candidates.filter(item => item?.schema === 'testamur.product.advisory-review.v1')
       : [];
