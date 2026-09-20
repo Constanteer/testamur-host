@@ -5,6 +5,7 @@ must use ``testamur``; historical storage and wire identifiers may remain stable
 without requiring the legacy Python package as the implementation owner.
 """
 
+from .project_review_surface import project_with_advisory_reviews
 from .store_lifecycle import install_store_connection_lifecycle
 
 __version__ = "0.3.0.dev0"
@@ -13,4 +14,4 @@ __version__ = "0.3.0.dev0"
 # the canonical namespace.  This is idempotent and imports no legacy package.
 install_store_connection_lifecycle()
 
-__all__ = ["__version__"]
+__all__ = ["__version__", "project_with_advisory_reviews"]
