@@ -46,6 +46,8 @@ def project_with_advisory_reviews(service: Any, ref: str) -> dict[str, Any]:
         try:
             candidate_diff = diff_project_supply_chain(service, ref)
         except ValueError as exc:
+            # Zero/one scan is normal first-run state. Preserve it as an explicit
+            # absence of comparison rather than manufacturing a changed/unchanged verdict.
             candidate_diff = None
             enriched_supply_chain["diff_unavailable_reason"] = str(exc)
         if isinstance(candidate_diff, dict) and candidate_diff.get("ok") is True:
