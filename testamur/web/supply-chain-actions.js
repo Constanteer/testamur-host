@@ -2,7 +2,7 @@
   'use strict';
 
   const findReviewTarget = () => document.querySelector(
-    '.advisory-review, .project-advisory-review, [data-advisory-review], .advisory-candidates, [data-advisory-candidates]'
+    '.advisory-review, .project-advisory-review, [data-advisory-review], .advisory-candidates, [data-advisory-candidates], .supply-chain-advisories'
   );
 
   const projectRef = () => {
@@ -10,10 +10,45 @@
     return match ? decodeURIComponent(match[1]) : null;
   };
 
+  const esc = value => String(value ?? '').replace(/[&<>\"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#039;'
+  })[char]);
+
+  const readReviewContext = () => {
+    try { return JSON.parse(sessionStorage.getItem('testamur.reviewContext') || 'null'); }
+    catch (_) { return null; }
+  };
+
+  const renderReviewContext = context => {
+    if (!context?.dependency || context.source !== 'supply-chain-compare') return;
+    const target = findReviewTarget();
+    if (!target) return;
+    let banner = target.querySelector('[data-supply-chain-review-context]');
+    if (!banner) {
+      banner = document.createElement('aside');
+      banner.dataset.supplyChainReviewContext = 'true';
+      banner.className = 'supply-chain-review-context';
+      target.prepend(banner);
+    }
+    const before = context.before_version || 'unknown';
+    const after = context.after_version || 'unknown';
+    banner.innerHTML = `<strong>Review: ${esc(context.dependency)} ${esc(before)} → ${esc(after)}</strong><span>${esc(context.transition || 'version-changed')} · mechanical Compare context only</span><small>This focus does not establish affectedness, validity, safety, or reliance. Inspect exact candidate revisions and record scoped evidence below.</small>`;
+
+    const needles = [context.component_id, context.dependency].filter(Boolean).map(value => String(value).toLowerCase());
+    target.querySelectorAll('.advisory-review-subject').forEach(row => {
+      const text = row.textContent.toLowerCase();
+      const matched = needles.some(needle => text.includes(needle));
+      row.toggleAttribute('data-review-context-match', matched);
+      if (matched) row.setAttribute('aria-label', `Candidate matching Compare context for ${context.dependency}`);
+      else row.removeAttribute('aria-label');
+    });
+  };
+
   const focusReview = (ref, context = null) => {
     if (context) {
       sessionStorage.setItem('testamur.reviewContext', JSON.stringify(context));
       window.dispatchEvent(new CustomEvent('testamur:review-context', { detail: context }));
+      renderReviewContext(context);
     }
     const target = findReviewTarget();
     if (target) {
@@ -56,7 +91,6 @@
     actions.className = 'supply-chain-guidance-actions supply-chain-compare-actions';
     actions.innerHTML = `<button type="button" class="btn btn-primary" data-review-advisories>Review advisory candidates</button><a class="btn btn-secondary" data-nav href="/projects/${encodeURIComponent(ref)}?tab=activity">Review recorded activity</a>`;
     surface.append(actions);
-
     actions.querySelector('[data-review-advisories]')?.addEventListener('click', () => focusReview(ref));
 
     const note = document.createElement('p');
@@ -65,10 +99,12 @@
     actions.after(note);
   };
 
-  const enhance = () => document
-    .querySelectorAll('.supply-chain-compare[data-live-supply-chain-compare], .supply-chain-compare[data-supply-chain-diff]')
-    .forEach(addActions);
+  const enhance = () => {
+    document.querySelectorAll('.supply-chain-compare[data-live-supply-chain-compare], .supply-chain-compare[data-supply-chain-diff]').forEach(addActions);
+    renderReviewContext(readReviewContext());
+  };
 
+  window.addEventListener('testamur:review-context', event => renderReviewContext(event.detail));
   new MutationObserver(enhance).observe(document.documentElement, { childList: true, subtree: true });
   enhance();
 })();
