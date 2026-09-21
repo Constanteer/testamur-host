@@ -24,5 +24,6 @@ def test_hosted_demo_seed_creates_real_two_observation_project(tmp_path: Path) -
     service = TestamurProductService.integrated(database)
     project = service.project(str(result["project_id"]))
     assert project["ok"] is True
-    assert project["object"]["project_id"] == result["project_id"]
-    assert project["object"]["supply_chain"]["dependency_count"] == 1
+    assert project["object"]["ref"] == result["project_id"]
+    assert project["data"]["project_id"] == result["project_id"]
+    assert project["data"]["supply_chain"]["dependency_count"] == 1
