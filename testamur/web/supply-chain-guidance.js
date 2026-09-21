@@ -37,7 +37,8 @@
       const before = versionFrom(item, 'before');
       const after = versionFrom(item, 'after');
       const transition = item.version_transition || item.transition || 'version-changed';
-      return `<div class="supply-chain-transition-row"><code class="supply-chain-transition-package">${esc(name)}</code><span class="supply-chain-transition-version">${esc(before)}</span><span class="supply-chain-transition-arrow" aria-hidden="true">→</span><span class="supply-chain-transition-version">${esc(after)}</span><span class="supply-chain-transition-kind" data-transition="${esc(transition)}">${esc(transitionLabel(transition))}</span></div>`;
+      const component = item.component_id || item.component || name;
+      return `<div class="supply-chain-transition-row" data-dependency-name="${esc(name)}" data-component-id="${esc(component)}" data-before-version="${esc(before)}" data-after-version="${esc(after)}" data-transition="${esc(transition)}"><code class="supply-chain-transition-package">${esc(name)}</code><span class="supply-chain-transition-version">${esc(before)}</span><span class="supply-chain-transition-arrow" aria-hidden="true">→</span><span class="supply-chain-transition-version">${esc(after)}</span><span class="supply-chain-transition-kind" data-transition="${esc(transition)}">${esc(transitionLabel(transition))}</span></div>`;
     }).join('');
     surface.append(list);
   };
@@ -70,7 +71,6 @@
       const diff = body?.supply_chain?.diff;
       if (!response.ok || body?.ok !== true || !diff) return;
       const changed = changedDependencies(diff);
-      const counts = diff.counts || {};
       const surface = document.createElement('section');
       surface.className = 'supply-chain-compare';
       surface.dataset.liveSupplyChainCompare = '1';
