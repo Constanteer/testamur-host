@@ -8,22 +8,34 @@
     version_changed: 'version changed'
   }[value] || String(value || 'changed').replaceAll('_', ' '));
 
+  const changedDependencies = diff => {
+    const nested = diff?.dependencies?.changed;
+    if (Array.isArray(nested)) return nested;
+    return diff?.dependencies_changed || diff?.dependenciesChanged || diff?.changed_dependencies || [];
+  };
+
+  const versionFrom = (item, side) => {
+    const values = item?.[side];
+    if (Array.isArray(values) && values.length === 1) return values[0]?.version ?? '—';
+    return item?.[`${side}_version`] ?? item?.[side === 'before' ? 'old_version' : 'new_version'] ?? (Array.isArray(values) ? values.map(value => value?.version || '?').join(', ') : values) ?? '—';
+  };
+
   const transitionRows = surface => {
     if (surface.querySelector('.supply-chain-transition-list')) return;
     const raw = surface.dataset.supplyChainDiff || surface.dataset.diff;
     if (!raw) return;
     let diff;
     try { diff = JSON.parse(raw); } catch (_) { return; }
-    const changed = diff.dependencies_changed || diff.dependenciesChanged || diff.changed_dependencies || [];
+    const changed = changedDependencies(diff);
     if (!Array.isArray(changed) || !changed.length) return;
 
     const list = document.createElement('div');
     list.className = 'supply-chain-transition-list';
     list.setAttribute('aria-label', 'Dependency version transitions');
     list.innerHTML = changed.map(item => {
-      const name = item.name || item.package || item.dependency || 'dependency';
-      const before = item.before_version ?? item.old_version ?? item.before ?? '—';
-      const after = item.after_version ?? item.new_version ?? item.after ?? '—';
+      const name = item.name || item.package || item.dependency || item.component_id || 'dependency';
+      const before = versionFrom(item, 'before');
+      const after = versionFrom(item, 'after');
       const transition = item.version_transition || item.transition || 'version-changed';
       return `<div class="supply-chain-transition-row"><code class="supply-chain-transition-package">${esc(name)}</code><span class="supply-chain-transition-version">${esc(before)}</span><span class="supply-chain-transition-arrow" aria-hidden="true">→</span><span class="supply-chain-transition-version">${esc(after)}</span><span class="supply-chain-transition-kind" data-transition="${esc(transition)}">${esc(transitionLabel(transition))}</span></div>`;
     }).join('');
@@ -40,6 +52,35 @@
       note.innerHTML = `<strong>How to read this comparison</strong><p><code>upgraded</code>, <code>downgraded</code>, and <code>version-changed</code> describe only the mechanical version transition between two recorded scan observations. An upgrade is not a safety verdict; a downgrade is not a vulnerability verdict; a changed dependency is not therefore invalid or affected.</p><p>Use the transition as evidence for the next review step: inspect impact and advisory candidates, then record scoped revalidation evidence where appropriate.</p>`;
       surface.prepend(note);
     });
+  };
+
+  let hydrationKey = '';
+  const hydrateProjectDiff = async () => {
+    const match = location.pathname.match(/^\/projects\/([^/]+)\/?$/);
+    if (!match || new URLSearchParams(location.search).get('tab') !== 'supply-chain') return;
+    const host = document.querySelector('.supply-chain-summary');
+    if (!host || host.querySelector('[data-live-supply-chain-compare]')) return;
+    const ref = decodeURIComponent(match[1]);
+    const key = `${location.pathname}${location.search}`;
+    if (hydrationKey === key) return;
+    hydrationKey = key;
+    try {
+      const response = await fetch(`/v1/project?ref=${encodeURIComponent(ref)}`, { headers: { Accept: 'application/json' } });
+      const body = await response.json();
+      const diff = body?.supply_chain?.diff;
+      if (!response.ok || body?.ok !== true || !diff) return;
+      const changed = changedDependencies(diff);
+      const counts = diff.counts || {};
+      const surface = document.createElement('section');
+      surface.className = 'supply-chain-compare';
+      surface.dataset.liveSupplyChainCompare = '1';
+      surface.dataset.supplyChainDiff = JSON.stringify(diff);
+      surface.innerHTML = `<div class="section-head compact"><div><span class="onboarding-kicker">LATEST COMPARISON</span><h2>What changed since the previous scan</h2><p>Mechanical comparison of two recorded scan observations. It does not infer validity, safety, runtime use, or affectedness.</p></div><span>${esc(String(changed.length))} changed</span></div><div class="supply-chain-boundaries"><code>upgrade != safe</code><code>downgrade != vulnerable</code><code>changed != invalid</code></div>`;
+      host.after(surface);
+      addCompareSemantics();
+    } catch (_) {
+      hydrationKey = '';
+    }
   };
 
   const enhance = () => {
@@ -64,6 +105,7 @@
       }
     }
     addCompareSemantics();
+    hydrateProjectDiff();
   };
 
   const observer = new MutationObserver(enhance);
