@@ -1,0 +1,3 @@
+# Deterministic Testamur supply-chain demo second observation.
+# This fixture represents a mechanical dependency delta only.
+requests==2.32.5
