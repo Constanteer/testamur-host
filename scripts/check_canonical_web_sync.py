@@ -29,6 +29,8 @@ SHARED = (
     "testamur/web/supply-chain-actions.js",
     "testamur/web/advisory-review-ui.js",
     "testamur/web/advisory-revalidation-ui.js",
+    "testamur/web/first-run-journey.js",
+    "testamur/web/first-run-journey.css",
 )
 
 
