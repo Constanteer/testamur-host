@@ -26,6 +26,7 @@ SHARED = (
     "testamur/web/baseline-handoff.css",
     "testamur/web/supply-chain-guidance.js",
     "testamur/web/supply-chain-guidance.css",
+    "testamur/web/supply-chain-actions.js",
     "testamur/web/advisory-review-ui.js",
     "testamur/web/advisory-revalidation-ui.js",
 )
