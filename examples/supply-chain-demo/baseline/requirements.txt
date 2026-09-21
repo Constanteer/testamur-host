@@ -1,0 +1,4 @@
+# Deterministic Testamur supply-chain demo baseline.
+# These are fixture inputs, not security or validity claims.
+requests==2.32.4
+flask==3.0.3
