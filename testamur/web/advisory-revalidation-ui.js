@@ -8,6 +8,24 @@
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
   })[char]);
 
+  const reviewContext = () => {
+    try {
+      const value = JSON.parse(sessionStorage.getItem('testamur.reviewContext') || 'null');
+      return value?.source === 'supply-chain-compare' && value?.dependency ? value : null;
+    } catch (_) { return null; }
+  };
+
+  const contextMatches = (item, context) => {
+    if (!context) return false;
+    const haystack = [
+      item.component_id, item.component, item.dependency, item.package,
+      item.subject_revision, item.component_revision, item.subject
+    ].filter(Boolean).join(' ').toLowerCase();
+    return [context.component_id, context.dependency]
+      .filter(Boolean)
+      .some(value => haystack.includes(String(value).toLowerCase()));
+  };
+
   window.fetch = async (...args) => {
     const response = await nativeFetch(...args);
     try {
@@ -22,13 +40,21 @@
     return response;
   };
 
-  function itemCard(item) {
+  function itemCard(item, context) {
     const ref = item.subject_revision || item.component_revision || item.subject || '';
     const reason = item.reason || item.revalidation_reason || 'Recorded project state indicates this assessment should be reviewed again.';
-    const href = ref ? `/object/${encodeURIComponent(ref)}?tab=revalidate` : '#';
-    return `<li class="advisory-revalidation-item">
+    const matched = contextMatches(item, context);
+    const params = new URLSearchParams({ tab: 'revalidate' });
+    if (matched) {
+      params.set('dependency', context.dependency);
+      if (context.component_id) params.set('component', context.component_id);
+      if (context.before_version) params.set('from', context.before_version);
+      if (context.after_version) params.set('to', context.after_version);
+    }
+    const href = ref ? `/object/${encodeURIComponent(ref)}?${params.toString()}` : '#';
+    return `<li class="advisory-revalidation-item"${matched ? ' data-revalidation-context-match="true"' : ''}>
       <span><strong>${esc(ref || 'component revision')}</strong><small>${esc(reason)}</small></span>
-      ${ref ? `<a class="btn btn-secondary" href="${esc(href)}">Open revalidation</a>` : ''}
+      ${ref ? `<a class="btn btn-secondary" href="${esc(href)}">${matched ? 'Open scoped revalidation' : 'Open revalidation'}</a>` : ''}
     </li>`;
   }
 
@@ -45,16 +71,20 @@
         : [];
     if (!items.length) return;
 
+    const context = reviewContext();
+    const scoped = context && items.some(item => contextMatches(item, context));
     const surface = document.createElement('section');
     surface.dataset.advisoryRevalidation = 'true';
     surface.className = 'advisory-revalidation-state';
     surface.innerHTML = `<div class="section-head compact">
         <div><h3>Revalidation work</h3><p>${items.length} recorded assessment${items.length === 1 ? '' : 's'} worth revisiting after project state changed.</p></div>
       </div>
+      ${scoped ? `<p class="supply-chain-advisory-note" data-revalidation-review-context><strong>Continue scoped review: ${esc(context.dependency)} ${esc(context.before_version || 'unknown')} → ${esc(context.after_version || 'unknown')}.</strong> This mechanical Compare context narrows navigation only; it does not establish affectedness, validity, safety, or reliance.</p>` : ''}
       <p class="supply-chain-advisory-note"><strong>Change is a review trigger, not a verdict.</strong> Changed ≠ invalid; stale ≠ false. Testamur preserves the recorded assessment and asks you to inspect the new evidence instead of silently rewriting it.</p>
-      <ul class="advisory-revalidation-list">${items.map(itemCard).join('')}</ul>`;
+      <ul class="advisory-revalidation-list">${items.map(item => itemCard(item, context)).join('')}</ul>`;
     host.appendChild(surface);
   }
 
+  window.addEventListener('testamur:review-context', render);
   new MutationObserver(render).observe(document.documentElement, { childList: true, subtree: true });
 })();
