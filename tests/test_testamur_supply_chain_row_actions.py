@@ -26,3 +26,12 @@ def test_row_review_carries_context_without_asserting_affectedness():
     assert "source: 'supply-chain-compare'" in text
     assert "does not establish affectedness" in text
     assert "carries component context only" in text
+
+
+def test_advisory_review_visualizes_scoped_compare_context_without_a_verdict():
+    text = ACTIONS.read_text(encoding="utf-8")
+    assert "data-supply-chain-review-context" in text
+    assert "mechanical Compare context only" in text
+    assert "does not establish affectedness, validity, safety, or reliance" in text
+    assert "data-review-context-match" in text
+    assert "Candidate matching Compare context" in text
