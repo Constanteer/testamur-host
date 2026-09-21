@@ -107,12 +107,10 @@ class EmailVerificationTests(unittest.TestCase):
             mailer=self.mailer,
         )
         resend_payload = body(resend)
-        # Cooldown is intentionally non-enumerating at the HTTP boundary.
         self.assertEqual(resend["status"], 202)
         self.assertTrue(resend_payload["accepted"])
         self.assertEqual(len(self.mailer.sent), 1)
 
-        # Age the first token so the deterministic test can exercise replacement.
         with self.store._connect() as connection:
             connection.execute(
                 "UPDATE email_verification_tokens SET created_at = created_at - 120"
@@ -155,10 +153,11 @@ class EmailVerificationTests(unittest.TestCase):
         user, _session = self.store.verify_email(token=original)
         self.assertTrue(user["email_verified"])
 
-    def test_resend_backend_is_inferred_from_api_key(self) -> None:
+    def test_resend_backend_requires_explicit_configuration(self) -> None:
         with patch.dict(
             os.environ,
             {
+                "TESTAMUR_MAIL_BACKEND": "resend",
                 "RESEND_API_KEY": "re_test",
                 "TESTAMUR_MAIL_FROM": "Testamur <onboarding@resend.dev>",
                 "TESTAMUR_PUBLIC_ORIGIN": "https://testamur.org",
@@ -209,8 +208,6 @@ class EmailVerificationTests(unittest.TestCase):
                 );
                 """
             )
-        # Use the store's password encoder by creating a temporary current-schema user,
-        # then copy only the encoded digest into the legacy-shaped database.
         current_user, token = self.store.sign_up(
             username="digest-source",
             email="digest@example.com",
