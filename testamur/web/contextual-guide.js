@@ -81,13 +81,25 @@
     });
   }
 
+  let renderQueued = false;
+  function queueRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    queueMicrotask(() => {
+      renderQueued = false;
+      render();
+    });
+  }
+
   const observer = new MutationObserver((records) => {
     // render() replaces this guide. Ignore those self-authored mutations so the
     // presentation layer cannot create an endless observer/render feedback loop.
     if (onlyGuideMutations(records)) return;
-    queueMicrotask(render);
+    // One SPA render can produce many observer callbacks. Coalesce them so the
+    // contextual guide performs at most one replacement per microtask turn.
+    queueRender();
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  addEventListener('popstate', render);
-  addEventListener('DOMContentLoaded', render);
+  addEventListener('popstate', queueRender);
+  addEventListener('DOMContentLoaded', queueRender);
 })();
