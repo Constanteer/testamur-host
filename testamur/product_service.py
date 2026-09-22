@@ -9,6 +9,7 @@ from .advisory_project_lookup import project_advisory_revisions_for_upstream_ref
 from .contracts import ObjectKind, classify_object_ref, error_envelope, object_envelope
 from .product_extensions import ProductExtensions
 from .project_store import TestamurProjectStore
+from .project_supply_chain_projection import project_supply_chain_projections
 from .record_store import TestamurRecordStore
 from .source_store import TestamurSourceStore
 from .watch_store import TestamurWatchStore
@@ -81,192 +82,10 @@ class TestamurProductService:
                     "locator": None if source is None else source.get("initial_locator"),
                 }
             )
-        supply_chain = None
-        for relation in self.records.relations_for(
-            str(project["project_id"]),
-            direction="outgoing",
-            relation_types=["cites"],
-            limit=100,
-        ):
-            revision = self.records.get_revision(str(relation.get("to_ref") or ""))
-            if revision is None:
-                continue
-            record = self.records.get_record(str(revision.get("record_id") or ""))
-            if record is None or record.get("record_kind") != "supply-chain-scan":
-                continue
-            try:
-                statement = json.loads(str(revision.get("statement") or "{}"))
-            except json.JSONDecodeError:
-                continue
-            manifest_revision_ids = [
-                str(value)
-                for value in statement.get("manifest_revision_ids") or []
-                if isinstance(value, str) and value
-            ]
-            dependency_revision_ids = [
-                str(value)
-                for value in statement.get("dependency_record_revision_ids") or []
-                if isinstance(value, str) and value
-            ]
-
-            manifests: list[dict[str, Any]] = []
-            for manifest_revision_id in manifest_revision_ids[:200]:
-                manifest_revision = self.records.get_revision(manifest_revision_id)
-                if manifest_revision is None:
-                    continue
-                try:
-                    manifest_statement = json.loads(
-                        str(manifest_revision.get("statement") or "{}")
-                    )
-                except json.JSONDecodeError:
-                    continue
-                if (
-                    manifest_statement.get("schema")
-                    != "testamur.supply-chain.manifest.v1"
-                ):
-                    continue
-                dependency_ids = manifest_statement.get("dependency_revision_ids")
-                manifests.append(
-                    {
-                        "record_id": manifest_revision.get("record_id"),
-                        "record_revision_id": manifest_revision_id,
-                        "recorded_at": manifest_revision.get("recorded_at"),
-                        "path": manifest_statement.get("path"),
-                        "parser": manifest_statement.get("parser"),
-                        "sha256": manifest_statement.get("sha256"),
-                        "dependency_count": len(dependency_ids)
-                        if isinstance(dependency_ids, list)
-                        else 0,
-                    }
-                )
-
-            dependencies: list[dict[str, Any]] = []
-            component_revision_ids: set[str] = set()
-            for dependency_revision_id in dependency_revision_ids[:1000]:
-                dependency_revision = self.records.get_revision(
-                    dependency_revision_id
-                )
-                if dependency_revision is None:
-                    continue
-                try:
-                    dependency_statement = json.loads(
-                        str(dependency_revision.get("statement") or "{}")
-                    )
-                except json.JSONDecodeError:
-                    continue
-                if (
-                    dependency_statement.get("schema")
-                    != "testamur.supply-chain.dependency.v1"
-                ):
-                    continue
-                component_revision = dependency_statement.get("component_revision")
-                if not isinstance(component_revision, dict):
-                    continue
-                component = component_revision.get("component")
-                if not isinstance(component, dict):
-                    component = {}
-                component_revision_id = str(
-                    component_revision.get("component_revision_id") or ""
-                ).strip()
-                if component_revision_id:
-                    component_revision_ids.add(component_revision_id)
-                observed_in = dependency_statement.get("observed_in")
-                dependencies.append(
-                    {
-                        "record_id": dependency_revision.get("record_id"),
-                        "record_revision_id": dependency_revision_id,
-                        "recorded_at": dependency_revision.get("recorded_at"),
-                        "component_revision_id": component_revision_id or None,
-                        "component_id": component.get("component_id"),
-                        "ecosystem": component.get("namespace"),
-                        "name": component.get("name"),
-                        "version": component_revision.get("version"),
-                        "digest": component_revision.get("digest"),
-                        "locator": component_revision.get("locator"),
-                        "identity_strength": component_revision.get(
-                            "identity_strength"
-                        ),
-                        "is_exact_revision": bool(
-                            component_revision.get("is_exact_revision")
-                        ),
-                        "direct": dependency_statement.get("direct"),
-                        "observed_in": list(observed_in)
-                        if isinstance(observed_in, list)
-                        else [],
-                    }
-                )
-
-            dependencies.sort(
-                key=lambda item: (
-                    str(item.get("ecosystem") or ""),
-                    str(item.get("name") or ""),
-                    str(item.get("version") or ""),
-                )
-            )
-            manifests.sort(key=lambda item: str(item.get("path") or ""))
-
-            advisory_candidates: list[dict[str, Any]] = []
-            advisory_revisions, unresolved_advisory_count = (
-                project_advisory_revisions_for_upstream_refs(
-                    self.advisories,
-                    component_revision_ids,
-                )
-            )
-            for advisory_revision in advisory_revisions:
-                upstream_refs = {
-                    str(value)
-                    for value in advisory_revision.get("upstream_refs") or []
-                    if str(value)
-                }
-                matched = sorted(component_revision_ids & upstream_refs)
-                event = self.advisories.get_event(
-                    str(advisory_revision.get("event_id") or "")
-                ) or {}
-                advisory_candidates.append(
-                    {
-                        "event_id": advisory_revision.get("event_id"),
-                        "event_revision_id": advisory_revision.get(
-                            "event_revision_id"
-                        ),
-                        "provider": event.get("provider"),
-                        "external_id": event.get("external_id"),
-                        "event_class": advisory_revision.get("event_class"),
-                        "issued_at": advisory_revision.get("issued_at"),
-                        "severity": dict(advisory_revision.get("severity") or {}),
-                        "matching_component_revision_ids": matched,
-                        "status": "exact_identity_overlap",
-                        "semantics": {
-                            "exact_identity_overlap_is_affectedness_verdict": False,
-                            "applicability_assessment_required": True,
-                        },
-                    }
-                )
-
-            supply_chain = {
-                "scan_record_id": record["record_id"],
-                "scan_revision_id": revision["revision_id"],
-                "recorded_at": revision.get("recorded_at"),
-                "manifest_count": len(manifest_revision_ids),
-                "dependency_count": len(dependency_revision_ids),
-                "component_revision_count": len(component_revision_ids),
-                "manifests": manifests,
-                "dependencies": dependencies,
-                "inventory_truncated": (
-                    len(manifest_revision_ids) > len(manifests)
-                    or len(dependency_revision_ids) > len(dependencies)
-                ),
-                "warnings": list(statement.get("warnings") or []),
-                "advisory_candidates": advisory_candidates,
-                "advisory_candidate_count": len(advisory_candidates),
-                "unresolved_advisory_count": unresolved_advisory_count,
-                "semantics": {
-                    **dict(statement.get("semantics") or {}),
-                    "advisory_candidate_requires_exact_upstream_ref_overlap": True,
-                    "advisory_candidate_is_not_affectedness_verdict": True,
-                    "unresolved_identity_is_not_fuzzy_matched": True,
-                },
-            }
-            break
+        supply_chains = project_supply_chain_projections(
+            self, str(project["project_id"])
+        )
+        supply_chain = supply_chains[0] if supply_chains else None
 
         return {
             "ok": True,
@@ -274,11 +93,15 @@ class TestamurProductService:
             "project": project,
             "monitors": monitors,
             "supply_chain": supply_chain,
+            "supply_chains": supply_chains,
             "semantics": {
                 "project_is_container": True,
                 "monitor_count": len(monitors),
                 "sources_are_monitor_targets": True,
                 "supply_chain_is_manifest_observation": supply_chain is not None,
+                "supply_chain_is_latest_overall_compatibility_projection": True,
+                "supply_chains_are_latest_per_repository_binding": True,
+                "missing_repository_binding_provenance_is_not_inferred": True,
             },
         }
 
