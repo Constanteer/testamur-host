@@ -543,6 +543,7 @@ def import_project_supply_chain(
     project_name: str | None = None,
     project_ref: str | None = None,
     visibility: str = "private",
+    repository_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     base = Path(root).expanduser().resolve()
     scan = scan_supply_chain(base)
@@ -663,21 +664,49 @@ def import_project_supply_chain(
         }
         for path, revision in sorted(manifest_revision_by_path.items())
     ]
-    scan_statement = canonical_json(
-        {
-            "schema": "testamur.supply-chain.project-scan.v1",
-            "project_id": project_id,
-            "root": scan["root"],
-            "manifest_revision_ids": [
-                item["ref"] for item in scan_basis
-            ],
-            "dependency_record_revision_ids": sorted(
-                item["record_revision_id"] for item in dependency_results
-            ),
-            "warnings": scan["warnings"],
-            "semantics": scan["semantics"],
+    binding_provenance: dict[str, str] | None = None
+    if repository_binding is not None:
+        binding_revision = repository_binding.get("revision")
+        if not isinstance(binding_revision, dict):
+            raise ValueError("repository binding provenance requires an immutable binding revision")
+        binding_provenance = {
+            "binding_id": str(repository_binding["binding_id"]),
+            "binding_key": str(repository_binding["binding_key"]),
+            "binding_revision_id": str(binding_revision["binding_revision_id"]),
         }
-    )
+        scan_basis.append(
+            {
+                "kind": "repository_binding_revision",
+                "ref": binding_provenance["binding_revision_id"],
+                "binding_id": binding_provenance["binding_id"],
+                "binding_key": binding_provenance["binding_key"],
+            }
+        )
+
+    scan_payload: dict[str, Any] = {
+        "schema": "testamur.supply-chain.project-scan.v1",
+        "project_id": project_id,
+        "root": scan["root"],
+        "manifest_revision_ids": [
+            item["ref"]
+            for item in scan_basis
+            if item.get("kind") == "dependency_manifest_revision"
+        ],
+        "dependency_record_revision_ids": sorted(
+            item["record_revision_id"] for item in dependency_results
+        ),
+        "warnings": scan["warnings"],
+        "semantics": {
+            **scan["semantics"],
+            "repository_binding_is_scanner_input": binding_provenance is not None,
+            "repository_binding_provenance_implies_reliance": False,
+            "repository_binding_provenance_implies_verification": False,
+            "repository_binding_provenance_implies_affectedness": False,
+        },
+    }
+    if binding_provenance is not None:
+        scan_payload["repository_binding"] = binding_provenance
+    scan_statement = canonical_json(scan_payload)
     scan_record_id = _persistent_record_id("project-scan", project_id)
     scan_revision, scan_changed = _ensure_record_revision(
         service,
@@ -772,6 +801,7 @@ def scan_bound_project_supply_chain(
         service,
         str(revision["locator"]),
         project_ref=str(project["project_id"]),
+        repository_binding=binding,
     )
     return {
         **result,
