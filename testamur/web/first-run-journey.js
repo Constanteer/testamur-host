@@ -3,6 +3,8 @@
 
   // Presentation-only launch guidance. Completion is derived from the existing
   // dashboard checklist; this layer never infers verification or reliance.
+  let renderQueued = false;
+
   function render() {
     document.querySelector('[data-first-run-journey]')?.remove();
     if (location.pathname !== '/' && location.pathname !== '/app') return;
@@ -33,8 +35,28 @@
     window.bindNavigation?.();
   }
 
-  const observer = new MutationObserver(() => queueMicrotask(render));
+  function queueRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    queueMicrotask(() => {
+      renderQueued = false;
+      render();
+    });
+  }
+
+  function isJourneyNode(node) {
+    if (!(node instanceof Element)) return false;
+    return node.matches('[data-first-run-journey]') || Boolean(node.closest('[data-first-run-journey]'));
+  }
+
+  const observer = new MutationObserver(mutations => {
+    const externalMutation = mutations.some(mutation => {
+      const changed = [...mutation.addedNodes, ...mutation.removedNodes].filter(node => node instanceof Element);
+      return changed.some(node => !isJourneyNode(node));
+    });
+    if (externalMutation) queueRender();
+  });
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  addEventListener('popstate', render);
-  addEventListener('DOMContentLoaded', render);
+  addEventListener('popstate', queueRender);
+  addEventListener('DOMContentLoaded', queueRender);
 })();
