@@ -13,7 +13,7 @@
 
   function render() {
     document.querySelector('[data-help-launcher]')?.remove();
-    if (location.pathname === '/login' || location.pathname === '/signup') return;
+    if (location.pathname === '/signin' || location.pathname === '/signup') return;
     const launcher = document.createElement('aside');
     launcher.className = 'help-launcher';
     launcher.dataset.helpLauncher = 'true';
