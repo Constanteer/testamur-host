@@ -4,6 +4,7 @@ from typing import Any
 
 from .project_advisory_revalidation import project_advisory_revalidation
 from .project_advisory_review import project_advisory_reviews
+from .repository_binding_lifecycle import repository_binding_with_state
 from .supply_chain import diff_project_supply_chain
 
 
@@ -21,6 +22,27 @@ def project_with_advisory_reviews(service: Any, ref: str) -> dict[str, Any]:
     payload = dict(service.project(ref))
     if payload.get("ok") is not True:
         return payload
+
+    project = payload.get("project")
+    project_ref = str(project.get("project_id") or ref) if isinstance(project, dict) else ref
+    repository_bindings: list[dict[str, Any]] = []
+    for item in service.projects.repository_bindings(project_ref):
+        binding = repository_binding_with_state(
+            service.projects,
+            project_ref,
+            binding_key=str(item["binding_key"]),
+        )
+        if binding is not None:
+            repository_bindings.append(binding)
+    payload["repository_bindings"] = repository_bindings
+    payload["semantics"] = {
+        **dict(payload.get("semantics") or {}),
+        "repository_binding_state_is_scanner_eligibility": True,
+        "repository_binding_state_implies_content_observed": False,
+        "repository_binding_state_implies_verification": False,
+        "repository_binding_state_implies_reliance": False,
+        "repository_binding_state_implies_affectedness": False,
+    }
 
     supply_chain = payload.get("supply_chain")
     if not isinstance(supply_chain, dict):

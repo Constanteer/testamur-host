@@ -1220,12 +1220,16 @@ async function sourceOverview(ref, source) {
   </div>`;
 }
 
-function projectOverview(project, monitors, supplyChain = null) {
+function projectOverview(project, monitors, supplyChain = null, repositoryBindings = []) {
   const active = monitors.filter(monitor => monitor.latest_state && monitor.latest_state !== 'not evaluated').length;
   const attention = monitors.filter(monitor => ['changed', 'unavailable'].includes(monitor.latest_state)).length;
   const supplySummary = supplyChain
     ? `<div class="field"><span>Supply chain</span><div><strong>${esc(String(supplyChain.dependency_count || 0))}</strong> dependencies from ${esc(String(supplyChain.manifest_count || 0))} manifest(s) · <a data-nav href="${esc(projectPath(project.slug))}?tab=supply-chain">Open inventory</a></div></div>`
     : `<div class="field"><span>Supply chain</span><div><span class="muted">Not imported yet</span> · <a data-nav href="${esc(projectPath(project.slug))}?tab=supply-chain">Set up</a></div></div>`;
+  const repositoryBinding = repositoryBindings.find(binding => binding.binding_key === 'primary') || repositoryBindings[0] || null;
+  const repositorySummary = repositoryBinding
+    ? `<div class="field"><span>Repository scanner</span><div><strong>${repositoryBinding.enabled ? 'Enabled' : 'Paused'}</strong> · <button class="btn btn-secondary btn-compact" type="button" data-repository-binding-toggle data-project-ref="${esc(project.slug || project.project_id)}" data-binding-key="${esc(repositoryBinding.binding_key || 'primary')}" data-enabled="${repositoryBinding.enabled ? 'false' : 'true'}">${repositoryBinding.enabled ? 'Pause scans' : 'Enable scans'}</button><small class="muted"> Binding identity/history are preserved; lifecycle state is not a validity or affectedness verdict.</small></div></div>`
+    : '';
   return `<div class="monitoring-layout">
     <section class="object-overview-grid">
       <div class="object-main-card"><h2>Project overview</h2><div class="fields">
@@ -1233,6 +1237,7 @@ function projectOverview(project, monitors, supplyChain = null) {
         <div class="field"><span>Visibility</span><div>${badge(project.visibility || 'private')}</div></div>
         <div class="field"><span>Monitors</span><div>${monitors.length}</div></div>
         ${supplySummary}
+        ${repositorySummary}
         <div class="field"><span>Active</span><div>${active}</div></div>
         <div class="field"><span>Needs attention</span><div>${attention}</div></div>
         <div class="field"><span>Created</span><div>${esc(ago(project.created_at))}</div></div>
@@ -1245,9 +1250,14 @@ function projectOverview(project, monitors, supplyChain = null) {
   </div>`;
 }
 
-function supplyChainPanel(project, supplyChain) {
+function supplyChainPanel(project, supplyChain, repositoryBindings = []) {
+  const repositoryBinding = repositoryBindings.find(binding => binding.binding_key === 'primary') || repositoryBindings[0] || null;
+  const bindingNotice = repositoryBinding && !repositoryBinding.enabled
+    ? `<section class="supply-chain-boundary-card"><span class="onboarding-kicker">SCANNING PAUSED</span><h2>This repository binding is disabled for new scans.</h2><p>The binding identity and immutable history are still recorded. Disabled controls scanner eligibility only; it does not mean the repository is invalid, affected, verified, or relied upon.</p><button class="btn btn-primary" type="button" data-repository-binding-toggle data-project-ref="${esc(project.slug || project.project_id)}" data-binding-key="${esc(repositoryBinding.binding_key || 'primary')}" data-enabled="true">Enable scans</button></section>`
+    : '';
   if (!supplyChain) {
     return `<div class="supply-chain-layout">
+      ${bindingNotice}
       <section class="supply-chain-empty">
         <span class="onboarding-kicker">SOFTWARE SUPPLY CHAIN</span>
         <h2>Import what this repository declares it depends on.</h2>
@@ -1291,6 +1301,7 @@ function supplyChainPanel(project, supplyChain) {
   </a>`).join('');
 
   return `<div class="supply-chain-layout">
+    ${bindingNotice}
     <section class="supply-chain-summary">
       <div class="supply-chain-heading">
         <div><span class="onboarding-kicker">RECORDED INVENTORY</span><h2>Declared software dependencies</h2><p>Derived from exact local manifest/lockfile observations. This is provenance evidence, not a vulnerability verdict or proof of runtime loading.</p></div>
@@ -1406,13 +1417,14 @@ async function projectPage(ref) {
     const project = response.project || {};
     const monitors = response.monitors || [];
     const supplyChain = response.supply_chain || null;
+    const repositoryBindings = response.repository_bindings || [];
     const requested = params().get('tab') || 'overview';
     const selected = ['overview', 'monitors', 'supply-chain'].includes(requested) ? requested : 'overview';
     const panel = selected === 'monitors'
       ? await projectMonitorsPanel(project, monitors)
       : selected === 'supply-chain'
-        ? supplyChainPanel(project, supplyChain)
-        : projectOverview(project, monitors, supplyChain);
+        ? supplyChainPanel(project, supplyChain, repositoryBindings)
+        : projectOverview(project, monitors, supplyChain, repositoryBindings);
     shell(`<section class="object-header">
       <div class="breadcrumbs"><a data-nav href="/projects">Projects</a><span>/</span><span>${esc(project.slug || ref)}</span></div>
       <div class="object-title-row"><div><h1>${esc(project.name || project.slug || 'Project')}</h1><p>${esc(project.description || 'No description')}</p></div>${badge(project.visibility || 'private')}</div>
@@ -1441,6 +1453,9 @@ async function projectPage(ref) {
     });
     document.querySelector('[data-refresh-project]')?.addEventListener('click', event => {
       refreshProjectMonitorsFromButton(event.currentTarget);
+    });
+    document.querySelectorAll('[data-repository-binding-toggle]').forEach(button => {
+      button.addEventListener('click', () => setRepositoryBindingFromButton(button));
     });
     const supplySearch = document.querySelector('[data-supply-search]');
     supplySearch?.addEventListener('input', () => {
@@ -1472,6 +1487,28 @@ async function runDueMonitorsFromButton(button) {
     if (heading) {
       heading.title = `Due: ${summary.due || 0}; succeeded: ${summary.succeeded || 0}; failed: ${summary.failed || 0}; alerts: ${summary.alerts || 0}`;
     }
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = previous;
+    button.title = error.message || String(error);
+  }
+}
+
+async function setRepositoryBindingFromButton(button) {
+  const projectRef = button.dataset.projectRef;
+  const binding = button.dataset.bindingKey || 'primary';
+  const enabled = button.dataset.enabled === 'true';
+  if (!projectRef) return;
+  const previous = button.textContent;
+  button.disabled = true;
+  button.textContent = enabled ? 'Enabling…' : 'Pausing…';
+  try {
+    await apiWrite('/v1/projects/repository-binding-state', {
+      project_ref: projectRef,
+      binding,
+      enabled,
+    });
+    await projectPage(projectRef);
   } catch (error) {
     button.disabled = false;
     button.textContent = previous;
