@@ -59,6 +59,70 @@ class ProjectRevalidationMcpTests(unittest.TestCase):
         self.assertTrue(semantics["stale_is_not_false"])
         self.assertFalse(semantics["generic_trust_score_used"])
 
+    def test_projection_prefers_project_wide_multi_binding_revalidation(self) -> None:
+        detail = {
+            "ok": True,
+            "project": {"project_id": "prj_1"},
+            "advisory_revalidation": {
+                "reviews": [
+                    {"event_revision_id": "adv-primary"},
+                    {"event_revision_id": "adv-docs"},
+                ],
+                "review_count": 2,
+                "requires_revalidation": True,
+            },
+            "supply_chain": {
+                "advisory_revalidation": {
+                    "reviews": [{"event_revision_id": "adv-docs"}],
+                    "review_count": 1,
+                    "requires_revalidation": True,
+                }
+            },
+        }
+        with patch.object(base.TestamurProductService, "integrated", return_value=object()), patch.object(
+            base, "project_with_advisory_reviews", return_value=detail
+        ):
+            payload = project_mcp._project_revalidation({"project_ref": "prj_1"})
+        self.assertEqual(payload["advisory_revalidation"]["review_count"], 2)
+        self.assertEqual(
+            {item["event_revision_id"] for item in payload["advisory_revalidation"]["reviews"]},
+            {"adv-primary", "adv-docs"},
+        )
+
+    def test_project_assessment_accepts_candidate_from_non_singular_binding(self) -> None:
+        detail = {
+            "ok": True,
+            "project": {"project_id": "prj_1"},
+            "advisory_revalidation": {
+                "reviews": [{
+                    "event_revision_id": "adv-primary",
+                    "subjects": [{"subject_revision": "component-primary"}],
+                }]
+            },
+            "supply_chain": {
+                "advisory_revalidation": {
+                    "reviews": [{
+                        "event_revision_id": "adv-docs",
+                        "subjects": [{"subject_revision": "component-docs"}],
+                    }]
+                },
+            },
+        }
+        arguments = {
+            "project_ref": "prj_1",
+            "event_revision_id": "adv-primary",
+            "subject_revision": "component-primary",
+            "evidence": [{"kind": "mechanical"}],
+            "basis": [{"kind": "scanner"}],
+        }
+        recorded = {"assessment_id": "aas_primary", "state": "UNKNOWN"}
+        with patch.object(base.TestamurProductService, "integrated", return_value=object()), patch.object(
+            base, "project_with_advisory_reviews", return_value=detail
+        ), patch.object(project_mcp, "record_advisory_assessment", return_value=recorded) as canonical:
+            payload = project_mcp._record_project_advisory_assessment(arguments)
+        canonical.assert_called_once()
+        self.assertEqual(payload["assessment"], recorded)
+
     def test_assessment_delegates_to_canonical_write_route(self) -> None:
         service = object()
         recorded = {"assessment_id": "aas_1", "state": "unknown"}
