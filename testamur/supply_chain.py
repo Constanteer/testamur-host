@@ -14,6 +14,7 @@ from .component_identity import (
     canonical_hash,
     canonical_json,
 )
+from .repository_binding_lifecycle import repository_binding_with_state
 
 if TYPE_CHECKING:
     from .product_service import TestamurProductService
@@ -540,17 +541,23 @@ def import_project_supply_chain(
     root: str | Path,
     *,
     project_name: str | None = None,
+    project_ref: str | None = None,
     visibility: str = "private",
 ) -> dict[str, Any]:
     base = Path(root).expanduser().resolve()
     scan = scan_supply_chain(base)
-    name = (project_name or base.name).strip()
-    if not name:
-        raise ValueError("project import requires a project name")
-
-    project, project_created = _find_or_create_project(
-        service, name=name, visibility=visibility
-    )
+    if project_ref is not None:
+        project = service.projects.get_project(project_ref)
+        if project is None:
+            raise ValueError(f"project does not exist: {project_ref}")
+        project_created = False
+    else:
+        name = (project_name or base.name).strip()
+        if not name:
+            raise ValueError("project import requires a project name")
+        project, project_created = _find_or_create_project(
+            service, name=name, visibility=visibility
+        )
     project_id = str(project["project_id"])
 
     manifest_revision_by_path: dict[str, dict[str, Any]] = {}
@@ -730,4 +737,287 @@ def import_project_supply_chain(
         "dependencies": dependency_results,
         "warnings": scan["warnings"],
         "semantics": scan["semantics"],
+    }
+
+
+def scan_bound_project_supply_chain(
+    service: "TestamurProductService",
+    project_ref: str,
+    *,
+    binding_key: str = "primary",
+) -> dict[str, Any]:
+    """Rescan an existing Project through its explicit repository binding."""
+
+    project = service.projects.get_project(project_ref)
+    if project is None:
+        raise ValueError(f"project does not exist: {project_ref}")
+    binding = repository_binding_with_state(
+        service.projects, project_ref, binding_key=binding_key
+    )
+    if binding is None:
+        raise ValueError(
+            f"project has no repository binding named {binding_key!r}; bind a repository before scanning"
+        )
+    if not binding["enabled"]:
+        raise ValueError(
+            f"repository binding {binding_key!r} is disabled; enable it before scanning"
+        )
+    revision = dict(binding["revision"])
+    kind = str(revision.get("kind") or "")
+    if kind != "local-path":
+        raise ValueError(
+            "git repository bindings are recorded, but remote git materialization is not implemented yet"
+        )
+    result = import_project_supply_chain(
+        service,
+        str(revision["locator"]),
+        project_ref=str(project["project_id"]),
+    )
+    return {
+        **result,
+        "schema": "testamur.supply-chain.project-scan-action.v1",
+        "repository_binding_id": binding["binding_id"],
+        "repository_binding_revision_id": revision["binding_revision_id"],
+        "repository_binding_key": binding["binding_key"],
+    }
+
+
+def project_supply_chain_history(
+    service: "TestamurProductService",
+    project_ref: str,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    project = service.projects.get_project(project_ref)
+    if project is None:
+        raise ValueError(f"project does not exist: {project_ref}")
+    scan_record_id = _persistent_record_id("project-scan", str(project["project_id"]))
+    if service.records.get_record(scan_record_id) is None:
+        return []
+    return service.records.history(scan_record_id, limit=limit)
+
+
+def _scan_statement(service: "TestamurProductService", revision_id: str) -> dict[str, Any]:
+    revision = service.records.get_revision(revision_id)
+    if revision is None:
+        raise ValueError(f"supply-chain scan revision does not exist: {revision_id}")
+    record = service.records.get_record(str(revision.get("record_id") or ""))
+    if record is None or record.get("record_kind") != "supply-chain-scan":
+        raise ValueError(f"revision is not a supply-chain scan: {revision_id}")
+    try:
+        statement = json.loads(str(revision.get("statement") or "{}"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"supply-chain scan statement is malformed: {revision_id}") from exc
+    if statement.get("schema") != "testamur.supply-chain.project-scan.v1":
+        raise ValueError(f"unsupported supply-chain scan schema: {revision_id}")
+    return {"revision": revision, "record": record, "statement": statement}
+
+
+def _manifest_snapshot(
+    service: "TestamurProductService",
+    revision_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for revision_id in revision_ids:
+        revision = service.records.get_revision(str(revision_id))
+        if revision is None:
+            continue
+        try:
+            statement = json.loads(str(revision.get("statement") or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if statement.get("schema") != "testamur.supply-chain.manifest.v1":
+            continue
+        path = str(statement.get("path") or "")
+        if not path:
+            continue
+        result[path] = {
+            "record_id": revision.get("record_id"),
+            "record_revision_id": revision.get("revision_id"),
+            "path": path,
+            "parser": statement.get("parser"),
+            "sha256": statement.get("sha256"),
+            "dependency_revision_ids": list(statement.get("dependency_revision_ids") or []),
+        }
+    return result
+
+
+def _dependency_snapshot(
+    service: "TestamurProductService",
+    revision_ids: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {}
+    for revision_id in revision_ids:
+        revision = service.records.get_revision(str(revision_id))
+        if revision is None:
+            continue
+        try:
+            statement = json.loads(str(revision.get("statement") or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if statement.get("schema") != "testamur.supply-chain.dependency.v1":
+            continue
+        component_revision = statement.get("component_revision")
+        if not isinstance(component_revision, dict):
+            continue
+        component = component_revision.get("component")
+        if not isinstance(component, dict):
+            component = {}
+        component_id = str(component.get("component_id") or "").strip()
+        if not component_id:
+            component_id = f"{component.get('namespace') or ''}:{component.get('name') or ''}"
+        item = {
+            "record_id": revision.get("record_id"),
+            "record_revision_id": revision.get("revision_id"),
+            "component_id": component_id,
+            "component_revision_id": component_revision.get("component_revision_id"),
+            "ecosystem": component.get("namespace"),
+            "name": component.get("name"),
+            "version": component_revision.get("version"),
+            "digest": component_revision.get("digest"),
+            "locator": component_revision.get("locator"),
+            "identity_strength": component_revision.get("identity_strength"),
+            "is_exact_revision": bool(component_revision.get("is_exact_revision")),
+            "direct": statement.get("direct"),
+            "observed_in": list(statement.get("observed_in") or []),
+        }
+        result.setdefault(component_id, []).append(item)
+    for values in result.values():
+        values.sort(key=lambda item: str(item.get("component_revision_id") or ""))
+    return result
+
+
+def diff_project_supply_chain(
+    service: "TestamurProductService",
+    project_ref: str,
+    *,
+    from_scan_revision_id: str | None = None,
+    to_scan_revision_id: str | None = None,
+) -> dict[str, Any]:
+    """Mechanically compare two immutable Project supply-chain scans."""
+
+    project = service.projects.get_project(project_ref)
+    if project is None:
+        raise ValueError(f"project does not exist: {project_ref}")
+    expected_record_id = _persistent_record_id("project-scan", str(project["project_id"]))
+    history = project_supply_chain_history(service, project_ref, limit=500)
+    if not history:
+        raise ValueError("project has no supply-chain scans")
+
+    if to_scan_revision_id is None:
+        to_scan_revision_id = str(history[0]["revision_id"])
+    if from_scan_revision_id is None:
+        if len(history) < 2:
+            raise ValueError("project needs at least two supply-chain scans for an implicit diff")
+        from_scan_revision_id = str(history[1]["revision_id"])
+
+    before = _scan_statement(service, from_scan_revision_id)
+    after = _scan_statement(service, to_scan_revision_id)
+    if (
+        str(before["record"].get("record_id")) != expected_record_id
+        or str(after["record"].get("record_id")) != expected_record_id
+    ):
+        raise ValueError("scan revisions do not belong to the selected project")
+
+    before_statement = before["statement"]
+    after_statement = after["statement"]
+    before_manifests = _manifest_snapshot(
+        service, list(before_statement.get("manifest_revision_ids") or [])
+    )
+    after_manifests = _manifest_snapshot(
+        service, list(after_statement.get("manifest_revision_ids") or [])
+    )
+    manifest_added = [
+        after_manifests[path] for path in sorted(set(after_manifests) - set(before_manifests))
+    ]
+    manifest_removed = [
+        before_manifests[path] for path in sorted(set(before_manifests) - set(after_manifests))
+    ]
+    manifest_changed = [
+        {
+            "path": path,
+            "before": before_manifests[path],
+            "after": after_manifests[path],
+            "sha256_changed": before_manifests[path].get("sha256")
+            != after_manifests[path].get("sha256"),
+            "parser_changed": before_manifests[path].get("parser")
+            != after_manifests[path].get("parser"),
+        }
+        for path in sorted(set(before_manifests) & set(after_manifests))
+        if before_manifests[path].get("sha256") != after_manifests[path].get("sha256")
+        or before_manifests[path].get("parser") != after_manifests[path].get("parser")
+    ]
+
+    before_dependencies = _dependency_snapshot(
+        service, list(before_statement.get("dependency_record_revision_ids") or [])
+    )
+    after_dependencies = _dependency_snapshot(
+        service, list(after_statement.get("dependency_record_revision_ids") or [])
+    )
+    dependency_added: list[dict[str, Any]] = []
+    dependency_removed: list[dict[str, Any]] = []
+    dependency_changed: list[dict[str, Any]] = []
+    for component_id in sorted(set(before_dependencies) | set(after_dependencies)):
+        old = before_dependencies.get(component_id, [])
+        new = after_dependencies.get(component_id, [])
+        if not old:
+            dependency_added.extend(new)
+            continue
+        if not new:
+            dependency_removed.extend(old)
+            continue
+        old_revisions = {str(item.get("component_revision_id") or "") for item in old}
+        new_revisions = {str(item.get("component_revision_id") or "") for item in new}
+        if old_revisions == new_revisions:
+            continue
+        dependency_changed.append(
+            {
+                "component_id": component_id,
+                "ecosystem": (new[0].get("ecosystem") if new else old[0].get("ecosystem")),
+                "name": (new[0].get("name") if new else old[0].get("name")),
+                "before": old,
+                "after": new,
+                "version_changed": sorted(str(item.get("version") or "") for item in old)
+                != sorted(str(item.get("version") or "") for item in new),
+                "digest_changed": sorted(str(item.get("digest") or "") for item in old)
+                != sorted(str(item.get("digest") or "") for item in new),
+                "locator_changed": sorted(str(item.get("locator") or "") for item in old)
+                != sorted(str(item.get("locator") or "") for item in new),
+                "identity_strength_changed": sorted(
+                    str(item.get("identity_strength") or "") for item in old
+                )
+                != sorted(str(item.get("identity_strength") or "") for item in new),
+            }
+        )
+
+    return {
+        "ok": True,
+        "schema": "testamur.supply-chain.diff.v1",
+        "project_id": project["project_id"],
+        "from_scan_revision_id": from_scan_revision_id,
+        "to_scan_revision_id": to_scan_revision_id,
+        "manifests": {
+            "added": manifest_added,
+            "removed": manifest_removed,
+            "changed": manifest_changed,
+        },
+        "dependencies": {
+            "added": dependency_added,
+            "removed": dependency_removed,
+            "changed": dependency_changed,
+        },
+        "counts": {
+            "manifests_added": len(manifest_added),
+            "manifests_removed": len(manifest_removed),
+            "manifests_changed": len(manifest_changed),
+            "dependencies_added": len(dependency_added),
+            "dependencies_removed": len(dependency_removed),
+            "dependencies_changed": len(dependency_changed),
+        },
+        "semantics": {
+            "mechanical_only": True,
+            "changed_implies_invalid": False,
+            "dependency_change_implies_vulnerable": False,
+            "affectedness_inferred": False,
+        },
     }
