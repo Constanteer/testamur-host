@@ -34,7 +34,24 @@
     window.bindNavigation?.();
   }
 
-  const observer = new MutationObserver(() => queueMicrotask(render));
+  function isOwnMutation(mutation) {
+    const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+    return nodes.length > 0 && nodes.every((node) =>
+      node.nodeType === Node.ELEMENT_NODE &&
+      (node.matches?.('[data-demo-real-handoff]') || node.closest?.('[data-demo-real-handoff]'))
+    );
+  }
+
+  let renderQueued = false;
+  const observer = new MutationObserver((mutations) => {
+    if (mutations.length && mutations.every(isOwnMutation)) return;
+    if (renderQueued) return;
+    renderQueued = true;
+    queueMicrotask(() => {
+      renderQueued = false;
+      render();
+    });
+  });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   addEventListener('popstate', render);
   addEventListener('DOMContentLoaded', render);
