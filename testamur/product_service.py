@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .advisory import TestamurAdvisoryStore
+from .advisory_project_lookup import project_advisory_revisions_for_upstream_refs
 from .contracts import ObjectKind, classify_object_ref, error_envelope, object_envelope
 from .product_extensions import ProductExtensions
 from .project_store import TestamurProjectStore
@@ -205,20 +206,19 @@ class TestamurProductService:
             manifests.sort(key=lambda item: str(item.get("path") or ""))
 
             advisory_candidates: list[dict[str, Any]] = []
-            unresolved_advisory_count = 0
-            for advisory_revision in self.advisories.latest_revisions(limit=1000):
+            advisory_revisions, unresolved_advisory_count = (
+                project_advisory_revisions_for_upstream_refs(
+                    self.advisories,
+                    component_revision_ids,
+                )
+            )
+            for advisory_revision in advisory_revisions:
                 upstream_refs = {
                     str(value)
                     for value in advisory_revision.get("upstream_refs") or []
                     if str(value)
                 }
-                if not upstream_refs:
-                    if advisory_revision.get("upstream_identity"):
-                        unresolved_advisory_count += 1
-                    continue
                 matched = sorted(component_revision_ids & upstream_refs)
-                if not matched:
-                    continue
                 event = self.advisories.get_event(
                     str(advisory_revision.get("event_id") or "")
                 ) or {}
