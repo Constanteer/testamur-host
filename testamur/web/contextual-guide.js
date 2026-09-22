@@ -57,7 +57,7 @@
     guide.innerHTML = `
       <div class="contextual-guide-head">
         <div><span class="contextual-guide-kicker">REVIEW WORKFLOW · ${activeIndex + 1}/5</span><strong>${esc(active[1])}</strong><p>${esc(active[2])}</p></div>
-        <div class="contextual-guide-help"><a data-nav href="/learn">Learn the model</a><a data-nav href="/docs">Docs</a></div>
+        <div class="contextual-guide-help"><a data-nav href="/learn">Why these steps?</a><a data-nav href="/docs">Docs</a></div>
       </div>
       <nav class="contextual-guide-steps" aria-label="Source to revalidation">
         ${steps.map(([key, label], index) => `<a data-nav href="${esc(href(key, objectRef))}" class="${index === activeIndex ? 'active' : ''} ${index < activeIndex ? 'visited' : ''}"${index === activeIndex ? ' aria-current="step"' : ''}><span>${index < activeIndex ? '✓' : index + 1}</span>${esc(label)}</a>`).join('')}
