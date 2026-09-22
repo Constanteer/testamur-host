@@ -217,7 +217,7 @@ def project_supply_chain_projections(
             WHERE rel.from_ref = ?
               AND rel.relation_type = 'cites'
               AND rec.record_kind = 'supply-chain-scan'
-            ORDER BY rev.ordinal DESC
+            ORDER BY rev.recorded_at DESC, rev.revision_id DESC
             """,
             (str(project_id),),
         ).fetchall()
