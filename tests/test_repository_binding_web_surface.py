@@ -50,11 +50,36 @@ def test_project_web_surface_exposes_and_updates_repository_binding_lifecycle(tm
 def test_project_web_app_explains_binding_state_without_semantic_shortcuts():
     script = (Path(testamur.__file__).with_name("web") / "app.js").read_text(encoding="utf-8")
     for phrase in (
-        "Repository scanner",
+        "Repository scanners",
+        "Repository scanner inputs",
+        "Manage inputs",
         "Pause scans",
         "Enable scans",
         "scanner eligibility only",
+        "Each binding has independent scanner eligibility",
         "does not mean the repository is invalid, affected, verified, or relied upon",
         "/v1/projects/repository-binding-state",
     ):
         assert phrase in script
+
+
+def test_project_web_projection_preserves_multiple_repository_binding_states(tmp_path):
+    one = tmp_path / "one"
+    two = tmp_path / "two"
+    one.mkdir()
+    two.mkdir()
+    service = TestamurProductService.integrated(tmp_path / "multi.sqlite3")
+    project = service.projects.create_project(name="Multiple repository inputs")
+    service.projects.bind_repository(project["project_id"], locator=str(one), binding_key="primary")
+    service.projects.bind_repository(project["project_id"], locator=str(two), binding_key="docs")
+
+    response = dispatch_api_write(
+        service,
+        "/v1/projects/repository-binding-state",
+        {"project_ref": project["project_id"], "binding": "docs", "enabled": False},
+    )
+    assert response["status"] == 200
+
+    projected = project_with_advisory_reviews(service, project["project_id"])
+    states = {item["binding_key"]: item["enabled"] for item in projected["repository_bindings"]}
+    assert states == {"docs": False, "primary": True}

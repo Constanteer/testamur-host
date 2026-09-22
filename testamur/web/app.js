@@ -1226,9 +1226,9 @@ function projectOverview(project, monitors, supplyChain = null, repositoryBindin
   const supplySummary = supplyChain
     ? `<div class="field"><span>Supply chain</span><div><strong>${esc(String(supplyChain.dependency_count || 0))}</strong> dependencies from ${esc(String(supplyChain.manifest_count || 0))} manifest(s) · <a data-nav href="${esc(projectPath(project.slug))}?tab=supply-chain">Open inventory</a></div></div>`
     : `<div class="field"><span>Supply chain</span><div><span class="muted">Not imported yet</span> · <a data-nav href="${esc(projectPath(project.slug))}?tab=supply-chain">Set up</a></div></div>`;
-  const repositoryBinding = repositoryBindings.find(binding => binding.binding_key === 'primary') || repositoryBindings[0] || null;
-  const repositorySummary = repositoryBinding
-    ? `<div class="field"><span>Repository scanner</span><div><strong>${repositoryBinding.enabled ? 'Enabled' : 'Paused'}</strong> · <button class="btn btn-secondary btn-compact" type="button" data-repository-binding-toggle data-project-ref="${esc(project.slug || project.project_id)}" data-binding-key="${esc(repositoryBinding.binding_key || 'primary')}" data-enabled="${repositoryBinding.enabled ? 'false' : 'true'}">${repositoryBinding.enabled ? 'Pause scans' : 'Enable scans'}</button><small class="muted"> Binding identity/history are preserved; lifecycle state is not a validity or affectedness verdict.</small></div></div>`
+  const enabledRepositoryBindings = repositoryBindings.filter(binding => binding.enabled).length;
+  const repositorySummary = repositoryBindings.length
+    ? `<div class="field"><span>Repository scanners</span><div><strong>${esc(String(repositoryBindings.length))}</strong> input(s) · ${esc(String(enabledRepositoryBindings))} enabled · <a data-nav href="${esc(projectPath(project.slug || project.project_id))}?tab=supply-chain">Manage inputs</a><small class="muted"> Scanner eligibility is per binding and is not a validity or affectedness verdict.</small></div></div>`
     : '';
   return `<div class="monitoring-layout">
     <section class="object-overview-grid">
@@ -1251,13 +1251,19 @@ function projectOverview(project, monitors, supplyChain = null, repositoryBindin
 }
 
 function supplyChainPanel(project, supplyChain, repositoryBindings = []) {
-  const repositoryBinding = repositoryBindings.find(binding => binding.binding_key === 'primary') || repositoryBindings[0] || null;
-  const bindingNotice = repositoryBinding && !repositoryBinding.enabled
-    ? `<section class="supply-chain-boundary-card"><span class="onboarding-kicker">SCANNING PAUSED</span><h2>This repository binding is disabled for new scans.</h2><p>The binding identity and immutable history are still recorded. Disabled controls scanner eligibility only; it does not mean the repository is invalid, affected, verified, or relied upon.</p><button class="btn btn-primary" type="button" data-repository-binding-toggle data-project-ref="${esc(project.slug || project.project_id)}" data-binding-key="${esc(repositoryBinding.binding_key || 'primary')}" data-enabled="true">Enable scans</button></section>`
+  const bindingFields = repositoryBindings.map(binding => {
+    const revision = binding.revision || {};
+    const key = binding.binding_key || revision.binding_key || 'primary';
+    const locator = revision.locator || 'Repository locator unavailable';
+    const kind = revision.kind || 'repository';
+    return `<div class="field"><span>${esc(key)}</span><div><strong>${esc(kind)}</strong> · <code>${esc(short(locator, 72))}</code> · ${badge(binding.enabled ? 'enabled' : 'paused', binding.enabled ? 'good' : 'warn')} <button class="btn btn-secondary btn-compact" type="button" data-repository-binding-toggle data-project-ref="${esc(project.slug || project.project_id)}" data-binding-key="${esc(key)}" data-enabled="${binding.enabled ? 'false' : 'true'}">${binding.enabled ? 'Pause scans' : 'Enable scans'}</button></div></div>`;
+  }).join('');
+  const bindingPanel = repositoryBindings.length
+    ? `<section class="object-main-card"><div class="section-head compact"><div><h2>Repository scanner inputs</h2><p>Each binding has independent scanner eligibility. Pausing one binding preserves its stable identity and immutable revision history.</p></div><span>${repositoryBindings.length}</span></div><div class="fields">${bindingFields}</div><p class="form-help">Enabled / paused controls scanner eligibility only. It does not mean repository content was observed, verified, relied upon, invalid, safe, or affected.</p></section>`
     : '';
   if (!supplyChain) {
     return `<div class="supply-chain-layout">
-      ${bindingNotice}
+      ${bindingPanel}
       <section class="supply-chain-empty">
         <span class="onboarding-kicker">SOFTWARE SUPPLY CHAIN</span>
         <h2>Import what this repository declares it depends on.</h2>
@@ -1301,7 +1307,7 @@ function supplyChainPanel(project, supplyChain, repositoryBindings = []) {
   </a>`).join('');
 
   return `<div class="supply-chain-layout">
-    ${bindingNotice}
+    ${bindingPanel}
     <section class="supply-chain-summary">
       <div class="supply-chain-heading">
         <div><span class="onboarding-kicker">RECORDED INVENTORY</span><h2>Declared software dependencies</h2><p>Derived from exact local manifest/lockfile observations. This is provenance evidence, not a vulnerability verdict or proof of runtime loading.</p></div>
