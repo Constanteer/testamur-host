@@ -18,7 +18,7 @@ PROJECT_SCAN_TOOL = {
 }
 PROJECT_SUPPLY_CHAIN_TOOL = {
     "name": "testamur.project_supply_chain", "title": "Read current Project supply chain",
-    "description": "Read the newest applicable immutable supply-chain scan projection for a Project. Recorded dependencies are not automatically verified or relied upon.",
+    "description": "Read the newest immutable supply-chain observation plus the newest observation per explicit repository binding. Inventories remain binding-scoped; recorded dependencies are not automatically verified or relied upon.",
     "inputSchema": {"type": "object", "properties": {"project_ref": {"type": "string"}}, "required": ["project_ref"], "additionalProperties": False},
 }
 PROJECT_SUPPLY_CHAIN_DIFF_TOOL = {
@@ -54,7 +54,7 @@ def _project_supply_chain(arguments: Mapping[str, Any]) -> dict[str, Any]:
     detail = service.project(_base._required(arguments, "project_ref"))
     if detail.get("ok") is not True:
         return detail
-    return {"ok": True, "schema": "testamur.mcp.project-supply-chain.v1", "project": detail["project"], "supply_chain": detail.get("supply_chain"), "semantics": {"recorded_is_not_verified": True, "recorded_is_not_relied": True, "stale_is_not_false": True, "generic_trust_score_used": False}}
+    return {"ok": True, "schema": "testamur.mcp.project-supply-chain.v1", "project": detail["project"], "supply_chain": detail.get("supply_chain"), "supply_chains": detail.get("supply_chains") or [], "semantics": {"inventories_are_repository_binding_scoped": True, "recorded_is_not_verified": True, "recorded_is_not_relied": True, "stale_is_not_false": True, "generic_trust_score_used": False}}
 
 
 def _project_supply_chain_diff(arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -73,10 +73,14 @@ def _project_revalidation(arguments: Mapping[str, Any]) -> dict[str, Any]:
     detail = _base.project_with_advisory_reviews(service, project_ref)
     if detail.get("ok") is not True:
         return detail
-    supply = detail.get("supply_chain")
-    if not isinstance(supply, Mapping): supply = {}
-    projection = supply.get("advisory_revalidation")
-    if not isinstance(projection, Mapping): projection = {}
+    projection = detail.get("advisory_revalidation")
+    if not isinstance(projection, Mapping):
+        supply = detail.get("supply_chain")
+        if not isinstance(supply, Mapping):
+            supply = {}
+        projection = supply.get("advisory_revalidation")
+    if not isinstance(projection, Mapping):
+        projection = {}
     return {"ok": True, "schema": "testamur.mcp.project-advisory-revalidation.v1", "project": detail["project"], "advisory_revalidation": dict(projection), "semantics": {"changed_is_not_invalid": True, "changed_is_not_affectedness_verdict": True, "stale_is_not_false": True, "candidate_overlap_is_not_affectedness_verdict": True, "recorded_assessment_is_not_generic_verification": True, "generic_trust_score_used": False}}
 
 
@@ -93,10 +97,14 @@ def _record_project_advisory_assessment(arguments: Mapping[str, Any]) -> dict[st
     subject_revision = _base._required(arguments, "subject_revision")
     detail = _base.project_with_advisory_reviews(service, project_ref)
     if detail.get("ok") is not True: return detail
-    supply = detail.get("supply_chain")
-    if not isinstance(supply, Mapping): supply = {}
-    projection = supply.get("advisory_revalidation")
-    if not isinstance(projection, Mapping): projection = {}
+    projection = detail.get("advisory_revalidation")
+    if not isinstance(projection, Mapping):
+        supply = detail.get("supply_chain")
+        if not isinstance(supply, Mapping):
+            supply = {}
+        projection = supply.get("advisory_revalidation")
+    if not isinstance(projection, Mapping):
+        projection = {}
     reviews = projection.get("reviews")
     if not isinstance(reviews, list): reviews = []
     matched = False
