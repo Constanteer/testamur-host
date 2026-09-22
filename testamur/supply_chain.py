@@ -917,6 +917,22 @@ def _dependency_snapshot(
     return result
 
 
+def _scan_repository_binding(statement: dict[str, Any]) -> dict[str, str] | None:
+    raw = statement.get("repository_binding")
+    if not isinstance(raw, dict):
+        return None
+    binding_id = str(raw.get("binding_id") or "").strip()
+    binding_key = str(raw.get("binding_key") or "").strip()
+    binding_revision_id = str(raw.get("binding_revision_id") or "").strip()
+    if not binding_id or not binding_key or not binding_revision_id:
+        return None
+    return {
+        "binding_id": binding_id,
+        "binding_key": binding_key,
+        "binding_revision_id": binding_revision_id,
+    }
+
+
 def diff_project_supply_chain(
     service: "TestamurProductService",
     project_ref: str,
@@ -936,13 +952,47 @@ def diff_project_supply_chain(
 
     if to_scan_revision_id is None:
         to_scan_revision_id = str(history[0]["revision_id"])
-    if from_scan_revision_id is None:
-        if len(history) < 2:
-            raise ValueError("project needs at least two supply-chain scans for an implicit diff")
-        from_scan_revision_id = str(history[1]["revision_id"])
-
-    before = _scan_statement(service, from_scan_revision_id)
     after = _scan_statement(service, to_scan_revision_id)
+    after_binding = _scan_repository_binding(after["statement"])
+
+    before: dict[str, Any] | None = None
+    if from_scan_revision_id is None:
+        if after_binding is None:
+            if len(history) < 2:
+                raise ValueError("project needs at least two supply-chain scans for an implicit diff")
+            from_scan_revision_id = str(history[1]["revision_id"])
+        else:
+            for item in history:
+                candidate_id = str(item["revision_id"])
+                if candidate_id == to_scan_revision_id:
+                    continue
+                candidate = _scan_statement(service, candidate_id)
+                candidate_binding = _scan_repository_binding(candidate["statement"])
+                if (
+                    candidate_binding is not None
+                    and candidate_binding["binding_id"] == after_binding["binding_id"]
+                ):
+                    from_scan_revision_id = candidate_id
+                    before = candidate
+                    break
+            if from_scan_revision_id is None:
+                raise ValueError(
+                    "project needs at least two supply-chain scans for repository binding "
+                    f"{after_binding['binding_key']!r} for an implicit diff"
+                )
+
+    if before is None:
+        before = _scan_statement(service, from_scan_revision_id)
+    before_binding = _scan_repository_binding(before["statement"])
+    if (
+        before_binding is not None
+        and after_binding is not None
+        and before_binding["binding_id"] != after_binding["binding_id"]
+    ):
+        raise ValueError(
+            "supply-chain scan revisions use different repository bindings; "
+            "compare scans from the same binding"
+        )
     if (
         str(before["record"].get("record_id")) != expected_record_id
         or str(after["record"].get("record_id")) != expected_record_id
@@ -1026,6 +1076,15 @@ def diff_project_supply_chain(
         "project_id": project["project_id"],
         "from_scan_revision_id": from_scan_revision_id,
         "to_scan_revision_id": to_scan_revision_id,
+        "repository_bindings": {
+            "from": before_binding,
+            "to": after_binding,
+            "same_binding": (
+                None
+                if before_binding is None or after_binding is None
+                else before_binding["binding_id"] == after_binding["binding_id"]
+            ),
+        },
         "manifests": {
             "added": manifest_added,
             "removed": manifest_removed,
@@ -1049,5 +1108,7 @@ def diff_project_supply_chain(
             "changed_implies_invalid": False,
             "dependency_change_implies_vulnerable": False,
             "affectedness_inferred": False,
+            "cross_repository_binding_comparison_allowed": False,
+            "missing_repository_binding_provenance_is_not_inferred": True,
         },
     }
