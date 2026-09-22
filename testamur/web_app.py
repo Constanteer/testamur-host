@@ -15,6 +15,10 @@ from .product_actions import create_monitor, create_project, refresh_monitor, re
 from .monitor_provider_manifest import load_monitor_provider_registry
 from .product_service import TestamurProductService
 from .project_review_surface import project_with_advisory_reviews
+from .repository_binding_lifecycle import (
+    repository_binding_with_state,
+    set_repository_binding_enabled,
+)
 
 WEB_ROOT = Path(__file__).with_name("web")
 
@@ -175,6 +179,48 @@ def dispatch_api_write(
     try:
         if path == "/v1/advisory-assessments":
             return _json(record_advisory_assessment(service, payload), status=HTTPStatus.OK)
+        if path == "/v1/projects/repository-binding-state":
+            unknown = set(payload) - {"project_ref", "binding", "enabled"}
+            if unknown:
+                raise ValueError(
+                    f"repository binding state does not accept fields: {', '.join(sorted(unknown))}"
+                )
+            project_ref = payload.get("project_ref")
+            binding_key = payload.get("binding", "primary")
+            enabled = payload.get("enabled")
+            if not isinstance(project_ref, str) or not project_ref.strip():
+                raise ValueError("repository binding project_ref must be a non-empty string")
+            if not isinstance(binding_key, str) or not binding_key.strip():
+                raise ValueError("repository binding binding must be a non-empty string")
+            if not isinstance(enabled, bool):
+                raise ValueError("repository binding enabled must be a boolean")
+            current = repository_binding_with_state(
+                service.projects,
+                project_ref,
+                binding_key=binding_key,
+            )
+            if current is None:
+                raise ValueError(f"project has no repository binding named {binding_key!r}")
+            binding = set_repository_binding_enabled(
+                service.projects,
+                project_ref,
+                binding_key=binding_key,
+                enabled=enabled,
+            )
+            return _json({
+                "ok": True,
+                "schema": "testamur.product.repository-binding-lifecycle.v1",
+                "binding": binding,
+                "semantics": {
+                    "binding_state_is_scanner_eligibility": True,
+                    "binding_state_implies_content_observed": False,
+                    "binding_state_implies_verification": False,
+                    "binding_state_implies_reliance": False,
+                    "binding_state_implies_invalidity": False,
+                    "binding_state_implies_affectedness": False,
+                    "generic_trust_score_used": False,
+                },
+            })
         if path == "/v1/projects/refresh":
             unknown = set(payload) - {"project_ref"}
             if unknown:
@@ -196,14 +242,7 @@ def dispatch_api_write(
                 raise ValueError("project description must be a string when provided")
             if not isinstance(visibility, str):
                 raise ValueError("project visibility must be a string")
-            return _json(
-                create_project(
-                    service,
-                    name=name,
-                    description=description,
-                    visibility=visibility,
-                )
-            )
+            return _json(create_project(service, name=name, description=description, visibility=visibility))
         if path == "/v1/monitors/run-due":
             if payload:
                 raise ValueError("run-due accepts no fields")
