@@ -56,13 +56,31 @@
     center.prepend(card);
   }
 
+  function isHandoffNode(node) {
+    if (!(node instanceof Element)) return false;
+    return node.matches('[data-baseline-handoff]') || Boolean(node.closest('[data-baseline-handoff]'));
+  }
+
+  function onlyHandoffMutations(records) {
+    return records.length > 0 && records.every(record => {
+      if (isHandoffNode(record.target)) return true;
+      const changed = [...record.addedNodes, ...record.removedNodes];
+      return changed.length > 0 && changed.every(isHandoffNode);
+    });
+  }
+
   let queued = false;
   const schedule = () => {
     if (queued) return;
     queued = true;
     queueMicrotask(() => { queued = false; render(); });
   };
-  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+  new MutationObserver((records) => {
+    // render() removes and recreates this presentation card. Ignore those
+    // self-authored mutations so the observer cannot schedule itself forever.
+    if (onlyHandoffMutations(records)) return;
+    schedule();
+  }).observe(document.documentElement, { childList: true, subtree: true });
   addEventListener('popstate', schedule);
   addEventListener('DOMContentLoaded', schedule);
 })();
