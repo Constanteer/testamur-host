@@ -87,12 +87,23 @@
     });
   }
 
-  addEventListener('DOMContentLoaded', render);
-  addEventListener('popstate', render);
+  let renderQueued = false;
+  function queueRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    queueMicrotask(() => {
+      renderQueued = false;
+      render();
+    });
+  }
+
+  addEventListener('DOMContentLoaded', queueRender);
+  addEventListener('popstate', queueRender);
   new MutationObserver((records) => {
     // render() replaces this panel. Ignore those self-authored mutations or the
-    // observer would schedule render -> replace -> observer forever.
+    // observer would schedule render -> replace -> observer forever. Coalesce
+    // the remaining SPA churn so one DOM update batch causes at most one render.
     if (onlyResumeMutations(records)) return;
-    queueMicrotask(render);
+    queueRender();
   }).observe(document.documentElement, { childList: true, subtree: true });
 })();
