@@ -28,9 +28,33 @@
     note.innerHTML = `<strong>Repository context stays attached</strong>
       <p>Each scanner input below is a separate repository binding with its own immutable observation history. Compare observations only inside the same binding; two scans from different repositories are not a before/after pair.</p>
       <div class="supply-chain-boundaries"><code>same binding → comparable history</code><code>different binding → separate history</code><code>candidate != affectedness verdict</code></div>
-      <p><strong>${labels.length} binding${labels.length === 1 ? '' : 's'} in this project.</strong> ${labels.map(({key, locator}) => `<code>${escapeHtml(key)}</code> ${escapeHtml(locator)}`).join(' · ')}</p>
+      <div class="project-binding-list" aria-label="Repository bindings">${labels.map(({key, locator}) => `<div class="project-binding-item"><span><strong>${escapeHtml(key)}</strong><small>${escapeHtml(locator)}</small></span><span class="project-binding-scope">Compare within this repository</span></div>`).join('')}</div>
+      <p><strong>${labels.length} binding${labels.length === 1 ? '' : 's'} in this project.</strong> Pick two observations from one repository when you need a mechanical before/after comparison. If you switch repository, start a separate comparison.</p>
+      <div class="supply-chain-guidance-actions project-binding-actions"><button type="button" class="btn btn-primary" data-project-binding-observations>Review observation history</button><button type="button" class="btn btn-secondary" data-project-binding-advisories>Review advisory candidates</button></div>
       <p>Project-level advisory review may aggregate exact candidates across bindings so you can inspect them together. That aggregation does not assert that any repository is affected. Open the candidate and preserve its repository, package/version, advisory, and observation context through explicit revalidation.</p>`;
     inputs.after(note);
+
+    note.querySelector('[data-project-binding-observations]')?.addEventListener('click', () => focusSurface(note, [
+      '.supply-chain-history', '[data-supply-chain-history]', '.supply-chain-observations', '[data-supply-chain-observations]', '.supply-chain-compare'
+    ]));
+    note.querySelector('[data-project-binding-advisories]')?.addEventListener('click', () => focusSurface(note, [
+      '.project-advisory-review', '[data-advisory-review]', '.advisory-candidates', '[data-advisory-candidates]', '.supply-chain-advisories'
+    ], 'review'));
+  }
+
+  function focusSurface(origin, selectors, hash = '') {
+    const target = selectors.map(selector => document.querySelector(selector)).find(Boolean);
+    if (target) {
+      target.setAttribute('tabindex', '-1');
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      target.focus({ preventScroll: true });
+      return;
+    }
+    const project = location.pathname.match(/^\/projects\/([^/]+)\/?$/)?.[1];
+    if (!project) return;
+    const destination = `/projects/${project}?tab=supply-chain${hash ? `#${hash}` : ''}`;
+    if (location.pathname + location.search + location.hash !== destination) location.href = destination;
+    else origin.querySelector('strong')?.focus?.();
   }
 
   function escapeHtml(value) {
