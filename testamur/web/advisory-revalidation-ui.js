@@ -3,6 +3,7 @@
 
   const nativeFetch = window.fetch.bind(window);
   let latest = null;
+  let renderQueued = false;
 
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
@@ -34,7 +35,7 @@
       if (url.pathname === '/v1/project' && response.ok) {
         const body = await response.clone().json();
         latest = body?.supply_chain?.advisory_revalidation || null;
-        queueMicrotask(render);
+        queueRender();
       }
     } catch (_) {}
     return response;
@@ -85,6 +86,21 @@
     host.appendChild(surface);
   }
 
-  window.addEventListener('testamur:review-context', render);
-  new MutationObserver(render).observe(document.documentElement, { childList: true, subtree: true });
+  function queueRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    queueMicrotask(() => {
+      renderQueued = false;
+      render();
+    });
+  }
+
+  const observer = new MutationObserver(records => {
+    const external = records.some(record => [...record.addedNodes, ...record.removedNodes].some(node =>
+      node instanceof Element && !node.matches('[data-advisory-revalidation]') && !node.closest('[data-advisory-revalidation]')));
+    if (external) queueRender();
+  });
+
+  window.addEventListener('testamur:review-context', queueRender);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 })();
