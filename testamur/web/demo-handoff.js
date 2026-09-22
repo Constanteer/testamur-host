@@ -18,7 +18,7 @@
         <h2>Move from the example to a real dependency.</h2>
         <p>The demo is read-only. Create a project for your work, then attach a monitor to the upstream source it actually depends on. Testamur will build the revision history from recorded observations.</p>
         <div class="demo-real-handoff-boundary" aria-label="Semantic boundaries">
-          <span>recorded ≠ verified</span><span>fetched ≠ relied</span><span>changed ≠ invalid</span><span>stale ≠ false</span>
+          <span>recorded ≠ verified</span><span>fetched ≠ relied</span><span>changed ≠ invalid</span><span>stale ≠ false</span><span>EXPOSED_TO_MODEL ≠ RELIED</span>
         </div>
       </div>
       <ol class="demo-real-handoff-steps">
