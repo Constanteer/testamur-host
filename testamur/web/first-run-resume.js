@@ -75,7 +75,24 @@
     window.bindNavigation?.();
   }
 
+  function isResumeNode(node) {
+    if (!(node instanceof Element)) return false;
+    return node.matches('[data-first-run-resume]') || Boolean(node.closest('[data-first-run-resume]'));
+  }
+
+  function onlyResumeMutations(records) {
+    return records.length > 0 && records.every((record) => {
+      const changed = [...record.addedNodes, ...record.removedNodes];
+      return changed.length > 0 && changed.every(isResumeNode);
+    });
+  }
+
   addEventListener('DOMContentLoaded', render);
   addEventListener('popstate', render);
-  new MutationObserver(() => queueMicrotask(render)).observe(document.documentElement, { childList: true, subtree: true });
+  new MutationObserver((records) => {
+    // render() replaces this panel. Ignore those self-authored mutations or the
+    // observer would schedule render -> replace -> observer forever.
+    if (onlyResumeMutations(records)) return;
+    queueMicrotask(render);
+  }).observe(document.documentElement, { childList: true, subtree: true });
 })();
