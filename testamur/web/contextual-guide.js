@@ -69,7 +69,24 @@
     main.prepend(guide);
   }
 
-  const observer = new MutationObserver(() => queueMicrotask(render));
+  function isGuideNode(node) {
+    if (!(node instanceof Element)) return false;
+    return node.matches('[data-contextual-workflow-guide]') || Boolean(node.closest('[data-contextual-workflow-guide]'));
+  }
+
+  function onlyGuideMutations(records) {
+    return records.length > 0 && records.every((record) => {
+      const changed = [...record.addedNodes, ...record.removedNodes];
+      return changed.length > 0 && changed.every(isGuideNode);
+    });
+  }
+
+  const observer = new MutationObserver((records) => {
+    // render() replaces this guide. Ignore those self-authored mutations so the
+    // presentation layer cannot create an endless observer/render feedback loop.
+    if (onlyGuideMutations(records)) return;
+    queueMicrotask(render);
+  });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   addEventListener('popstate', render);
   addEventListener('DOMContentLoaded', render);
