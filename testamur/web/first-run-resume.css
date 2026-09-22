@@ -1,0 +1,23 @@
+.first-run-resume {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 55;
+  width: min(360px, calc(100vw - 40px));
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 12px;
+  background: var(--panel, #fff);
+  box-shadow: 0 8px 28px rgba(31, 35, 40, .14);
+}
+.first-run-resume-copy { display: grid; gap: 2px; }
+.first-run-resume-copy > span { font-size: 11px; letter-spacing: .08em; color: var(--muted, #656d76); }
+.first-run-resume-copy > strong { font-size: 14px; }
+.first-run-resume-copy > small { color: var(--muted, #656d76); }
+.first-run-resume > a { font-weight: 650; text-decoration: none; }
+.first-run-resume-learn { grid-column: 1 / -1; font-size: 12px; font-weight: 500 !important; color: var(--muted, #656d76); }
+@media (max-width: 640px) { .first-run-resume { right: 12px; bottom: 12px; width: calc(100vw - 24px); } }
