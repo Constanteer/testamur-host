@@ -57,6 +57,13 @@
     return project ? `/projects/${encodeURIComponent(project)}` : '/projects';
   }
 
+  function reviewContextLabel(objectRef) {
+    const params = projectContext();
+    const project = params.get('project') || params.get('project_id');
+    const projectPart = project ? ` · Project ${project}` : '';
+    return `Reviewing ${objectRef}${projectPart}`;
+  }
+
   function render() {
     const stage = currentStage();
     const objectRef = ref();
@@ -74,7 +81,7 @@
     guide.setAttribute('aria-label', 'Evidence review workflow');
     guide.innerHTML = `
       <div class="contextual-guide-head">
-        <div><span class="contextual-guide-kicker">REVIEW WORKFLOW · ${activeIndex + 1}/5</span><strong>${esc(active[1])}</strong><p>${esc(active[2])}</p></div>
+        <div><span class="contextual-guide-kicker">REVIEW WORKFLOW · ${activeIndex + 1}/5</span><strong>${esc(active[1])}</strong><p>${esc(active[2])}</p><small class="mono">${esc(reviewContextLabel(objectRef))}</small></div>
         <div class="contextual-guide-help"><a data-nav href="/learn">Why these steps?</a><a data-nav href="/docs">Docs</a></div>
       </div>
       <nav class="contextual-guide-steps" aria-label="Source to revalidation">
@@ -110,11 +117,7 @@
   }
 
   const observer = new MutationObserver((records) => {
-    // render() replaces this guide. Ignore those self-authored mutations so the
-    // presentation layer cannot create an endless observer/render feedback loop.
     if (onlyGuideMutations(records)) return;
-    // One SPA render can produce many observer callbacks. Coalesce them so the
-    // contextual guide performs at most one replacement per microtask turn.
     queueRender();
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
