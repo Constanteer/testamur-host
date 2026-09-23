@@ -67,6 +67,11 @@
     return '/docs';
   }
 
+  function stageAction(stage) {
+    if (stage === 'impact') return '<span class="contextual-guide-action">For each downstream edge: open its recorded basis/revision first, then decide whether the selected change warrants scoped revalidation.</span>';
+    return '';
+  }
+
   function projectReturnHref() {
     const params = projectContext();
     const project = params.get('project') || params.get('project_id');
@@ -102,7 +107,7 @@
     guide.setAttribute('aria-label', 'Evidence review workflow');
     guide.innerHTML = `
       <div class="contextual-guide-head">
-        <div><span class="contextual-guide-kicker">REVIEW WORKFLOW · ${activeIndex + 1}/5</span><strong>${esc(active[1])}</strong><p>${esc(active[2])}</p><small class="mono">${esc(reviewContextLabel(objectRef))}</small></div>
+        <div><span class="contextual-guide-kicker">REVIEW WORKFLOW · ${activeIndex + 1}/5</span><strong>${esc(active[1])}</strong><p>${esc(active[2])}</p><small class="mono">${esc(reviewContextLabel(objectRef))}</small>${stageAction(stage)}</div>
         <div class="contextual-guide-help"><a data-nav href="/learn">Why these steps?</a><a data-nav href="${esc(docsHref(stage))}">${esc(active[1])} docs</a></div>
       </div>
       <nav class="contextual-guide-steps" aria-label="Source to revalidation">
