@@ -14,8 +14,26 @@
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#039;'
   })[char]);
 
-  const objectTab = (ref, tab) =>
-    `/object/${encodeURIComponent(String(ref || ''))}?tab=${encodeURIComponent(tab)}`;
+  function projectContext() {
+    let source = null;
+    try {
+      source = new URL(latestProjectUrl || location.href, location.origin);
+    } catch (_) {
+      return new URLSearchParams();
+    }
+    const context = new URLSearchParams();
+    for (const key of ['project', 'project_id']) {
+      const value = source.searchParams.get(key);
+      if (value) context.set(key, value);
+    }
+    return context;
+  }
+
+  const objectTab = (ref, tab) => {
+    const query = projectContext();
+    query.set('tab', tab);
+    return `/object/${encodeURIComponent(String(ref || ''))}?${query.toString()}`;
+  };
 
   function queueRender() {
     if (renderQueued) return;
