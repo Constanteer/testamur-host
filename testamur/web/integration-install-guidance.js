@@ -6,6 +6,7 @@
   const SOURCE_INSTALL = 'git clone https://github.com/Constanteer/testamur.git && cd testamur && python3 -m venv .venv && . .venv/bin/activate && python -m pip install -e .';
   const INSTALL_CHECK = 'python --version && python -m pip show testamur && command -v testamur && command -v testamur-gateway-mcp';
   const MCP_SMOKE = 'printf \'%s\\n\' \'{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}\' | testamur-gateway-mcp';
+  const MCP_STATE_CHECK = 'printf \'%s\\n\' \'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"testamur.project_supply_chain","arguments":{"project_ref":"__testamur_diagnostic_missing_project__"}}}\' | testamur-gateway-mcp';
 
   function enhance() {
     if (location.pathname !== '/integrations') return;
@@ -46,6 +47,14 @@
       <div class="integration-command">
         <div><span>Smoke-test MCP discovery</span><code>${MCP_SMOKE}</code></div>
         <button class="btn btn-secondary btn-compact" type="button" data-copy-mcp-smoke>Copy smoke test</button>
+      </div>
+      <div class="integration-manual-step">
+        <strong>Discovery works, but tools fail?</strong>
+        <span>Probe one read-only Project tool with an intentionally missing project reference. A normal Testamur tool result or structured not-found response means the gateway reached its application state layer. A database/open/schema error instead points to TESTAMUR_DB, the host working directory, filesystem permissions, or local state initialization. This probe does not create a Project, fetch a Source, record reliance, or verify anything.</span>
+      </div>
+      <div class="integration-command">
+        <div><span>Diagnose application state</span><code>${MCP_STATE_CHECK}</code></div>
+        <button class="btn btn-secondary btn-compact" type="button" data-copy-mcp-state>Copy state check</button>
       </div>`;
     prerequisite.append(block);
 
@@ -66,6 +75,7 @@
     copy('[data-copy-install-command]', SOURCE_INSTALL);
     copy('[data-copy-check-command]', INSTALL_CHECK);
     copy('[data-copy-mcp-smoke]', MCP_SMOKE);
+    copy('[data-copy-mcp-state]', MCP_STATE_CHECK);
   }
 
   addEventListener('DOMContentLoaded', enhance);
