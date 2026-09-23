@@ -739,7 +739,7 @@ class AccountStore:
             ).fetchone()
             if row is None:
                 return None
-            if int(row["expires_at"]) <= now:
+            if int(row["expires_at"]) <= now or row["email_verified_at"] is None:
                 connection.execute("DELETE FROM sessions WHERE session_hash = ?", (session_hash,))
                 return None
             connection.execute(
