@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +22,12 @@ class MathHubAssetFreshnessTests(unittest.TestCase):
         self.assertEqual(css["headers"]["Cache-Control"], "no-cache, must-revalidate")
 
     def test_index_versions_local_assets_with_mathhub_snapshot(self) -> None:
+        snapshot_path = Path(hosted_app.__file__).resolve().parents[2] / "MATHHUB_SNAPSHOT"
+        snapshot = snapshot_path.read_text(encoding="utf-8")
+        match = re.search(r"\b[0-9a-f]{40}\b", snapshot, re.IGNORECASE)
+        self.assertIsNotNone(match, "MATHHUB_SNAPSHOT must contain the canonical commit SHA")
+        token = match.group(0)[:12]
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "index.html").write_text(
@@ -28,23 +35,12 @@ class MathHubAssetFreshnessTests(unittest.TestCase):
                 '<script defer src="./app.js"></script>\n',
                 encoding="utf-8",
             )
-            snapshot = Path(hosted_app.__file__).resolve().parents[2] / "MATHHUB_SNAPSHOT"
-            with patch.object(hosted_app, "_MATHHUB_ROOT", root), patch.object(
-                Path, "read_text", autospec=True
-            ) as read_text:
-                original_read_text = Path.read_text
-
-                def read(path: Path, *args, **kwargs):
-                    if path == snapshot:
-                        return "Constanteer/Mathub main @ ddf6fe15b3f7868de55718a5f15fa6260bcc70d4\n"
-                    return original_read_text(path, *args, **kwargs)
-
-                read_text.side_effect = read
+            with patch.object(hosted_app, "_MATHHUB_ROOT", root):
                 response = hosted_app._mathhub_static("")
 
         html = response["body"].decode("utf-8")
-        self.assertIn('href="./styles.css?v=ddf6fe15b3f7"', html)
-        self.assertIn('src="./app.js?v=ddf6fe15b3f7"', html)
+        self.assertIn(f'href="./styles.css?v={token}"', html)
+        self.assertIn(f'src="./app.js?v={token}"', html)
         self.assertNotIn("?v=current", html)
 
 
