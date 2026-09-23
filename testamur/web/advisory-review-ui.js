@@ -7,6 +7,7 @@
   let latestSupplyChain = null;
   let latestProjectUrl = null;
   let projectionVersion = 0;
+  let renderQueued = false;
   const nativeFetch = window.fetch.bind(window);
 
   const esc = value => String(value ?? '').replace(/[&<>\"']/g, char => ({
@@ -15,6 +16,15 @@
 
   const objectTab = (ref, tab) =>
     `/object/${encodeURIComponent(String(ref || ''))}?tab=${encodeURIComponent(tab)}`;
+
+  function queueRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    queueMicrotask(() => {
+      renderQueued = false;
+      render();
+    });
+  }
 
   window.fetch = async (...args) => {
     const response = await nativeFetch(...args);
@@ -26,7 +36,7 @@
         latestProjectUrl = url.toString();
         latestSupplyChain = body?.supply_chain || null;
         projectionVersion += 1;
-        queueMicrotask(render);
+        queueRender();
       }
     } catch (_) {
       // Product rendering must never make the underlying request fail.
@@ -140,7 +150,7 @@
     const body = await response.json();
     latestSupplyChain = body?.supply_chain || null;
     projectionVersion += 1;
-    render();
+    queueRender();
   }
 
   function bindAssessmentForms(surface) {
@@ -252,5 +262,5 @@
     bindAssessmentForms(surface);
   }
 
-  new MutationObserver(render).observe(document.documentElement, { childList: true, subtree: true });
+  new MutationObserver(queueRender).observe(document.documentElement, { childList: true, subtree: true });
 })();
