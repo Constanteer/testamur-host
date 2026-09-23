@@ -33,19 +33,27 @@
     return '';
   }
 
-  function projectContext() {
+  function selectedContext(keys) {
     const current = new URLSearchParams(location.search);
     const context = new URLSearchParams();
-    for (const key of ['project', 'project_id']) {
+    for (const key of keys) {
       const value = current.get(key);
       if (value) context.set(key, value);
     }
     return context;
   }
 
+  function projectContext() {
+    return selectedContext(['project', 'project_id']);
+  }
+
+  function reviewScopeContext() {
+    return selectedContext(['project', 'project_id', 'dependency', 'component', 'from', 'to']);
+  }
+
   function href(stage, objectRef) {
     const base = `/object/${encodeURIComponent(objectRef)}`;
-    const query = projectContext();
+    const query = ['compare', 'impact', 'revalidate'].includes(stage) ? reviewScopeContext() : projectContext();
     if (stage !== 'source') query.set('tab', stage);
     const suffix = query.toString();
     return suffix ? `${base}?${suffix}` : base;
@@ -58,10 +66,15 @@
   }
 
   function reviewContextLabel(objectRef) {
-    const params = projectContext();
+    const params = reviewScopeContext();
     const project = params.get('project') || params.get('project_id');
     const projectPart = project ? ` · Project ${project}` : '';
-    return `Reviewing ${objectRef}${projectPart}`;
+    const dependency = params.get('dependency') || params.get('component');
+    const from = params.get('from');
+    const to = params.get('to');
+    const subjectPart = dependency ? ` · ${dependency}` : '';
+    const pairPart = from || to ? ` · ${from || 'unknown'} → ${to || 'unknown'}` : '';
+    return `Reviewing ${objectRef}${projectPart}${subjectPart}${pairPart}`;
   }
 
   function render() {
