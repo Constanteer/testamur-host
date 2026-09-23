@@ -145,7 +145,15 @@ def _mathhub_static(relative_path: str) -> dict[str, Any]:
         "status": int(HTTPStatus.OK),
         "headers": {
             "Content-Type": content_type,
-            "Cache-Control": "no-cache" if target.suffix.lower() == ".html" else "public, max-age=300",
+            # MathHub is bundled into the deploy image and changes atomically
+            # with the host revision. Revalidate executable/style assets on
+            # every navigation so a redeploy cannot leave Safari/Cloudflare
+            # running an older UI against a newer API for five minutes.
+            "Cache-Control": (
+                "no-cache, must-revalidate"
+                if target.suffix.lower() in {".html", ".js", ".css", ".json"}
+                else "public, max-age=300"
+            ),
             **security,
         },
         "body": body,
@@ -922,6 +930,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                     "setup_stage": mathhub_runtime.get("setup_stage"),
                     "setup_step": mathhub_runtime.get("setup_step"),
                     "setup_steps": mathhub_runtime.get("setup_steps"),
+                    "setup_error": mathhub_runtime.get("setup_error"),
                     "lean_version": mathhub_runtime.get("lean_version"),
                     "mathlib_revision": mathhub_runtime.get("mathlib_revision"),
                     "snapshot": (
