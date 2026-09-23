@@ -5,6 +5,7 @@
   // verification, reliance, affectedness, validity, or trust from installation.
   const SOURCE_INSTALL = 'git clone https://github.com/Constanteer/testamur.git && cd testamur && python3 -m venv .venv && . .venv/bin/activate && python -m pip install -e .';
   const INSTALL_CHECK = 'python --version && python -m pip show testamur && command -v testamur && command -v testamur-gateway-mcp';
+  const MCP_SMOKE = 'printf \'%s\\n%s\\n\' \'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"testamur-smoke","version":"1"}}}\' \'{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\' | testamur-gateway-mcp';
 
   function enhance() {
     if (location.pathname !== '/integrations') return;
@@ -37,6 +38,14 @@
       <div class="integration-command">
         <div><span>Diagnose installation</span><code>${INSTALL_CHECK}</code></div>
         <button class="btn btn-secondary btn-compact" type="button" data-copy-check-command>Copy check</button>
+      </div>
+      <div class="integration-manual-step">
+        <strong>Executable exists, but the MCP host still cannot connect?</strong>
+        <span>Run a protocol-level smoke test outside Codex/Claude/OpenCode. A JSON-RPC initialize response means the Testamur MCP process can start and speak MCP; if this succeeds while the host still fails, debug the host command, environment, working directory, or stdio configuration next. This handshake only diagnoses transport/bootstrap — it does not verify any source or establish reliance.</span>
+      </div>
+      <div class="integration-command">
+        <div><span>Smoke-test MCP handshake</span><code>${MCP_SMOKE}</code></div>
+        <button class="btn btn-secondary btn-compact" type="button" data-copy-mcp-smoke>Copy smoke test</button>
       </div>`;
     prerequisite.append(block);
 
@@ -56,6 +65,7 @@
     };
     copy('[data-copy-install-command]', SOURCE_INSTALL);
     copy('[data-copy-check-command]', INSTALL_CHECK);
+    copy('[data-copy-mcp-smoke]', MCP_SMOKE);
   }
 
   addEventListener('DOMContentLoaded', enhance);
