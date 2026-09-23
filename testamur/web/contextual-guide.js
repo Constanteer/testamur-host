@@ -7,7 +7,7 @@
     ['source', 'Source', 'Identify the upstream object you are reviewing and inspect what was actually recorded.'],
     ['history', 'Revision', 'Choose the recorded revision whose evidence you want to inspect; a revision is not a verification result.'],
     ['compare', 'Compare', 'Read the mechanical delta before making a judgment; change alone does not imply invalidity.'],
-    ['impact', 'Impact', 'Follow explicit recorded reliance from this object to downstream work. Inspect the edge basis and recorded revision before deciding what the selected change means. An edge says reliance was recorded; it does not say the change affected, invalidated, or disproved that downstream work.'],
+    ['impact', 'Impact', 'Follow explicit recorded reliance from this object to downstream work. Inspect the edge basis and recorded revision before deciding what the selected change means. The basis explains why reliance was recorded, not whether this change affected it. An edge says reliance was recorded; it does not say the change affected, invalidated, or disproved that downstream work.'],
     ['revalidate', 'Revalidation', 'Record the scoped check or reconsideration that follows; recording evidence does not itself verify it.'],
   ];
 
