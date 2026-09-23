@@ -35,10 +35,21 @@ AUTO_INDEX_NAMESPACES=tuple(
     part.strip() for part in os.environ.get("MATHHUB_AUTO_INDEX_NAMESPACES","Nat").split(",") if part.strip()
 )
 LIBRARY_WARMUP_POLL_SECONDS=max(0.5,float(os.environ.get("MATHHUB_LIBRARY_WARMUP_POLL","2")))
+AUTO_STARTER_CLAIMS=os.environ.get("MATHHUB_AUTO_STARTER_CLAIMS","1").strip().lower() not in {"0","false","no","off"}
+STARTER_CLAIM_ROOTS=tuple(
+    part.strip() for part in os.environ.get(
+        "MATHHUB_STARTER_DECLARATIONS",
+        "Nat.add_comm,Nat.add_assoc,Nat.mul_comm,Nat.mul_assoc,List.append_assoc,Set.union_comm,Set.inter_comm",
+    ).split(",") if part.strip()
+)
+STARTER_CLAIM_MAX_DEPTH=max(0,min(2,int(os.environ.get("MATHHUB_STARTER_MAX_DEPTH","1"))))
+STARTER_CLAIM_MAX_CLAIMS=max(len(STARTER_CLAIM_ROOTS),min(240,int(os.environ.get("MATHHUB_STARTER_MAX_CLAIMS","96"))))
 _IMPORT_WORKER_STARTED=False
 _IMPORT_WORKER_LOCK=threading.Lock()
 _LIBRARY_WARMUP_STARTED=False
 _LIBRARY_WARMUP_LOCK=threading.Lock()
+_STARTER_BOOTSTRAP_STARTED=False
+_STARTER_BOOTSTRAP_LOCK=threading.Lock()
 install_classifier_cache(COVERAGE,dependency_import_module,import_tasks_module,core.runtime_status)
 INTERNAL_RE=re.compile(r"^(CLM|VER|PRF|BLD)-(\d+)$",re.I); PUBLICISH=r"(?:CLM|VER|PRF|BLD)-[A-Z0-9-]+"; TASKISH=r"IMT-[A-F0-9]{16}"
 P2K={"CLM":"claim","VER":"version","PRF":"proof","BLD":"build"}; K2P={v:k for k,v in P2K.items()}
@@ -276,6 +287,61 @@ def start_library_warmup()->bool:
     return True
 
 
+def _starter_task_matches(task:dict[str,Any])->bool:
+    return set(str(name) for name in (task.get("roots") or []))==set(STARTER_CLAIM_ROOTS)
+
+
+def ensure_starter_claim_task()->str|None:
+    """Queue a small deterministic set of real Mathlib Claims for an empty registry.
+
+    The starter set is only onboarding substrate. Every resulting Claim still
+    comes from the pinned Lean environment through the normal durable import
+    pipeline; no static/demo Claim is inserted and no AI classification occurs.
+    """
+    if not AUTO_STARTER_CLAIMS or not STARTER_CLAIM_ROOTS:
+        return None
+    if not core.runtime_status().get("ready"):
+        return None
+    current=CATALOG.page(limit=1,before_internal_id=None,query="",status="all")
+    if current.get("claims"):
+        return None
+    for task in (TASKS.list(limit=100) or {}).get("tasks") or []:
+        if _starter_task_matches(task):
+            return str(task.get("task_id") or "") or None
+    task=TASKS.create({
+        "declaration_names":list(STARTER_CLAIM_ROOTS),
+        "imports":["Mathlib"],
+        "max_depth":STARTER_CLAIM_MAX_DEPTH,
+        "max_claims":STARTER_CLAIM_MAX_CLAIMS,
+    })
+    return str(task.get("task_id") or "") or None
+
+
+def _starter_claim_bootstrap_loop()->None:
+    while True:
+        try:
+            if core.runtime_status().get("ready"):
+                ensure_starter_claim_task()
+                return
+        except (ValueError,RuntimeError,sqlite3.Error):
+            # Runtime/setup and durable-task failures stay visible through their
+            # own status surfaces; retrying on the next poll is safe/idempotent.
+            pass
+        time.sleep(LIBRARY_WARMUP_POLL_SECONDS)
+
+
+def start_starter_claim_bootstrap()->bool:
+    global _STARTER_BOOTSTRAP_STARTED
+    if not AUTO_STARTER_CLAIMS or not STARTER_CLAIM_ROOTS:
+        return False
+    with _STARTER_BOOTSTRAP_LOCK:
+        if _STARTER_BOOTSTRAP_STARTED:
+            return False
+        _STARTER_BOOTSTRAP_STARTED=True
+    threading.Thread(target=_starter_claim_bootstrap_loop,name="mathhub-starter-claims",daemon=True).start()
+    return True
+
+
 class Handler(core.Handler):
     def read_source_ingest_json(self)->dict[str,Any]:
         try:size=int(self.headers.get("Content-Length","0"))
@@ -353,4 +419,5 @@ if __name__=="__main__":
     core.request_runtime_setup()
     start_import_worker()
     start_library_warmup()
+    start_starter_claim_bootstrap()
     print(f"MathHub: http://{core.HOST}:{core.PORT}"); print(core.runtime_status()["message"]); print("Ontology: Claim / Proof / ProofDependency."); ThreadingHTTPServer((core.HOST,core.PORT),Handler).serve_forever()
