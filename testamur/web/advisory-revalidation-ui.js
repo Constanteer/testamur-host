@@ -3,6 +3,7 @@
 
   const nativeFetch = window.fetch.bind(window);
   let latest = null;
+  let latestProjectContext = null;
   let renderQueued = false;
 
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -14,6 +15,15 @@
       const value = JSON.parse(sessionStorage.getItem('testamur.reviewContext') || 'null');
       return value?.source === 'supply-chain-compare' && value?.dependency ? value : null;
     } catch (_) { return null; }
+  };
+
+  const projectContext = url => {
+    const context = {};
+    for (const key of ['project', 'project_id']) {
+      const value = url.searchParams.get(key);
+      if (value) context[key] = value;
+    }
+    return context;
   };
 
   const contextMatches = (item, context) => {
@@ -35,6 +45,7 @@
       if (url.pathname === '/v1/project' && response.ok) {
         const body = await response.clone().json();
         latest = body?.supply_chain?.advisory_revalidation || null;
+        latestProjectContext = projectContext(url);
         queueRender();
       }
     } catch (_) {}
@@ -46,6 +57,7 @@
     const reason = item.reason || item.revalidation_reason || 'Recorded project state indicates this assessment should be reviewed again.';
     const matched = contextMatches(item, context);
     const params = new URLSearchParams({ tab: 'revalidate' });
+    for (const [key, value] of Object.entries(latestProjectContext || {})) params.set(key, value);
     if (matched) {
       params.set('dependency', context.dependency);
       if (context.component_id) params.set('component', context.component_id);
