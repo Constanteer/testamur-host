@@ -4,6 +4,7 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 import shutil
 import threading
 import urllib.error
@@ -129,6 +130,24 @@ def _mathhub_static(relative_path: str) -> dict[str, Any]:
         body = target.read_bytes()
     except OSError:
         return _error("asset_unavailable", "MathHub asset is unavailable", status=503)
+    if target.name == "index.html":
+        # Older deployments cached MathHub JS/CSS for five minutes. Revalidation
+        # headers on a new deployment cannot invalidate a still-fresh browser
+        # entry, so version local assets by the recorded MathHub snapshot.
+        snapshot_path = Path(__file__).resolve().parents[2] / "MATHHUB_SNAPSHOT"
+        try:
+            snapshot = snapshot_path.read_text(encoding="utf-8")
+        except OSError:
+            snapshot = ""
+        match = re.search(r"\\b[0-9a-f]{40}\\b", snapshot, re.IGNORECASE)
+        cache_token = match.group(0)[:12] if match else "current"
+        html = body.decode("utf-8")
+        html = re.sub(
+            r'((?:src|href)="\\./[^"]+\\.(?:js|css))"',
+            lambda found: f'{found.group(1)}?v={cache_token}"',
+            html,
+        )
+        body = html.encode("utf-8")
     content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     if content_type.startswith("text/") or target.suffix.lower() in {".js", ".json", ".svg"}:
         content_type += "; charset=utf-8"
