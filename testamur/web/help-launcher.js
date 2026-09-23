@@ -15,13 +15,13 @@
     const path = location.pathname;
     const query = new URLSearchParams(location.search);
     if (/^\/projects\/[^/]+\/?$/.test(path) && query.get('tab') === 'supply-chain') {
-      return ['/learn', 'Read Compare → Impact', 'Interpret scan changes without turning them into verdicts'];
+      return ['/docs#impact', 'Impact / affectedness docs', 'Inspect recorded reliance before deciding what a scan change means'];
     }
     if (/^\/sources\/[^/]+\/?$/.test(path)) {
-      return ['/learn', 'Read Source → Revision', 'Separate source identity from recorded observations'];
+      return ['/docs#source-revision', 'Source & Revision docs', 'Separate source identity from recorded observations'];
     }
     if (/^\/revisions\/[^/]+\/?$/.test(path)) {
-      return ['/learn', 'Read Revision → Impact', 'Trace consequences before recording revalidation'];
+      return ['/docs#impact', 'Impact / affectedness docs', 'Trace explicit recorded reliance before scoped revalidation'];
     }
     if (path === '/integrations') {
       return ['/quickstart', 'Run the 5-minute quickstart', 'Use Codex / MCP inside the same evidence model'];
