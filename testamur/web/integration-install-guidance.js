@@ -4,6 +4,7 @@
   // Presentation-only installation guidance. This surface does not infer
   // verification, reliance, affectedness, validity, or trust from installation.
   const SOURCE_INSTALL = 'git clone https://github.com/Constanteer/testamur.git && cd testamur && python3 -m venv .venv && . .venv/bin/activate && python -m pip install -e .';
+  const INSTALL_CHECK = 'python --version && python -m pip show testamur && command -v testamur && command -v testamur-gateway-mcp';
 
   function enhance() {
     if (location.pathname !== '/integrations') return;
@@ -28,21 +29,33 @@
       <div class="integration-manual-step">
         <strong>Already have a checkout?</strong>
         <span>Activate its environment and run <code>python -m pip install -e .</code>. Do not add Codex/MCP configuration until <code>command -v testamur</code> and <code>command -v testamur-gateway-mcp</code> both succeed.</span>
+      </div>
+      <div class="integration-manual-step">
+        <strong>Host says the command is missing?</strong>
+        <span>Run this in the same shell environment the host will inherit. It shows the Python version, installed Testamur package, and the exact executable paths. A missing line is an installation/PATH problem to fix before debugging MCP configuration.</span>
+      </div>
+      <div class="integration-command">
+        <div><span>Diagnose installation</span><code>${INSTALL_CHECK}</code></div>
+        <button class="btn btn-secondary btn-compact" type="button" data-copy-check-command>Copy check</button>
       </div>`;
     prerequisite.append(block);
 
-    block.querySelector('[data-copy-install-command]')?.addEventListener('click', async event => {
-      const button = event.currentTarget;
-      const previous = button.textContent;
-      try {
-        await navigator.clipboard.writeText(SOURCE_INSTALL);
-        button.textContent = 'Copied';
-      } catch (_) {
-        button.title = SOURCE_INSTALL;
-        button.textContent = 'Copy failed';
-      }
-      window.setTimeout(() => { button.textContent = previous; }, 1400);
-    });
+    const copy = (selector, text) => {
+      block.querySelector(selector)?.addEventListener('click', async event => {
+        const button = event.currentTarget;
+        const previous = button.textContent;
+        try {
+          await navigator.clipboard.writeText(text);
+          button.textContent = 'Copied';
+        } catch (_) {
+          button.title = text;
+          button.textContent = 'Copy failed';
+        }
+        window.setTimeout(() => { button.textContent = previous; }, 1400);
+      });
+    };
+    copy('[data-copy-install-command]', SOURCE_INSTALL);
+    copy('[data-copy-check-command]', INSTALL_CHECK);
   }
 
   addEventListener('DOMContentLoaded', enhance);
