@@ -39,6 +39,12 @@
     return `${base}?tab=${stage}`;
   }
 
+  function projectReturnHref() {
+    const params = new URLSearchParams(location.search);
+    const project = params.get('project') || params.get('project_id');
+    return project ? `/projects/${encodeURIComponent(project)}` : '/projects';
+  }
+
   function render() {
     const stage = currentStage();
     const objectRef = ref();
@@ -65,7 +71,7 @@
       <div class="contextual-guide-boundary">
         <span>recorded ≠ verified</span><span>fetched ≠ relied</span><span>changed ≠ invalid</span><span>stale ≠ false</span><span>EXPOSED_TO_MODEL ≠ RELIED</span>
       </div>
-      ${next ? `<div class="contextual-guide-next"><span>Next: ${esc(next[1])}</span><a data-nav class="btn btn-secondary" href="${esc(href(next[0], objectRef))}">${esc(next[1])} →</a></div>` : '<div class="contextual-guide-next"><span>Review loop complete when the scoped revalidation evidence is recorded. The record is evidence, not a generic trust verdict.</span><a data-nav href="/projects">Back to projects →</a></div>'}`;
+      ${next ? `<div class="contextual-guide-next"><span>Next: ${esc(next[1])}</span><a data-nav class="btn btn-secondary" href="${esc(href(next[0], objectRef))}">${esc(next[1])} →</a></div>` : `<div class="contextual-guide-next"><span>Scoped revalidation evidence is now recorded. Return to the project to continue reviewing other bindings or advisory candidates; this completion is not a project-wide trust verdict.</span><a data-nav href="${esc(projectReturnHref())}">Back to project →</a></div>`}`;
     main.prepend(guide);
   }
 
