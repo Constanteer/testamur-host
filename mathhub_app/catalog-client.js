@@ -10,6 +10,8 @@ const catalogState = {
   pageSize: 40,
   requestSerial: 0,
   searchTimer: null,
+  emptyPollTimer: null,
+  emptyPollAttempts: 0,
 };
 
 function catalogUrl({cursor = '', query = state.search, status = state.filter} = {}) {
@@ -63,6 +65,16 @@ async function loadCatalogPage({reset = false, cursor = ''} = {}) {
     // Static mode / lower-level server: leave the existing prototype untouched.
   } finally {
     if (serial === catalogState.requestSerial) catalogState.loading = false;
+    if (catalogState.emptyPollTimer) {
+      clearTimeout(catalogState.emptyPollTimer);
+      catalogState.emptyPollTimer = null;
+    }
+    if (catalogState.live && claims.length === 0 && catalogState.emptyPollAttempts < 60) {
+      catalogState.emptyPollAttempts += 1;
+      catalogState.emptyPollTimer = setTimeout(() => loadCatalogPage({reset: true}), 3000);
+    } else if (claims.length > 0) {
+      catalogState.emptyPollAttempts = 0;
+    }
     render();
   }
 }
