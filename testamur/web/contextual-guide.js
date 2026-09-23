@@ -33,14 +33,26 @@
     return '';
   }
 
+  function projectContext() {
+    const current = new URLSearchParams(location.search);
+    const context = new URLSearchParams();
+    for (const key of ['project', 'project_id']) {
+      const value = current.get(key);
+      if (value) context.set(key, value);
+    }
+    return context;
+  }
+
   function href(stage, objectRef) {
     const base = `/object/${encodeURIComponent(objectRef)}`;
-    if (stage === 'source') return base;
-    return `${base}?tab=${stage}`;
+    const query = projectContext();
+    if (stage !== 'source') query.set('tab', stage);
+    const suffix = query.toString();
+    return suffix ? `${base}?${suffix}` : base;
   }
 
   function projectReturnHref() {
-    const params = new URLSearchParams(location.search);
+    const params = projectContext();
     const project = params.get('project') || params.get('project_id');
     return project ? `/projects/${encodeURIComponent(project)}` : '/projects';
   }
