@@ -9,7 +9,7 @@ from pathlib import Path
 
 from apps.web.hosted_app import _core_web_cache_token, _versioned_web_response, build_hosted_server, dispatch_account_write
 from apps.web.identity import AccountError, AccountStore
-from apps.web.mail import ResendMailer
+from apps.web.mail import MailDeliveryError, ResendMailer
 
 
 class FakeMailer:
@@ -198,6 +198,31 @@ class EmailVerificationTests(unittest.TestCase):
         )
         self.assertEqual(script["headers"]["Cache-Control"], "no-cache, must-revalidate")
 
+    def test_mail_delivery_failure_records_safe_health_diagnostic(self) -> None:
+        server = build_hosted_server(
+            data_dir=Path(self.tempdir.name) / 'mail-diagnostic',
+            host='127.0.0.1',
+            port=0,
+            mailer=ResendMailer(
+                api_key='re_test',
+                sender='Testamur <onboarding@resend.dev>',
+                public_origin='https://testamur.org',
+            ),
+            monitor_target_providers={},
+            monitor_target_provider_specs={},
+            monitor_scheduler_enabled=False,
+        )
+        try:
+            server.record_mail_delivery(
+                False,
+                MailDeliveryError('Resend rejected verification email (403): domain is not verified'),
+            )
+            self.assertFalse(server.mail_last_attempt_ok)
+            self.assertEqual(server.mail_last_error_code, 'provider_rejected_403')
+            self.assertIn('sending domain verification', server.mail_last_error_hint or '')
+            self.assertIn('resend.dev testing domain', server.mail_last_error_hint or '')
+        finally:
+            server.server_close()
     def test_bad_mail_configuration_does_not_crash_host_startup(self) -> None:
         with patch.dict(
             os.environ,
