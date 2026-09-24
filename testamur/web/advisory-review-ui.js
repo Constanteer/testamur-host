@@ -280,5 +280,25 @@
     bindAssessmentForms(surface);
   }
 
-  new MutationObserver(queueRender).observe(document.documentElement, { childList: true, subtree: true });
+  const advisorySurfaceSelector = '[data-advisory-review-state]';
+
+  function mutationIsAdvisorySelfMutation(mutation) {
+    const target = mutation.target;
+    if (target instanceof Element && target.closest(advisorySurfaceSelector)) {
+      return true;
+    }
+
+    const changedNodes = [...mutation.addedNodes, ...mutation.removedNodes];
+    return changedNodes.length > 0 && changedNodes.every(node =>
+      node instanceof Element && (
+        node.matches(advisorySurfaceSelector) ||
+        Boolean(node.closest(advisorySurfaceSelector))
+      )
+    );
+  }
+
+  new MutationObserver(mutations => {
+    if (mutations.length && mutations.every(mutationIsAdvisorySelfMutation)) return;
+    queueRender();
+  }).observe(document.documentElement, { childList: true, subtree: true });
 })();
