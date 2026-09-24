@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from apps.web.hosted_app import build_hosted_server, dispatch_account_write
+from apps.web.hosted_app import _core_web_cache_token, _versioned_web_response, build_hosted_server, dispatch_account_write
 from apps.web.identity import AccountError, AccountStore
 from apps.web.mail import ResendMailer
 
@@ -168,6 +168,35 @@ class EmailVerificationTests(unittest.TestCase):
         self.assertIsNotNone(mailer)
         assert mailer is not None
         self.assertEqual(mailer.api_key, "re_test")
+
+    def test_hosted_web_assets_are_snapshot_versioned_and_revalidated(self) -> None:
+        token = _core_web_cache_token()
+        response = _versioned_web_response(
+            {
+                "status": 200,
+                "headers": {
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Cache-Control": "no-cache",
+                },
+                "body": b'<link rel="stylesheet" href="/styles.css" /><script defer src="/app.js"></script>',
+            }
+        )
+        html = response["body"].decode("utf-8")
+        self.assertIn(f'href="/styles.css?v={token}"', html)
+        self.assertIn(f'src="/app.js?v={token}"', html)
+        self.assertEqual(response["headers"]["Cache-Control"], "no-cache, must-revalidate")
+
+        script = _versioned_web_response(
+            {
+                "status": 200,
+                "headers": {
+                    "Content-Type": "text/javascript; charset=utf-8",
+                    "Cache-Control": "public, max-age=300",
+                },
+                "body": b"console.log('new deploy')",
+            }
+        )
+        self.assertEqual(script["headers"]["Cache-Control"], "no-cache, must-revalidate")
 
     def test_bad_mail_configuration_does_not_crash_host_startup(self) -> None:
         with patch.dict(
