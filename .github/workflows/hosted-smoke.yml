@@ -11,12 +11,8 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: Constanteer/testamur
-          path: canonical-testamur
       - name: Guard canonical shared Web assets
-        run: python scripts/check_canonical_web_sync.py canonical-testamur
+        run: python scripts/check_canonical_web_sync.py
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
