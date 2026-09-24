@@ -614,6 +614,71 @@ async function signUpPage() {
   document.querySelector('[data-signup]')?.addEventListener('submit', submitSignUp);
 }
 
+async function verifyEmailPendingPage() {
+  if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Verify email');
+  if (accountState.authenticated) return navigate(safeNextPath(params().get('next')));
+  const identifier = params().get('identifier') || '';
+  const sent = params().get('sent') !== '0';
+  const next = safeNextPath(params().get('next'));
+  shell(`<div class="account-page"><section class="account-card">
+    <div class="account-mark">✉</div>
+    <h1>Check your email</h1>
+    <p>${sent
+      ? `We sent a verification link${identifier ? ` to <strong>${esc(identifier)}</strong>` : ''}. Open it to activate your account.`
+      : 'Your account was created, but the verification email could not be delivered. Request a new link below.'}</p>
+    <div class="flash ${sent ? 'flash-success' : 'flash-danger'}">
+      <strong>${sent ? 'Email verification required' : 'Verification email not delivered'}</strong>
+      <span>You cannot sign in until this email address is verified. Links expire after 30 minutes.</span>
+    </div>
+    <form class="account-form" data-verification-resend>
+      <label><span>Email or username</span><input name="identifier" autocomplete="username" value="${esc(identifier)}" required /></label>
+      <div data-account-result></div>
+      <button class="btn btn-secondary account-submit" type="submit">Send a new verification link</button>
+    </form>
+    <div class="account-switch"><a data-nav href="/signin?next=${encodeURIComponent(next)}">Back to sign in</a></div>
+  </section></div>`);
+  document.querySelector('[data-verification-resend]')?.addEventListener('submit', submitVerificationResend);
+}
+
+async function verifyEmailPage() {
+  if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Verify email');
+  const token = params().get('token') || '';
+  if (!token) {
+    shell(`<div class="account-page"><section class="account-card">
+      <div class="account-mark">!</div>
+      <h1>Verification link is incomplete</h1>
+      <p>This email verification link does not contain a token.</p>
+      <a data-nav class="btn btn-secondary" href="/signin">Back to sign in</a>
+    </section></div>`);
+    return;
+  }
+  shell(`<div class="account-page"><section class="account-card">
+    <div class="account-mark">T</div>
+    <h1>Verifying your email…</h1>
+    ${loading('Checking verification link…')}
+  </section></div>`);
+  try {
+    await apiWrite('/v1/account/email-verification/verify', { token });
+    await loadAccountState();
+    cache.dashboard = null;
+    shell(`<div class="account-page"><section class="account-card">
+      <div class="account-mark">✓</div>
+      <h1>Email verified</h1>
+      <p>Your Testamur account is active.</p>
+      <button class="btn btn-primary account-submit" type="button" data-verification-continue>Continue to Testamur</button>
+    </section></div>`);
+    document.querySelector('[data-verification-continue]')?.addEventListener('click', () => navigate('/'));
+  } catch (error) {
+    shell(`<div class="account-page"><section class="account-card">
+      <div class="account-mark">!</div>
+      <h1>Could not verify this email</h1>
+      <div data-account-result></div>
+      <a data-nav class="btn btn-secondary" href="/signin">Back to sign in</a>
+    </section></div>`);
+    accountError(document.querySelector('[data-account-result]'), error);
+  }
+}
+
 function settingsNav(selected) {
   const link = (href, label, key) => `<a data-nav class="${selected === key ? 'active' : ''}" href="${href}">${label}</a>`;
   return `<aside class="settings-nav">
@@ -1032,6 +1097,15 @@ async function submitSignIn(event) {
     const next = form.dataset.next;
     navigate(safeNextPath(next));
   } catch (error) {
+    if (error.code === 'email_verification_required') {
+      const query = new URLSearchParams({
+        identifier: form.elements.identifier.value.trim(),
+        sent: '1',
+        next: safeNextPath(form.dataset.next),
+      });
+      navigate(`/verify-email-pending?${query.toString()}`);
+      return;
+    }
     accountError(result, error);
     button.disabled = false;
   }
@@ -1042,21 +1116,49 @@ async function submitSignUp(event) {
   const form = event.currentTarget;
   const result = form.querySelector('[data-account-result]');
   const button = form.querySelector('button[type="submit"]');
+  const email = form.elements.email.value.trim();
   button.disabled = true;
   result.innerHTML = loading('Creating account…');
   try {
     const response = await apiWrite('/v1/account/signup', {
       username: form.elements.username.value.trim(),
-      email: form.elements.email.value.trim(),
+      email,
       display_name: form.elements.display_name.value.trim() || null,
       password: form.elements.password.value,
     });
-    await loadAccountState();
     cache.dashboard = null;
-    const next = form.dataset.next;
-    navigate(safeNextPath(next));
+    if (response.verification_required) {
+      const next = safeNextPath(form.dataset.next);
+      const query = new URLSearchParams({
+        identifier: email,
+        sent: response.email_sent ? '1' : '0',
+        next,
+      });
+      navigate(`/verify-email-pending?${query.toString()}`);
+      return;
+    }
+    await loadAccountState();
+    navigate(safeNextPath(form.dataset.next));
   } catch (error) {
     accountError(result, error);
+    button.disabled = false;
+  }
+}
+
+async function submitVerificationResend(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const result = form.querySelector('[data-account-result]');
+  const button = form.querySelector('button[type="submit"]');
+  const identifier = form.elements.identifier.value.trim();
+  button.disabled = true;
+  result.innerHTML = loading('Requesting a new link…');
+  try {
+    await apiWrite('/v1/account/email-verification/resend', { identifier });
+    result.innerHTML = '<div class="flash flash-success"><strong>Verification link requested</strong><span>If this account still needs verification, a fresh link has been sent.</span></div>';
+  } catch (error) {
+    accountError(result, error);
+  } finally {
     button.disabled = false;
   }
 }
@@ -2055,8 +2157,12 @@ async function render() {
   const path = location.pathname;
   if (path === '/signin') return signInPage();
   if (path === '/signup') return signUpPage();
+  if (path === '/verify-email') return verifyEmailPage();
+  if (path === '/verify-email-pending') return verifyEmailPendingPage();
 
   const publicHostedRoute =
+    path === '/verify-email' ||
+    path === '/verify-email-pending' ||
     path === '/learn' ||
     path === '/docs' ||
     path === '/integrations' ||
