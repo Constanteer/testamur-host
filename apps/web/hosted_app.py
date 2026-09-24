@@ -139,11 +139,11 @@ def _mathhub_static(relative_path: str) -> dict[str, Any]:
             snapshot = snapshot_path.read_text(encoding="utf-8")
         except OSError:
             snapshot = ""
-        match = re.search(r"\\b[0-9a-f]{40}\\b", snapshot, re.IGNORECASE)
+        match = re.search(r"\b[0-9a-f]{40}\b", snapshot, re.IGNORECASE)
         cache_token = match.group(0)[:12] if match else "current"
         html = body.decode("utf-8")
         html = re.sub(
-            r'((?:src|href)="\\./[^"]+\\.(?:js|css))"',
+            r'((?:src|href)="\./[^"]+\.(?:js|css))"',
             lambda found: f'{found.group(1)}?v={cache_token}"',
             html,
         )
