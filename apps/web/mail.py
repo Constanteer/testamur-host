@@ -7,7 +7,7 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 
 class MailDeliveryError(RuntimeError):
@@ -45,8 +45,15 @@ class ResendMailer:
             raise RuntimeError("TESTAMUR_MAIL_FROM must be configured when TESTAMUR_MAIL_BACKEND=resend")
         if not origin:
             raise RuntimeError("TESTAMUR_PUBLIC_ORIGIN must be configured when TESTAMUR_MAIL_BACKEND=resend")
-        if not origin.startswith(("https://", "http://")):
+        parsed = urlsplit(origin)
+        if parsed.scheme not in {"https", "http"} or not parsed.netloc:
             raise RuntimeError("TESTAMUR_PUBLIC_ORIGIN must be an absolute http(s) origin")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
+            raise RuntimeError("TESTAMUR_PUBLIC_ORIGIN must contain only scheme and authority")
+        hostname = (parsed.hostname or "").casefold()
+        local_http = parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1", "::1"}
+        if parsed.scheme != "https" and not local_http:
+            raise RuntimeError("TESTAMUR_PUBLIC_ORIGIN must use https outside local development")
         return cls(api_key=api_key, sender=sender, public_origin=origin)
 
     def send_verification(self, *, user: dict[str, object], token: str) -> str:
