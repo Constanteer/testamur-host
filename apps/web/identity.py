@@ -176,14 +176,12 @@ class AccountStore:
                 """
             )
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()}
-            migrated_legacy = False
-            if "email_verified_at" not in columns:
+            had_email_verified_at = "email_verified_at" in columns
+            if not had_email_verified_at:
                 connection.execute("ALTER TABLE users ADD COLUMN email_verified_at INTEGER")
-                migrated_legacy = True
             if "email_verification_source" not in columns:
                 connection.execute("ALTER TABLE users ADD COLUMN email_verification_source TEXT")
-                migrated_legacy = True
-            if migrated_legacy:
+            if not had_email_verified_at:
                 connection.execute(
                     """
                     UPDATE users
