@@ -1,10 +1,10 @@
 {
-  "source": "Constanteer/testamur@c860aedb7cd9738e85f32e87d85d8e0bf9ff4ba2",
+  "source": "Constanteer/testamur@75678ca62fa3bd77e037081fac0f3bf978815db0",
   "algorithm": "git-blob-sha1",
   "files": {
     "testamur/web/index.html": "7086b6582d5d5d20d95160b69442f9ffe63f9b8b",
-    "testamur/web/app.js": "b9f1074301a65948d02cfabdd7b92fb83995d219",
-    "testamur/web/styles.css": "8129f6123b0dd83fdfc2dd18895daeec345c6909",
+    "testamur/web/app.js": "1ba3821eadc66b28e57131499c93741faa9584e3",
+    "testamur/web/styles.css": "15c29a2e2581da5b935d0bf332b43648a2aa94ee",
     "testamur/web/contextual-guide.js": "a09d13bc7311d599670530a6cec3d6b266ac0c36",
     "testamur/web/contextual-guide.css": "8f846347b545fec95b74506a77e0ba1d99fe467c",
     "testamur/web/demo-handoff.js": "e9137547047e2ecc1037d5a1cf6ce3b19d96c924",
@@ -19,6 +19,8 @@
     "testamur/web/first-run-journey.js": "891d3859bda76b081b793a70fd8d84dc1100f80e",
     "testamur/web/first-run-journey.css": "71a56cf6c7d9a72f5f936c0c87b37e387848a786",
     "testamur/web/help-launcher.js": "9ed0dd0556a9a9a79a2194c123da44bed553dfe0",
-    "testamur/web/help-launcher.css": "9a43c4c12605ce8c7a83ff54d3baeba2305af16d"
+    "testamur/web/help-launcher.css": "9a43c4c12605ce8c7a83ff54d3baeba2305af16d",
+    "testamur/web/first-run-resume.js": "0b8a509e8c6f1554cc08fe20857cfb238355a3e5",
+    "testamur/web/first-run-resume.css": "ad1e4b43da5c451ce9a16e4cac25ec0158cf668e"
   }
 }
