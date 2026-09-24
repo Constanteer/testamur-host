@@ -59,6 +59,13 @@
     return suffix ? `${base}?${suffix}` : base;
   }
 
+  function objectHref(objectRef) {
+    const query = reviewScopeContext();
+    const suffix = query.toString();
+    const base = `/object/${encodeURIComponent(objectRef)}`;
+    return suffix ? `${base}?${suffix}` : base;
+  }
+
   function docsHref(stage) {
     if (stage === 'source' || stage === 'history') return '/docs#source-revision';
     if (stage === 'compare') return '/docs#change';
@@ -90,6 +97,50 @@
     return `Reviewing ${objectRef}${projectPart}${subjectPart}${pairPart}`;
   }
 
+  function firstSupplied(item, keys) {
+    for (const key of keys) {
+      const value = item?.[key];
+      if (value !== undefined && value !== null && String(value).trim()) return String(value);
+    }
+    return '';
+  }
+
+  async function enhanceImpactRows(objectRef) {
+    if (currentStage() !== 'impact') return;
+    const list = document.querySelector('.impact-list');
+    if (!list || list.dataset.provenanceEnhanced === 'true' || list.dataset.provenanceLoading === 'true') return;
+    list.dataset.provenanceLoading = 'true';
+    try {
+      const response = await fetch(`/v1/impact?ref=${encodeURIComponent(objectRef)}`, { headers: { Accept: 'application/json' } });
+      const value = await response.json();
+      if (!response.ok || value.ok === false) return;
+      const items = value.items || value.affected || value.impacts || value.results;
+      if (!Array.isArray(items)) return;
+      const rows = [...list.querySelectorAll('.impact-row')];
+      rows.forEach((row, index) => {
+        const item = items[index];
+        if (!item || typeof item !== 'object') return;
+        const basis = firstSupplied(item, ['basis_ref', 'basis_revision_ref', 'basis_revision', 'recorded_basis_ref', 'revision_ref']);
+        const relation = firstSupplied(item, ['relation_id', 'relation_ref', 'relation_kind', 'edge_id', 'edge_kind']);
+        const recordedAt = firstSupplied(item, ['recorded_at', 'relation_recorded_at', 'created_at']);
+        const detail = document.createElement('div');
+        detail.className = 'impact-provenance';
+        detail.innerHTML = `
+          <span><strong>Recorded basis</strong> ${basis ? `<code>${esc(basis)}</code>` : '<em>Not supplied by this provider</em>'}</span>
+          ${relation ? `<span><strong>Relation</strong> <code>${esc(relation)}</code></span>` : ''}
+          ${recordedAt ? `<span><strong>Recorded at</strong> ${esc(recordedAt)}</span>` : ''}
+          <small>Provenance explains why reliance was recorded; it does not say this change affected or invalidated the downstream work.</small>
+          ${basis ? `<a data-nav href="${esc(objectHref(basis))}">Inspect basis →</a>` : ''}`;
+        row.append(detail);
+      });
+      list.dataset.provenanceEnhanced = 'true';
+    } catch (_) {
+      // The canonical Impact panel remains usable if provenance enhancement fails.
+    } finally {
+      delete list.dataset.provenanceLoading;
+    }
+  }
+
   function render() {
     const stage = currentStage();
     const objectRef = ref();
@@ -118,6 +169,7 @@
       </div>
       ${next ? `<div class="contextual-guide-next"><span>Next: ${esc(next[1])}</span><a data-nav class="btn btn-secondary" href="${esc(href(next[0], objectRef))}">${esc(next[1])} →</a></div>` : `<div class="contextual-guide-next"><span>Scoped revalidation evidence is now recorded. Return to the project to continue reviewing other bindings or advisory candidates; this completion is not a project-wide trust verdict.</span><a data-nav href="${esc(projectReturnHref())}">Back to project →</a></div>`}`;
     main.prepend(guide);
+    enhanceImpactRows(objectRef);
   }
 
   function isGuideNode(node) {
