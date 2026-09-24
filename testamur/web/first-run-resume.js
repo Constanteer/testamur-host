@@ -5,6 +5,7 @@
   // workspace state exposed by the existing onboarding checklist; this layer
   // never infers verification, reliance, affectedness, validity, or truth.
   const STORAGE_KEY = 'testamur.first-run-progress.v1';
+  const LAST_OBJECT_KEY = 'testamur.first-run-last-object.v1';
   const steps = [
     ['project', 'Create a project', '/', 'Define the workspace boundary'],
     ['monitor', 'Add a monitor', '/', 'Choose what Testamur records'],
@@ -22,6 +23,28 @@
   function writeProgress(progress) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(progress)); }
     catch (_) { /* private/locked storage must not break navigation */ }
+  }
+
+  function rememberObject() {
+    if (!location.pathname.startsWith('/object/')) return;
+    try { localStorage.setItem(LAST_OBJECT_KEY, location.pathname); }
+    catch (_) { /* navigation still works through the example fallback */ }
+  }
+
+  function lastObjectPath() {
+    try {
+      const value = localStorage.getItem(LAST_OBJECT_KEY) || '';
+      return value.startsWith('/object/') ? value : '';
+    } catch (_) { return ''; }
+  }
+
+  function continuationHref(step) {
+    const [key, , fallback] = step;
+    if (!['compare', 'impact', 'revalidation'].includes(key)) return fallback;
+    const objectPath = lastObjectPath();
+    if (!objectPath) return fallback;
+    const tab = key === 'revalidation' ? 'revalidate' : key;
+    return `${objectPath}?tab=${tab}`;
   }
 
   function syncRecordedState(progress) {
@@ -53,11 +76,14 @@
     document.querySelector('[data-first-run-resume]')?.remove();
     if (location.pathname === '/signin' || location.pathname === '/signup') return;
 
+    rememberObject();
     const progress = markVisited(syncRecordedState(readProgress()));
     const completed = steps.filter(([key]) => progress[key]).length;
     if (completed === steps.length) return;
     const next = steps.find(([key]) => !progress[key]);
     if (!next) return;
+    const nextHref = continuationHref(next);
+    const usingRealObject = nextHref.startsWith('/object/');
 
     const panel = document.createElement('aside');
     panel.className = 'first-run-resume';
@@ -69,7 +95,7 @@
         <strong>Next: ${next[1]}</strong>
         <small>${next[3]}</small>
       </div>
-      <a data-nav href="${next[2]}">Continue setup →</a>
+      <a data-nav href="${nextHref}">${usingRealObject ? 'Continue with your object' : 'Continue setup'} →</a>
       <a data-nav class="first-run-resume-learn" href="/learn">Why these steps?</a>`;
     document.body.append(panel);
     window.bindNavigation?.();
