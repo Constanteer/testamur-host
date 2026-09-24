@@ -6,7 +6,9 @@ import mimetypes
 import os
 import re
 import shutil
+import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from http import HTTPStatus
@@ -338,6 +340,7 @@ def dispatch_account_write(
     delete_workspace: Callable[[str], None] | None = None,
     delete_org_workspace: Callable[[str], None] | None = None,
     mailer: ResendMailer | None = None,
+    mail_delivery_reporter: Callable[[bool, Exception | None], None] | None = None,
 ) -> dict[str, Any]:
     path = urlsplit(target).path.rstrip("/") or "/"
     token = _session_token(cookie_header)
@@ -370,8 +373,12 @@ def dispatch_account_write(
             try:
                 mailer.send_verification(user=user, token=verification_token)
                 store.confirm_email_verification_delivery(token=verification_token)
-            except MailDeliveryError:
+                if mail_delivery_reporter is not None:
+                    mail_delivery_reporter(True, None)
+            except MailDeliveryError as exc:
                 store.reject_email_verification_delivery(token=verification_token)
+                if mail_delivery_reporter is not None:
+                    mail_delivery_reporter(False, exc)
                 email_sent = False
             return _json(
                 {
@@ -429,8 +436,12 @@ def dispatch_account_write(
                 try:
                     mailer.send_verification(user=pending_user, token=verification_token)
                     store.confirm_email_verification_delivery(token=verification_token)
-                except MailDeliveryError:
+                    if mail_delivery_reporter is not None:
+                        mail_delivery_reporter(True, None)
+                except MailDeliveryError as exc:
                     store.reject_email_verification_delivery(token=verification_token)
+                    if mail_delivery_reporter is not None:
+                        mail_delivery_reporter(False, exc)
             return _json(
                 {
                     "ok": True,
@@ -757,6 +768,10 @@ class HostedTestamurServer(ThreadingHTTPServer):
         self.secure_cookie = secure_cookie
         self.mailer = mailer
         self.mail_config_error = mail_config_error
+        self.mail_last_attempt_at: int | None = None
+        self.mail_last_attempt_ok: bool | None = None
+        self.mail_last_error_code: str | None = None
+        self.mail_last_error_hint: str | None = None
         self.monitor_target_providers = dict(monitor_target_providers or {})
         self.monitor_target_provider_specs = {
             str(name): dict(spec)
@@ -771,6 +786,32 @@ class HostedTestamurServer(ThreadingHTTPServer):
         if monitor_scheduler_enabled:
             self.monitor_scheduler.start()
 
+    def record_mail_delivery(self, ok: bool, error: Exception | None) -> None:
+        self.mail_last_attempt_at = int(time.time())
+        self.mail_last_attempt_ok = bool(ok)
+        if ok:
+            self.mail_last_error_code = None
+            self.mail_last_error_hint = None
+            return
+        message = str(error or 'mail delivery failed')
+        lower = message.casefold()
+        if '(403)' in lower or 'http 403' in lower:
+            code = 'provider_rejected_403'
+            hint = 'Resend rejected the request. Check the sending domain verification and API key permissions.'
+        elif '(401)' in lower or 'http 401' in lower:
+            code = 'provider_rejected_401'
+            hint = 'Resend rejected the API credentials.'
+        elif 'request failed' in lower or 'timed out' in lower or 'timeout' in lower:
+            code = 'provider_unreachable'
+            hint = 'The host could not complete the request to the mail provider.'
+        else:
+            code = 'delivery_error'
+            hint = 'The mail provider rejected or failed the verification email request.'
+        if self.mailer is not None and self.mailer.sender.casefold().endswith('@resend.dev>'):
+            hint += ' The configured sender uses the resend.dev testing domain; use a verified Testamur sender domain for production recipients.'
+        self.mail_last_error_code = code
+        self.mail_last_error_hint = hint
+        print(f'[testamur] verification email delivery failed: {message}', file=sys.stderr, flush=True)
     def active_product_services(self) -> list[TestamurProductService]:
         with self._services_lock:
             return list(self._services.values())
@@ -980,6 +1021,15 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                     "provider": "resend" if self.hosted_server.mailer is not None else None,
                     "configured": self.hosted_server.mailer is not None,
                     "configuration_error": self.hosted_server.mail_config_error,
+                    "sender_domain": (
+                        self.hosted_server.mailer.sender.rsplit("@", 1)[-1].rstrip(">").casefold()
+                        if self.hosted_server.mailer is not None and "@" in self.hosted_server.mailer.sender
+                        else None
+                    ),
+                    "last_attempt_at": self.hosted_server.mail_last_attempt_at,
+                    "last_attempt_ok": self.hosted_server.mail_last_attempt_ok,
+                    "last_error_code": self.hosted_server.mail_last_error_code,
+                    "last_error_hint": self.hosted_server.mail_last_error_hint,
                 },
                 "mathhub": {
                     "ok": mathhub_ok,
@@ -1090,6 +1140,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                     delete_workspace=self.hosted_server.delete_user_workspace,
                     delete_org_workspace=self.hosted_server.delete_organization_workspace,
                     mailer=self.hosted_server.mailer,
+                    mail_delivery_reporter=self.hosted_server.record_mail_delivery,
                 )
             )
             return
