@@ -42,7 +42,47 @@ WORKSPACE_COOKIE = "testamur_workspace"
 _MATHHUB_PREFIX = "/sources/mathhub"
 _MATHHUB_ROOT = Path(__file__).resolve().parents[2] / "mathhub_app"
 _ACCOUNT_ROUTES = {"signin", "signup", "settings"}
-_PUBLIC_ASSETS = {"index.html", "app.js", "styles.css"}
+_PUBLIC_ASSETS = {
+    item.name
+    for item in WEB_ROOT.iterdir()
+    if item.is_file() and item.suffix.lower() in {".js", ".css"}
+} | {"index.html"}
+
+
+def _core_web_cache_token() -> str:
+    snapshot_path = Path(__file__).resolve().parents[2] / "CORE_SNAPSHOT"
+    try:
+        snapshot = snapshot_path.read_text(encoding="utf-8")
+    except OSError:
+        snapshot = ""
+    match = re.search(r"\b[0-9a-f]{40}\b", snapshot, re.IGNORECASE)
+    return match.group(0)[:12] if match else "current"
+
+
+def _versioned_web_response(response: dict[str, Any]) -> dict[str, Any]:
+    """Version local Web assets so a deploy cannot pair a new API with stale JS."""
+    if int(response.get("status", 0)) != int(HTTPStatus.OK):
+        return response
+    headers = dict(response.get("headers") or {})
+    content_type = str(headers.get("Content-Type") or "").lower()
+    body = bytes(response.get("body") or b"")
+    if content_type.startswith("text/html"):
+        token = _core_web_cache_token()
+        html = body.decode("utf-8")
+        html = re.sub(
+            r'((?:src|href)=")(/[^"?]+\.(?:js|css))"',
+            lambda found: f'{found.group(1)}{found.group(2)}?v={token}"',
+            html,
+        )
+        body = html.encode("utf-8")
+        headers["Cache-Control"] = "no-cache, must-revalidate"
+    elif (
+        "javascript" in content_type
+        or content_type.startswith("text/css")
+        or content_type.startswith("application/json")
+    ):
+        headers["Cache-Control"] = "no-cache, must-revalidate"
+    return {**response, "headers": headers, "body": body}
 
 
 def _session_token(cookie_header: str | None) -> str | None:
@@ -988,10 +1028,10 @@ class HostedTestamurWebHandler(TestamurWebHandler):
             )
             return
         if path in {"/signin", "/signup", "/verify-email", "/verify-email-pending", "/settings/profile", "/settings/security", "/settings/organizations"} or path.startswith("/users/") or path.startswith("/organizations/"):
-            self._send(_static(WEB_ROOT / "index.html", cache="no-cache"))
+            self._send(_versioned_web_response(_static(WEB_ROOT / "index.html", cache="no-cache")))
             return
         if name in _PUBLIC_ASSETS:
-            self._send(_static(WEB_ROOT / name, cache="public, max-age=300"))
+            self._send(_versioned_web_response(_static(WEB_ROOT / name, cache="no-cache")))
             return
 
         user = self._current_user()
@@ -1021,7 +1061,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
             )
         except AccountError:
             service = self.hosted_server.product_service_for_user(user["user_id"])
-        self._send(dispatch_web_get(service, self.path))
+        self._send(_versioned_web_response(dispatch_web_get(service, self.path)))
 
     def do_POST(self) -> None:
         # Hosted deployments sit behind Zeabur/Cloudflare reverse proxies. Do not
