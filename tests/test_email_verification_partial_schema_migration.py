@@ -55,6 +55,40 @@ class EmailVerificationPartialSchemaMigrationTests(unittest.TestCase):
             self.assertEqual(pending, (None, None))
             self.assertEqual(verified, (90, None))
 
+    def test_schema_without_verification_columns_still_grandfathers_legacy_accounts(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            database = Path(tempdir) / "accounts.sqlite3"
+            with sqlite3.connect(database) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE users (
+                        user_id TEXT PRIMARY KEY,
+                        username TEXT NOT NULL UNIQUE,
+                        email TEXT NOT NULL UNIQUE,
+                        display_name TEXT NOT NULL,
+                        password_digest TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    );
+                    INSERT INTO users(
+                        user_id, username, email, display_name, password_digest,
+                        created_at, updated_at
+                    ) VALUES (
+                        'usr_legacy', 'legacy', 'legacy@example.com', 'Legacy',
+                        'not-used-by-this-test', 120, 120
+                    );
+                    """
+                )
+
+            AccountStore(database)
+
+            with sqlite3.connect(database) as connection:
+                legacy = connection.execute(
+                    "SELECT email_verified_at, email_verification_source FROM users WHERE user_id = 'usr_legacy'"
+                ).fetchone()
+
+            self.assertEqual(legacy, (120, 'legacy_migration'))
+
 
 if __name__ == "__main__":
     unittest.main()
