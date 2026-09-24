@@ -11,15 +11,11 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: python3 --version && node --version
       - name: Guard canonical shared Web assets
-        run: python scripts/check_canonical_web_sync.py
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - run: python -m py_compile apps/web/hosted_app.py apps/web/identity.py apps/web/mail.py testamur/web_app.py
+        run: python3 scripts/check_canonical_web_sync.py
+      - run: python3 -m py_compile apps/web/hosted_app.py apps/web/identity.py apps/web/mail.py testamur/web_app.py
       - name: Syntax-check shared Web JavaScript
         run: |
           node --check testamur/web/app.js
@@ -28,34 +24,30 @@ jobs:
           node --check testamur/web/supply-chain-guidance.js
           node --check testamur/web/advisory-review-ui.js
           node --check testamur/web/advisory-revalidation-ui.js
-      - run: python -m unittest tests.test_email_verification tests.test_hosted_onboarding_web_contract
+      - run: python3 -m unittest tests.test_email_verification tests.test_hosted_onboarding_web_contract
 
   compile-mathhub:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - run: python -m py_compile mathhub_app/mathhub.py mathhub_app/server.py mathhub_app/source_ingest.py
+      - run: python3 -m py_compile mathhub_app/mathhub.py mathhub_app/server.py mathhub_app/source_ingest.py
       - run: node --check mathhub_app/source-ingest-ui.js
-      - run: python -m pytest -q tests/test_hosted_mathhub_snapshot.py
+      - name: Run hosted MathHub snapshot tests
+        run: |
+          rm -rf .venv-ci
+          python3 -m venv .venv-ci
+          .venv-ci/bin/python -m pip install --disable-pip-version-check pytest
+          .venv-ci/bin/python -m pytest -q tests/test_hosted_mathhub_snapshot.py
 
   signup-smoke:
     runs-on: self-hosted
     needs: compile-hosted
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: Start hosted Testamur
         run: |
           mkdir -p /tmp/testamur
-          python -m apps.web.hosted_app \
+          python3 -m apps.web.hosted_app \
             --host 127.0.0.1 \
             --port 8788 \
             --data-dir /tmp/testamur \
@@ -76,7 +68,7 @@ jobs:
               http://127.0.0.1:8788/v1/account/signup
           )"
           test "$status" = "503"
-          python -c 'import json; b=json.load(open("/tmp/signup-response.json")); assert b["error"]["code"] == "email_delivery_unavailable", b'
+          python3 -c 'import json; b=json.load(open("/tmp/signup-response.json")); assert b["error"]["code"] == "email_delivery_unavailable", b'
       - if: failure()
         run: cat /tmp/testamur.log || true
 
@@ -85,19 +77,16 @@ jobs:
     needs: [compile-hosted, compile-mathhub]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: Start MathHub and hosted gateway
         run: |
           mkdir -p /tmp/mathhub /tmp/testamur
           (
             cd mathhub_app
             MATHHUB_HOST=127.0.0.1 MATHHUB_PORT=8001 MATHHUB_DATA_DIR=/tmp/mathhub \
-              python mathhub.py >/tmp/mathhub.log 2>&1 &
+              python3 mathhub.py >/tmp/mathhub.log 2>&1 &
             echo $! >/tmp/mathhub.pid
           )
-          python -m apps.web.hosted_app \
+          python3 -m apps.web.hosted_app \
             --host 127.0.0.1 \
             --port 8788 \
             --data-dir /tmp/testamur \
