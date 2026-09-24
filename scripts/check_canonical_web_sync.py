@@ -34,6 +34,8 @@ SHARED = (
     "testamur/web/advisory-revalidation-ui.js",
     "testamur/web/first-run-journey.js",
     "testamur/web/first-run-journey.css",
+    "testamur/web/first-run-resume.js",
+    "testamur/web/first-run-resume.css",
     "testamur/web/help-launcher.js",
     "testamur/web/help-launcher.css",
 )

@@ -74,7 +74,7 @@
 
   function render() {
     document.querySelector('[data-first-run-resume]')?.remove();
-    if (location.pathname === '/signin' || location.pathname === '/signup') return;
+    if (['/signin', '/signup', '/verify-email', '/verify-email-pending'].includes(location.pathname)) return;
 
     rememberObject();
     const progress = markVisited(syncRecordedState(readProgress()));

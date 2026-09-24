@@ -201,6 +201,15 @@ function shell(content, wide = false) {
   bindNavigation();
 }
 
+function authShell(content) {
+  document.body.classList.add('auth-flow');
+  root.innerHTML = `<main class="auth-shell">
+    <a data-nav class="auth-brand" href="/" aria-label="Testamur home"><span class="mark">T</span><span>Testamur</span></a>
+    <div class="auth-stage">${content}</div>
+    <div class="auth-footnote">Hosted account security · verification links expire after 30 minutes</div>
+  </main>`;
+  bindNavigation();
+}
 const loading = text => `<div class="loading"><span class="spinner"></span>${esc(text || 'Loading…')}</div>`;
 const empty = (title, body) => `<div class="empty"><strong>${esc(title)}</strong><p>${esc(body)}</p></div>`;
 const badge = (text, toneName = 'neutral') => `<span class="badge badge-${toneName}">${esc(text)}</span>`;
@@ -571,14 +580,14 @@ async function createProjectFromForm(event) {
 }
 
 function hostedAccountUnavailable(title) {
-  shell(`<div class="account-page"><section class="account-card"><div class="account-mark">T</div><h1>${esc(title)}</h1><p>This is a local Testamur workspace. Hosted accounts are only available from the hosted Web entrypoint.</p><a data-nav class="btn btn-secondary" href="/">Back to workspace</a></section></div>`);
+  authShell(`<div class="account-page"><section class="account-card"><div class="account-mark">T</div><h1>${esc(title)}</h1><p>This is a local Testamur workspace. Hosted accounts are only available from the hosted Web entrypoint.</p><a data-nav class="btn btn-secondary" href="/">Back to workspace</a></section></div>`);
 }
 
 async function signInPage() {
   if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Sign in');
   const next = params().get('next');
   if (accountState.authenticated) return navigate(safeNextPath(next));
-  shell(`<div class="account-page"><section class="account-card">
+  authShell(`<div class="account-page"><section class="account-card">
     <div class="account-mark">T</div>
     <h1>Sign in to Testamur</h1>
     <p>${next ? 'Sign in to continue to the requested Testamur workspace page.' : 'Open your projects, monitoring state and recorded activity.'}</p>
@@ -597,7 +606,7 @@ async function signUpPage() {
   if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Create account');
   const next = params().get('next');
   if (accountState.authenticated) return navigate(safeNextPath(next));
-  shell(`<div class="account-page"><section class="account-card">
+  authShell(`<div class="account-page"><section class="account-card">
     <div class="account-mark">T</div>
     <h1>Create your Testamur account</h1>
     <p>Your hosted workspace is isolated from other users by default.</p>
@@ -620,31 +629,32 @@ async function verifyEmailPendingPage() {
   const identifier = params().get('identifier') || '';
   const sent = params().get('sent') !== '0';
   const next = safeNextPath(params().get('next'));
-  shell(`<div class="account-page"><section class="account-card">
-    <div class="account-mark">✉</div>
-    <h1>Check your email</h1>
+  authShell(`<div class="account-page"><section class="account-card verification-card">
+    <div class="verification-icon" aria-hidden="true">✉</div>
+    <span class="verification-kicker">EMAIL VERIFICATION</span>
+    <h1>${sent ? 'Check your inbox' : 'We could not send the email'}</h1>
     <p>${sent
-      ? `We sent a verification link${identifier ? ` to <strong>${esc(identifier)}</strong>` : ''}. Open it to activate your account.`
-      : 'Your account was created, but the verification email could not be delivered. Request a new link below.'}</p>
-    <div class="flash ${sent ? 'flash-success' : 'flash-danger'}">
-      <strong>${sent ? 'Email verification required' : 'Verification email not delivered'}</strong>
-      <span>You cannot sign in until this email address is verified. Links expire after 30 minutes.</span>
+      ? 'Open the verification link we sent to activate your account.'
+      : 'Your account exists, but the first delivery attempt failed. You can request another link below.'}</p>
+    ${identifier ? `<div class="verification-address">${esc(identifier)}</div>` : ''}
+    <div class="verification-state ${sent ? '' : 'is-warning'}">
+      <span class="verification-state-dot"></span>
+      <div><strong>${sent ? 'Waiting for verification' : 'Delivery failed'}</strong><small>${sent ? 'The link expires in 30 minutes.' : 'Your account stays locked until a verification email is delivered and opened.'}</small></div>
     </div>
-    <form class="account-form" data-verification-resend>
-      <label><span>Email or username</span><input name="identifier" autocomplete="username" value="${esc(identifier)}" required /></label>
-      <div data-account-result></div>
-      <button class="btn btn-secondary account-submit" type="submit">Send a new verification link</button>
+    <form class="verification-actions" data-verification-resend>
+      <input name="identifier" type="hidden" value="${esc(identifier)}" />
+      <button class="btn btn-primary account-submit" type="submit">Send another link</button>
+      <div class="verification-result" data-account-result aria-live="polite"></div>
     </form>
     <div class="account-switch"><a data-nav href="/signin?next=${encodeURIComponent(next)}">Back to sign in</a></div>
   </section></div>`);
   document.querySelector('[data-verification-resend]')?.addEventListener('submit', submitVerificationResend);
 }
-
 async function verifyEmailPage() {
   if (accountState.mode !== 'hosted') return hostedAccountUnavailable('Verify email');
   const token = params().get('token') || '';
   if (!token) {
-    shell(`<div class="account-page"><section class="account-card">
+    authShell(`<div class="account-page"><section class="account-card">
       <div class="account-mark">!</div>
       <h1>Verification link is incomplete</h1>
       <p>This email verification link does not contain a token.</p>
@@ -652,7 +662,7 @@ async function verifyEmailPage() {
     </section></div>`);
     return;
   }
-  shell(`<div class="account-page"><section class="account-card">
+  authShell(`<div class="account-page"><section class="account-card">
     <div class="account-mark">T</div>
     <h1>Verifying your email…</h1>
     ${loading('Checking verification link…')}
@@ -661,7 +671,7 @@ async function verifyEmailPage() {
     await apiWrite('/v1/account/email-verification/verify', { token });
     await loadAccountState();
     cache.dashboard = null;
-    shell(`<div class="account-page"><section class="account-card">
+    authShell(`<div class="account-page"><section class="account-card">
       <div class="account-mark">✓</div>
       <h1>Email verified</h1>
       <p>Your Testamur account is active.</p>
@@ -669,7 +679,7 @@ async function verifyEmailPage() {
     </section></div>`);
     document.querySelector('[data-verification-continue]')?.addEventListener('click', () => navigate('/'));
   } catch (error) {
-    shell(`<div class="account-page"><section class="account-card">
+    authShell(`<div class="account-page"><section class="account-card">
       <div class="account-mark">!</div>
       <h1>Could not verify this email</h1>
       <div data-account-result></div>
@@ -1152,17 +1162,19 @@ async function submitVerificationResend(event) {
   const button = form.querySelector('button[type="submit"]');
   const identifier = form.elements.identifier.value.trim();
   button.disabled = true;
-  result.innerHTML = loading('Requesting a new link…');
+  button.textContent = 'Requesting…';
+  result.textContent = '';
   try {
     await apiWrite('/v1/account/email-verification/resend', { identifier });
-    result.innerHTML = '<div class="flash flash-success"><strong>Verification link requested</strong><span>If this account still needs verification, a fresh link has been sent.</span></div>';
+    result.innerHTML = '<span class="verification-result-note">Request accepted. Delivery is not confirmed until the email arrives.</span>';
+    button.textContent = 'Request another link';
   } catch (error) {
-    accountError(result, error);
+    result.innerHTML = `<span class="verification-result-error">${esc(error.message || error)}</span>`;
+    button.textContent = 'Try again';
   } finally {
     button.disabled = false;
   }
 }
-
 async function submitProfile(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -2152,7 +2164,7 @@ function bindNavigation() {
 }
 
 async function render() {
-  document.body.classList.remove('modal-open');
+  document.body.classList.remove('modal-open', 'auth-flow');
   window.scrollTo(0, 0);
   const path = location.pathname;
   if (path === '/signin') return signInPage();
