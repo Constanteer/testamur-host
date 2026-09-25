@@ -291,23 +291,99 @@ def _starter_task_matches(task:dict[str,Any])->bool:
     return set(str(name) for name in (task.get("roots") or []))==set(STARTER_CLAIM_ROOTS)
 
 
-def ensure_starter_claim_task()->str|None:
-    """Queue a small deterministic set of real Mathlib Claims for an empty registry.
+def starter_claim_status()->dict[str,Any]:
+    runtime=core.runtime_status()
+    current=CATALOG.page(limit=1,before_internal_id=None,query="",status="all")
+    matching=[task for task in ((TASKS.list(limit=100) or {}).get("tasks") or []) if _starter_task_matches(task)]
+    task=matching[0] if matching else None
+    detail=None
+    if task and task.get("task_id"):
+        try:detail=TASKS.get(str(task["task_id"]))
+        except (KeyError,ValueError,sqlite3.Error):detail=dict(task)
+    return {
+        "enabled":bool(AUTO_STARTER_CLAIMS and STARTER_CLAIM_ROOTS),
+        "runtime_ready":bool(runtime.get("ready")),
+        "registry_empty":not bool(current.get("claims")),
+        "roots":list(STARTER_CLAIM_ROOTS),
+        "task":detail,
+    }
 
-    The starter set is only onboarding substrate. Every resulting Claim still
-    comes from the pinned Lean environment through the normal durable import
-    pipeline; no static/demo Claim is inserted and no AI classification occurs.
+
+def ensure_starter_claim_task()->str|None:
+    """Ensure an empty registry has a live starter import for the current environment.
+
+    A persisted task from an older Lean/Mathlib environment is not reusable.
+    Paused tasks from transient failures are recovered/resumed instead of being
+    mistaken for a completed bootstrap.
     """
     if not AUTO_STARTER_CLAIMS or not STARTER_CLAIM_ROOTS:
         return None
-    if not core.runtime_status().get("ready"):
+    runtime=core.runtime_status()
+    if not runtime.get("ready"):
         return None
+    current_environment_hash=str(runtime.get("environment_hash") or "")
     current=CATALOG.page(limit=1,before_internal_id=None,query="",status="all")
     if current.get("claims"):
         return None
-    for task in (TASKS.list(limit=100) or {}).get("tasks") or []:
-        if _starter_task_matches(task):
-            return str(task.get("task_id") or "") or None
+
+    for summary in (TASKS.list(limit=100) or {}).get("tasks") or []:
+        if not _starter_task_matches(summary):
+            continue
+        task_id=str(summary.get("task_id") or "")
+        if not task_id:
+            continue
+        try:
+            task=TASKS.get(task_id)
+        except (KeyError,ValueError,sqlite3.Error):
+            task=dict(summary)
+
+        task_environment_hash=str(task.get("environment_hash") or "")
+        if current_environment_hash and task_environment_hash and task_environment_hash != current_environment_hash:
+            # Durable import tasks are environment-pinned. Leave historical task
+            # state intact and create a fresh starter task below.
+            continue
+
+        status=str(task.get("status") or "")
+        if status=="active":
+            if task.get("leased") and _lease_is_stale(task):
+                try:TASKS.recover(task_id)
+                except (KeyError,ValueError,sqlite3.Error):pass
+            return task_id
+
+        if status=="paused":
+            if task.get("leased"):
+                try:TASKS.recover(task_id)
+                except (KeyError,ValueError,sqlite3.Error):pass
+            try:
+                if int(task.get("failed") or 0)>0:
+                    TASKS.retry_failed(task_id)
+                refreshed=TASKS.get(task_id)
+                if str(refreshed.get("status") or "")=="paused" and not refreshed.get("leased"):
+                    TASKS.resume(task_id)
+                return task_id
+            except (KeyError,ValueError,sqlite3.Error):
+                # If the persisted paused task cannot be recovered safely, keep
+                # it as history and create a clean current-environment task.
+                continue
+
+        if status=="completed":
+            if int(task.get("failed") or 0)>0:
+                try:
+                    retried=TASKS.retry_failed(task_id)
+                    if str(retried.get("status") or "")=="active":
+                        return task_id
+                except (KeyError,ValueError,sqlite3.Error):
+                    pass
+            # A completed task that imported something should already have
+            # populated the registry; keep it as the canonical bootstrap record.
+            if int(task.get("imported") or 0)>0 or int(task.get("already_registered") or 0)>0:
+                return task_id
+            # A zero-result completed task is retained for diagnostics. Do not
+            # create duplicates every poll; operator/UI can expose its detail.
+            return task_id
+
+        # cancelled/unknown tasks do not block a fresh starter import.
+
     task=TASKS.create({
         "declaration_names":list(STARTER_CLAIM_ROOTS),
         "imports":["Mathlib"],
@@ -318,14 +394,17 @@ def ensure_starter_claim_task()->str|None:
 
 
 def _starter_claim_bootstrap_loop()->None:
+    """Keep an empty registry's starter import alive until Claims actually exist."""
     while True:
         try:
             if core.runtime_status().get("ready"):
                 ensure_starter_claim_task()
-                return
+                current=CATALOG.page(limit=1,before_internal_id=None,query="",status="all")
+                if current.get("claims"):
+                    return
         except (ValueError,RuntimeError,sqlite3.Error):
-            # Runtime/setup and durable-task failures stay visible through their
-            # own status surfaces; retrying on the next poll is safe/idempotent.
+            # Runtime/setup and durable-task failures remain visible through
+            # starter status; the next poll can recover transient pauses.
             pass
         time.sleep(LIBRARY_WARMUP_POLL_SECONDS)
 
@@ -355,6 +434,7 @@ class Handler(core.Handler):
         try:
             if path=="/api/claims":self.json_response(200,publicize(catalog(p)));return
             if path=="/api/import-tasks":self.json_response(200,publicize(TASKS.list(limit=iparam(parse_qs(p.query),"limit",24))));return
+            if path=="/api/starter-status":self.json_response(200,publicize(starter_claim_status()));return
             m=re.fullmatch(rf"/api/import-tasks/({TASKISH})",path,re.I)
             if m:self.json_response(200,publicize(TASKS.get(m.group(1).upper())));return
             if path=="/api/graph/coverage":self.json_response(200,publicize(graph_coverage_metadata(p)));return
