@@ -8,6 +8,7 @@ const graphCoverageBaseDraw=drawGraphCanvas;
 drawGraphCanvas=function drawGraphWithNamespaceCoverage(canvas){
   graphCoverageBaseDraw(canvas);
   const graph=argumentState.graph;if(!canvas||!graph?.persistent)return;
+  if(typeof graphGlobalState!=='undefined'&&graphGlobalState.libraryMode)return;
   const ctx=canvas.getContext('2d'),palette=graphCanvasPalette(canvas);
   ctx.save();ctx.lineCap='round';
   for(const node of graph.nodes||[]){
