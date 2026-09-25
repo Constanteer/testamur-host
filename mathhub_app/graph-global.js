@@ -14,11 +14,16 @@ const graphGlobalState={
 let graphLibraryPollTimer=null;
 
 function graphGlobalEdgeKey(edge){return `${edge.evidence_kind||'uses'}:${edge.from}:${edge.to}`;}
-function graphGlobalGraph(){return {
-  mode:'world',persistent:true,session_id:'mathhub-global-world-v3',root:null,depth:argumentState.depth||1,
-  nodes:[...graphGlobalState.nodes.values()],edges:[...graphGlobalState.edges.values()],
-  claim_count:graphGlobalState.claimCount,cluster_count:graphGlobalState.clusterCount,
-};}
+function graphGlobalGraph(){
+  const nodes=[...graphGlobalState.nodes.values()].filter(node=>!node.context_hidden);
+  const visibleIds=new Set(nodes.map(node=>node.id));
+  const edges=[...graphGlobalState.edges.values()].filter(edge=>visibleIds.has(edge.from)&&visibleIds.has(edge.to));
+  return {
+    mode:'world',persistent:true,session_id:'mathhub-global-world-v3',root:null,depth:argumentState.depth||1,
+    nodes,edges,
+    claim_count:graphGlobalState.claimCount,cluster_count:nodes.filter(graphIsCluster).length,
+  };
+}
 function graphIsCluster(nodeOrId){const id=typeof nodeOrId==='string'?nodeOrId:nodeOrId?.id;return String(id||'').startsWith('AREA-')||nodeOrId?.kind==='cluster';}
 function graphGlobalNode(id){return graphGlobalState.nodes.get(id)||null;}
 function graphClusterKey(node){
@@ -88,49 +93,87 @@ function libraryAncestorChain(clusterId){
   return chain;
 }
 
+function clearLibraryContextCompaction(){
+  for(const [id,node] of [...graphGlobalState.nodes.entries()]){
+    if(node.context_summary){
+      graphGlobalState.nodes.delete(id);
+      graphCanvasState.positions.delete(id);
+      continue;
+    }
+    if(node.context_hidden)graphGlobalState.nodes.set(id,{...node,context_hidden:false});
+  }
+  for(const [key,edge] of [...graphGlobalState.edges.entries()]){
+    if(edge.evidence_kind==='module-context-summary')graphGlobalState.edges.delete(key);
+  }
+  graphGlobalState.libraryContextPrunedCount=0;
+}
+
+function revealLibraryContextSummary(summaryId){
+  const summary=graphGlobalNode(summaryId);
+  if(!summary?.context_summary)return;
+  for(const id of summary.context_hidden_ids||[]){
+    const node=graphGlobalNode(id);
+    if(node)graphGlobalState.nodes.set(id,{...node,context_hidden:false});
+  }
+  graphGlobalState.nodes.delete(summaryId);
+  graphCanvasState.positions.delete(summaryId);
+  for(const [key,edge] of [...graphGlobalState.edges.entries()]){
+    if(edge.from===summaryId||edge.to===summaryId)graphGlobalState.edges.delete(key);
+  }
+  graphGlobalState.libraryContextPrunedCount=[...graphGlobalState.nodes.values()].filter(node=>node.context_hidden).length;
+  graphGlobalState.clusterCount=graphGlobalGraph().nodes.filter(graphIsCluster).length;
+  argumentState.graph=graphGlobalGraph();
+  state.graphSelected=summary.summary_parent_id||state.graphSelected;
+  render();
+  requestAnimationFrame(()=>focusGlobalBranch(summary.summary_parent_id||state.graphSelected));
+}
+
 function compressLibraryContext(clusterId){
   if(!graphGlobalState.libraryMode)return 0;
   const current=graphGlobalNode(clusterId);
   if(!current||current.cluster_source!=='mathlib-module')return 0;
+
+  // Shrink old levels, do not delete them. Each ancestor keeps the active path
+  // plus one reversible '+N siblings' summary node. This preserves orientation
+  // without leaving arbitrary old modules scattered around the canvas.
+  clearLibraryContextCompaction();
   const chain=libraryAncestorChain(clusterId);
-  if(!chain.length)return 0;
-  const keep=new Set(chain);
-  for(const node of graphGlobalState.nodes.values()){
-    if(node.parent_cluster_id===clusterId)keep.add(node.id);
-  }
-  // Keep fewer alternatives the farther an ancestor is from the active branch.
-  const siblingBudgets=[5,2,1];
+  if(chain.length<2)return 0;
+
+  let hiddenTotal=0;
   for(let distance=1;distance<chain.length;distance++){
-    const ancestorId=chain[distance],pathChildId=chain[distance-1];
-    keep.add(ancestorId);keep.add(pathChildId);
-    const budget=siblingBudgets[Math.min(distance-1,siblingBudgets.length-1)];
-    const siblings=[...graphGlobalState.nodes.values()]
-      .filter(node=>node.parent_cluster_id===ancestorId&&node.id!==pathChildId&&graphIsCluster(node))
-      .sort((a,b)=>Number(b.claim_count||0)-Number(a.claim_count||0)||String(a.title||'').localeCompare(String(b.title||'')))
-      .slice(0,budget);
-    siblings.forEach(node=>keep.add(node.id));
-  }
-  let removed=0;
-  for(const [id,node] of [...graphGlobalState.nodes.entries()]){
-    if(!graphIsCluster(node)&&!graphIsLibraryTheorem(node))continue;
-    if(keep.has(id))continue;
-    graphGlobalState.nodes.delete(id);
-    graphCanvasState.positions.delete(id);
-    removed++;
-  }
-  if(removed){
-    for(const [edgeKey,edge] of [...graphGlobalState.edges.entries()]){
-      if(!graphGlobalState.nodes.has(edge.from)||!graphGlobalState.nodes.has(edge.to))graphGlobalState.edges.delete(edgeKey);
+    const ancestorId=chain[distance],activeChildId=chain[distance-1];
+    const siblings=[...graphGlobalState.nodes.values()].filter(node=>
+      !node.context_summary&&node.parent_cluster_id===ancestorId&&node.id!==activeChildId
+    );
+    if(!siblings.length)continue;
+
+    for(const node of siblings){
+      graphGlobalState.nodes.set(node.id,{...node,context_hidden:true});
     }
-    const liveClusterKeys=new Set(chain.map(id=>graphGlobalNode(id)).filter(Boolean).map(graphClusterKey).filter(Boolean));
-    for(const key of [...graphGlobalState.expandedAreas]){
-      if(!liveClusterKeys.has(key))graphGlobalState.expandedAreas.delete(key);
-    }
+    hiddenTotal+=siblings.length;
+
+    const summaryId=`LIBSUM:${ancestorId}:${activeChildId}`;
+    const summary={
+      id:summaryId,kind:'cluster',cluster_source:'mathlib-context-summary',context_summary:true,
+      summary_parent_id:ancestorId,summary_active_child_id:activeChildId,
+      context_hidden_ids:siblings.map(node=>node.id),
+      parent_cluster_id:ancestorId,module_path:'',namespace_path:'',
+      title:`+${siblings.length} sibling${siblings.length===1?'':'s'}`,
+      claim_count:siblings.reduce((sum,node)=>sum+Number(node.claim_count||0),0),
+      library_count:siblings.length,
+    };
+    graphGlobalState.nodes.set(summaryId,summary);
+    mergeWorldEdges([{
+      from:ancestorId,to:summaryId,evidence_kind:'module-context-summary',proof_count:0,proof_ids:[]
+    }]);
+    placeAround(ancestorId,[summary],88+distance*12);
   }
-  graphGlobalState.libraryContextPrunedCount=removed;
-  graphGlobalState.clusterCount=[...graphGlobalState.nodes.values()].filter(graphIsCluster).length;
+
+  graphGlobalState.libraryContextPrunedCount=hiddenTotal;
+  graphGlobalState.clusterCount=graphGlobalGraph().nodes.filter(graphIsCluster).length;
   argumentState.graph=graphGlobalGraph();
-  return removed;
+  return hiddenTotal;
 }
 async function loadLibraryStatus(){
   try{graphGlobalState.libraryStatus=await apiJson('/api/library/status');}
@@ -340,6 +383,7 @@ function libraryBreadcrumbHtml(){
 
 async function expandGlobalArea(clusterId){
   const cluster=graphGlobalNode(clusterId);if(!cluster||!graphIsCluster(cluster)||graphGlobalState.loading)return;
+  if(cluster.context_summary){revealLibraryContextSummary(clusterId);return;}
   const key=graphClusterKey(cluster);if(!key)return;
   state.graphSelected=clusterId;
   if(graphGlobalState.expandedAreas.has(key)&&!(graphGlobalState.libraryMode&&cluster.cluster_source==='mathlib-module')){
@@ -445,12 +489,12 @@ const graphGlobalBaseDraw=drawGraphCanvas;
 const graphGlobalBaseHitTest=graphHitTest;
 
 function graphGlobalModuleMetrics(ctx,node,{selected=false,hover=false}={}){
-  const root=node?.id==='LIBMOD:(root)';
+  const root=node?.id==='LIBMOD:(root)',summary=Boolean(node?.context_summary);
   const label=root?'Mathlib':String(node?.title||'Module').split('.').slice(-1)[0];
-  const fontSize=root?12.5:(selected||hover?11.5:10.5);
+  const fontSize=root?12.5:(summary?9.5:(selected||hover?11.5:10.5));
   ctx.font=`${root||selected?'650 ':'600 '}${fontSize}px ui-sans-serif,system-ui,sans-serif`;
-  const labelWidth=Math.min(150,ctx.measureText(label).width);
-  return {root,label,fontSize,labelWidth,width:root?Math.max(82,labelWidth+42):labelWidth+24,height:root?34:24};
+  const labelWidth=Math.min(summary?110:150,ctx.measureText(label).width);
+  return {root,summary,label,fontSize,labelWidth,width:root?Math.max(82,labelWidth+42):(summary?labelWidth+18:labelWidth+24),height:root?34:(summary?20:24)};
 }
 
 function graphGlobalRoundRect(ctx,x,y,w,h,r){
@@ -502,7 +546,7 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
   ctx.strokeStyle='rgba(91,100,108,.20)';
   ctx.lineWidth=1;
   for(const edge of graph.edges||[]){
-    if(edge.evidence_kind!=='module-contains')continue;
+    if(edge.evidence_kind!=='module-contains'&&edge.evidence_kind!=='module-context-summary')continue;
     const a=graphCanvasState.positions.get(edge.from),b=graphCanvasState.positions.get(edge.to);if(!a||!b)continue;
     const from=graphScreenPoint(a),to=graphScreenPoint(b);
     ctx.beginPath();ctx.moveTo(from.x,from.y);ctx.lineTo(to.x,to.y);ctx.stroke();
@@ -540,23 +584,27 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
 
     // Compact label-chip nodes replace the previous giant hollow circles.
     graphGlobalRoundRect(ctx,x,y,m.width,m.height,m.root?8:6);
-    ctx.fillStyle=m.root?'rgba(29,34,39,.94)':(libraryCluster?'rgba(255,255,255,.94)':'rgba(255,255,255,.91)');
+    ctx.fillStyle=m.root?'rgba(29,34,39,.94)':(m.summary?'rgba(248,249,250,.82)':(libraryCluster?'rgba(255,255,255,.94)':'rgba(255,255,255,.91)'));
     ctx.fill();
-    ctx.strokeStyle=isSelected?palette.ink:(isHover?'rgba(70,78,86,.62)':'rgba(92,101,109,.30)');
+    if(m.summary)ctx.setLineDash([3,3]);
+    ctx.strokeStyle=isSelected?palette.ink:(isHover?'rgba(70,78,86,.62)':(m.summary?'rgba(92,101,109,.24)':'rgba(92,101,109,.30)'));
     ctx.lineWidth=isSelected?1.7:1;
     ctx.stroke();
+    ctx.setLineDash([]);
 
-    // Small hierarchy glyph — square for modules, solid center for Mathlib.
-    const gx=x+(m.root?13:10),gy=p.y;
-    ctx.beginPath();ctx.rect(gx-3.5,gy-3.5,7,7);
-    ctx.fillStyle=m.root?'#fff':(isSelected?palette.ink:'rgba(78,88,97,.70)');
-    ctx.fill();
+    // Small hierarchy glyph for real modules; summaries are already explicit.
+    const gx=x+(m.root?13:(m.summary?9:10)),gy=p.y;
+    if(!m.summary){
+      ctx.beginPath();ctx.rect(gx-3.5,gy-3.5,7,7);
+      ctx.fillStyle=m.root?'#fff':(isSelected?palette.ink:'rgba(78,88,97,.70)');
+      ctx.fill();
+    }
 
     ctx.textAlign='left';ctx.textBaseline='middle';
-    ctx.fillStyle=m.root?'#fff':palette.ink;
+    ctx.fillStyle=m.root?'#fff':(m.summary?palette.muted:palette.ink);
     ctx.font=`${m.root||isSelected?'650 ':'600 '}${m.fontSize}px ui-sans-serif,system-ui,sans-serif`;
     const label=m.label.length>24?m.label.slice(0,23)+'…':m.label;
-    ctx.fillText(label,gx+(m.root?10:9),p.y+.2);
+    ctx.fillText(label,gx+(m.root?10:(m.summary?0:9)),p.y+.2);
 
     // Counts stay off the node until hover/selection; topology is primary.
     if((isSelected||isHover)&&!m.root&&graphCanvasState.view.scale>.52){
@@ -570,6 +618,10 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
 
 function globalInspector(node){
   if(!node)return '<div class="global-inspector-empty">Select a module or theorem.</div>';
+  if(node.context_summary){
+    const count=(node.context_hidden_ids||[]).length;
+    return `<div class="global-inspector-kind">Compacted context</div><h2>${esc(node.title||'Older siblings')}</h2><p>${count.toLocaleString()} sibling item${count===1?'':'s'} from this older level are folded into one context node. They are still in memory; nothing was discarded.</p><button class="btn btn-primary" data-expand-global-area="${esc(node.id)}">Show this level</button>`;
+  }
   if(graphIsCluster(node)){
     const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),library=graphGlobalState.libraryMode&&(node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library'),moduleCluster=node.cluster_source==='mathlib-module',namespace=node.cluster_source==='lean-namespace',kind=library?(moduleCluster?'Mathlib module':'Mathlib namespace'):(namespace?'Lean namespace':'Curated field'),path=node.module_path||node.namespace_path||node.title;
     const action=expanded?'Focus branch':(moduleCluster?'Expand one level':(library||namespace?'Expand namespace':'Expand field'));
