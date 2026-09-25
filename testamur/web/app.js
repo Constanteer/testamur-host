@@ -116,7 +116,7 @@ async function apiWrite(path, payload) {
 
 async function dashboard(force = false) {
   if (force) cache.dashboard = null;
-  if (!cache.dashboard) cache.dashboard = await api('/v1/dashboard', { limit: 100 }, { timeoutMs: 10000 });
+  if (!cache.dashboard) cache.dashboard = await api('/v1/dashboard', { limit: 30 }, { timeoutMs: 6000 });
   return cache.dashboard;
 }
 
