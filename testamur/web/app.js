@@ -634,20 +634,32 @@ async function verifyEmailPendingPage() {
     <span class="verification-kicker">EMAIL VERIFICATION</span>
     <h1>${sent ? 'Check your inbox' : 'We could not send the email'}</h1>
     <p>${sent
-      ? 'Open the verification link we sent to activate your account.'
-      : 'Your account exists, but the first delivery attempt failed. You can request another link below.'}</p>
+      ? 'We sent a 6-digit code and a verification link. Use whichever is easier.'
+      : 'Your account exists, but the first delivery attempt failed. Request another email below.'}</p>
     ${identifier ? `<div class="verification-address">${esc(identifier)}</div>` : ''}
+    <form class="verification-code-form" data-verification-code data-next="${esc(next)}">
+      <input name="identifier" type="hidden" value="${esc(identifier)}" />
+      <label>
+        <span>6-digit code</span>
+        <input class="verification-code-input" name="code" inputmode="numeric" autocomplete="one-time-code"
+          pattern="[0-9]{6}" maxlength="6" placeholder="000000" aria-label="6-digit verification code" required />
+      </label>
+      <button class="btn btn-primary account-submit" type="submit">Verify code</button>
+      <div class="verification-result" data-account-result aria-live="polite"></div>
+    </form>
+    <div class="verification-or"><span>or</span></div>
     <div class="verification-state ${sent ? '' : 'is-warning'}">
       <span class="verification-state-dot"></span>
-      <div><strong>${sent ? 'Waiting for verification' : 'Delivery failed'}</strong><small>${sent ? 'The link expires in 30 minutes.' : 'Your account stays locked until a verification email is delivered and opened.'}</small></div>
+      <div><strong>${sent ? 'Verification link also available' : 'Delivery failed'}</strong><small>${sent ? 'The code and link both expire in 30 minutes.' : 'Your account stays locked until a verification email is delivered.'}</small></div>
     </div>
     <form class="verification-actions" data-verification-resend>
       <input name="identifier" type="hidden" value="${esc(identifier)}" />
-      <button class="btn btn-primary account-submit" type="submit">Send another link</button>
+      <button class="btn btn-secondary account-submit" type="submit">Send another email</button>
       <div class="verification-result" data-account-result aria-live="polite"></div>
     </form>
     <div class="account-switch"><a data-nav href="/signin?next=${encodeURIComponent(next)}">Back to sign in</a></div>
   </section></div>`);
+  document.querySelector('[data-verification-code]')?.addEventListener('submit', submitVerificationCode);
   document.querySelector('[data-verification-resend]')?.addEventListener('submit', submitVerificationResend);
 }
 async function verifyEmailPage() {
@@ -1167,11 +1179,37 @@ async function submitVerificationResend(event) {
   try {
     await apiWrite('/v1/account/email-verification/resend', { identifier });
     result.innerHTML = '<span class="verification-result-note">Request accepted. Delivery is not confirmed until the email arrives.</span>';
-    button.textContent = 'Request another link';
+    button.textContent = 'Request another email';
   } catch (error) {
     result.innerHTML = `<span class="verification-result-error">${esc(error.message || error)}</span>`;
     button.textContent = 'Try again';
   } finally {
+    button.disabled = false;
+  }
+}
+
+async function submitVerificationCode(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const result = form.querySelector('[data-account-result]');
+  const button = form.querySelector('button[type="submit"]');
+  const identifier = form.elements.identifier.value.trim();
+  const code = form.elements.code.value.replace(/\D/g, '').slice(0, 6);
+  if (code.length !== 6) {
+    result.innerHTML = '<span class="verification-result-error">Enter the 6-digit code from the email.</span>';
+    return;
+  }
+  button.disabled = true;
+  button.textContent = 'Verifying…';
+  result.textContent = '';
+  try {
+    await apiWrite('/v1/account/email-verification/verify-code', { identifier, code });
+    await loadAccountState();
+    cache.dashboard = null;
+    navigate(safeNextPath(form.dataset.next));
+  } catch (error) {
+    result.innerHTML = `<span class="verification-result-error">${esc(error.message || error)}</span>`;
+    button.textContent = 'Verify code';
     button.disabled = false;
   }
 }

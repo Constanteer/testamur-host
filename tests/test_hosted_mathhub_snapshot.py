@@ -15,14 +15,14 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
     tasks = read(MATHHUB / "import-task-ui.js")
 
     assert "Explore formal mathematics." in argument
-    assert "Browse library" in library
+    assert "Browse Mathlib as mathematics." in library
     assert "Exact Lean record" in library
     assert '<code class="library-lean-name">' not in library
-    assert "Browse by area" in library
-    assert "Advanced Lean settings" in library
+    assert "Fields" in library
+    assert "<summary>Lean settings</summary>" in library
     assert "data-library-retry-setup" in library
-    assert "Your MathHub is ready for mathematics." in library
-    assert "Browse the math library" in library
+    assert "Your MathHub will not stay empty." in library
+    assert "Open Math library" in library
     assert "Show Lean proof" in argument
     assert "How these results connect." in argument
     registry = read(MATHHUB / "registry-client.js")

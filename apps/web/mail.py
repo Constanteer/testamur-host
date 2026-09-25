@@ -4,6 +4,7 @@ import hashlib
 import html
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -56,14 +57,17 @@ class ResendMailer:
             raise RuntimeError("TESTAMUR_PUBLIC_ORIGIN must use https outside local development")
         return cls(api_key=api_key, sender=sender, public_origin=origin)
 
-    def send_verification(self, *, user: dict[str, object], token: str) -> str:
+    def send_verification(self, *, user: dict[str, object], token: str, code: str) -> str:
         email = str(user.get("email") or "").strip()
         if not email:
             raise MailDeliveryError("verification recipient is missing")
         display_name = str(user.get("display_name") or user.get("username") or "there")
         verify_url = f"{self.public_origin}/verify-email?token={quote(token, safe='')}"
+        if not re.fullmatch(r"\d{6}", code):
+            raise MailDeliveryError("verification code must be 6 digits")
         safe_name = html.escape(display_name)
         safe_url = html.escape(verify_url, quote=True)
+        safe_code = html.escape(code)
         payload = {
             "from": self.sender,
             "to": [email],
@@ -74,6 +78,10 @@ class ResendMailer:
                 "<h1 style=\"font-size:22px;margin:0 0 16px\">Verify your Testamur email</h1>"
                 f"<p>Hi {safe_name},</p>"
                 "<p>Confirm this email address to activate your Testamur account.</p>"
+                "<p style=\"font-size:13px;color:#6b7280;margin-bottom:6px\">Verification code</p>"
+                f"<div style=\"font:700 30px ui-monospace,SFMono-Regular,Menlo,monospace;"
+                f"letter-spacing:8px;margin:0 0 24px\">{safe_code}</div>"
+                "<p style=\"font-size:13px;color:#6b7280\">Enter the code in Testamur, or use the link:</p>"
                 f"<p><a href=\"{safe_url}\" style=\"display:inline-block;padding:10px 16px;"
                 "background:#111827;color:#fff;text-decoration:none;border-radius:8px\">Verify email</a></p>"
                 "<p style=\"font-size:13px;color:#6b7280\">This link expires in 30 minutes. "

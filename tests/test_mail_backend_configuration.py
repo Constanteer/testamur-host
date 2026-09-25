@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from apps.web.mail import ResendMailer
 
@@ -49,6 +50,35 @@ class MailBackendConfigurationTests(unittest.TestCase):
         self.assertEqual(mailer.api_key, "re_test")
         self.assertEqual(mailer.sender, "Testamur <verify@example.test>")
         self.assertEqual(mailer.public_origin, "https://testamur.example")
+
+    def test_verification_email_contains_code_and_link(self) -> None:
+        mailer = ResendMailer(
+            api_key="re_test",
+            sender="Testamur <verify@testamur.org>",
+            public_origin="https://testamur.org",
+        )
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        response.read.return_value = b'{"id":"email_test"}'
+        response.status = 200
+        response.getcode.return_value = 200
+        with patch("apps.web.mail.urllib.request.urlopen", return_value=response) as opened:
+            email_id = mailer.send_verification(
+                user={
+                    "user_id": "usr_test",
+                    "email": "person@example.com",
+                    "display_name": "Person",
+                },
+                token="verification-token-value",
+                code="123456",
+            )
+        self.assertEqual(email_id, "email_test")
+        request = opened.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertIn("123456", payload["html"])
+        self.assertIn("/verify-email?token=verification-token-value", payload["html"])
+        self.assertEqual(payload["to"], ["person@example.com"])
 
     def test_unknown_backend_fails_closed(self) -> None:
         with self.env(TESTAMUR_MAIL_BACKEND="smtp", RESEND_API_KEY="re_test"):
