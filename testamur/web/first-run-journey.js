@@ -44,19 +44,7 @@
     });
   }
 
-  function isJourneyNode(node) {
-    if (!(node instanceof Element)) return false;
-    return node.matches('[data-first-run-journey]') || Boolean(node.closest('[data-first-run-journey]'));
-  }
-
-  const observer = new MutationObserver(mutations => {
-    const externalMutation = mutations.some(mutation => {
-      const changed = [...mutation.addedNodes, ...mutation.removedNodes].filter(node => node instanceof Element);
-      return changed.some(node => !isJourneyNode(node));
-    });
-    if (externalMutation) queueRender();
-  });
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  addEventListener('testamur:rendered', queueRender);
   addEventListener('popstate', queueRender);
   addEventListener('DOMContentLoaded', queueRender);
 })();
