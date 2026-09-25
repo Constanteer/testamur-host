@@ -1280,6 +1280,199 @@ def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dic
 
 
 
+
+def library_declaration_dependencies_batch(
+    names: list[str], *, context_module: str = ""
+) -> dict[str, Any]:
+    """Prefetch direct dependency neighborhoods with at most one Lean process.
+
+    The browser uses this as look-ahead: visible dependency nodes are inspected
+    before the user opens them, so walking the graph normally becomes cache-only.
+    """
+    cleaned = list(
+        dict.fromkeys(str(name or "").strip() for name in (names or []) if str(name or "").strip())
+    )
+    if not cleaned:
+        return {"ok": True, "items": [], "lean_invocations": 0, "cache_hits": 0}
+    if len(cleaned) > 24:
+        cleaned = cleaned[:24]
+    for name in cleaned:
+        if not core.LEAN_NAME_RE.fullmatch(name):
+            raise ValueError(f"invalid declaration name: {name}")
+
+    runtime = core.runtime_status()
+    environment_hash = str(runtime.get("environment_hash") or "")
+    if not runtime.get("ready") or not environment_hash:
+        return {
+            "ok": False,
+            "ready": False,
+            "error": str(runtime.get("message") or "Lean environment unavailable"),
+        }
+
+    cached_items: dict[str, dict[str, Any]] = {}
+    unresolved: list[str] = []
+    for name in cleaned:
+        cached = _cached_library_theorem_detail(environment_hash, name)
+        if cached and cached.get("dependency_graph_version") == "lean-direct-fast-v2":
+            cached_items[name] = cached
+        else:
+            unresolved.append(name)
+
+    if not unresolved:
+        return {
+            "ok": True,
+            "ready": True,
+            "items": [cached_items[name] for name in cleaned],
+            "lean_invocations": 0,
+            "cache_hits": len(cleaned),
+            "inspection_mode": "cache-only",
+        }
+
+    module = str(context_module or "").strip()
+    if module and not core.LEAN_NAME_RE.fullmatch(module):
+        module = ""
+    inspection_imports = [module] if module else ["Mathlib"]
+    inspected = core.inspect_direct_dependencies_batch(
+        {"imports": inspection_imports, "declaration_names": unresolved}
+    )
+    if not inspected.get("ok"):
+        return {
+            "ok": False,
+            "ready": True,
+            "items": list(cached_items.values()),
+            "error": str(inspected.get("error") or inspected.get("output") or "batch dependency inspection failed"),
+            "duration_ms": int(inspected.get("duration_ms") or 0),
+        }
+
+    raw_items = {
+        str(item.get("declaration_name") or ""): item
+        for item in inspected.get("items") or []
+        if item.get("ok") and item.get("declaration_name")
+    }
+    all_names = set(unresolved)
+    for item in raw_items.values():
+        all_names.update(str(dep) for dep in item.get("direct_dependencies") or [] if str(dep))
+
+    metadata: dict[str, dict[str, Any]] = {}
+    if all_names:
+        placeholders = ",".join("?" for _ in all_names)
+        with core.FORMAL.connect() as conn:
+            _ensure_global_cache_schema(conn)
+            rows = conn.execute(
+                f"""SELECT lean_name,namespace,short_name,source_module,source_path,source_line
+                    FROM library_global_theorems
+                    WHERE environment_hash=? AND lean_name IN ({placeholders})""",
+                (environment_hash, *sorted(all_names)),
+            ).fetchall()
+        metadata = {str(row["lean_name"]): dict(row) for row in rows}
+
+    now = utc_now()
+    created: dict[str, dict[str, Any]] = {}
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        for name in unresolved:
+            raw = raw_items.get(name)
+            if raw is None:
+                continue
+            statement = [str(dep) for dep in raw.get("statement_dependencies") or [] if str(dep) and str(dep) != name]
+            proof = [str(dep) for dep in raw.get("proof_dependencies") or [] if str(dep) and str(dep) != name]
+            direct = list(dict.fromkeys([*statement, *proof]))
+            roles: dict[str, list[str]] = {}
+            for dep in statement:
+                roles.setdefault(dep, []).append("statement")
+            for dep in proof:
+                roles.setdefault(dep, []).append("proof")
+
+            root_meta = metadata.get(name)
+            nodes: list[dict[str, Any]] = [{
+                "id": f"LIB:{name}",
+                "kind": "library-declaration",
+                "lean_name": name,
+                "title": str(root_meta["short_name"]) if root_meta else name.rsplit(".", 1)[-1],
+                "namespace_path": str(root_meta["namespace"]) if root_meta else (name.rsplit(".", 1)[0] if "." in name else ""),
+                "source_module": str(root_meta["source_module"]) if root_meta else "",
+                "source_path": str(root_meta["source_path"]) if root_meta else "",
+                "source_line": int(root_meta["source_line"] or 0) if root_meta else 0,
+                "dependency_root": False,
+                "dependency_depth": 0,
+            }]
+            for dep in direct:
+                dep_meta = metadata.get(dep)
+                nodes.append({
+                    "id": f"LIB:{dep}",
+                    "kind": "library-declaration",
+                    "lean_name": dep,
+                    "title": str(dep_meta["short_name"]) if dep_meta else dep.rsplit(".", 1)[-1],
+                    "namespace_path": str(dep_meta["namespace"]) if dep_meta else (dep.rsplit(".", 1)[0] if "." in dep else ""),
+                    "source_module": str(dep_meta["source_module"]) if dep_meta else "",
+                    "source_path": str(dep_meta["source_path"]) if dep_meta else "",
+                    "source_line": int(dep_meta["source_line"] or 0) if dep_meta else 0,
+                    "dependency_roles": roles.get(dep, []),
+                    "dependency_depth": 1,
+                })
+            edges = [{
+                "from": f"LIB:{name}",
+                "to": f"LIB:{dep}",
+                "evidence_kind": "lean-dependency",
+                "dependency_roles": roles.get(dep, []),
+                "proof_count": 0,
+                "proof_ids": [],
+            } for dep in direct]
+            result = {
+                "ok": True,
+                "ready": True,
+                "cache_hit": False,
+                "prefetched": True,
+                "dependency_graph_version": "lean-direct-fast-v2",
+                "inspection_mode": "lean-direct-batch",
+                "lean_invocations": 1,
+                "inspection_imports": inspection_imports,
+                "environment_hash": environment_hash,
+                "declaration_name": name,
+                "pretty_type": str(raw.get("pretty_type") or ""),
+                "statement_dependencies": statement,
+                "proof_dependencies": proof,
+                "direct_dependencies": direct,
+                "direct_dependency_count": len(direct),
+                "transitive_dependencies": [],
+                "transitive_dependency_count": 0,
+                "transitive_complete": False,
+                "axioms": [],
+                "nodes": nodes,
+                "edges": edges,
+                "duration_ms": int(inspected.get("duration_ms") or 0),
+                "verification_note": (
+                    "Prefetched direct Lean declaration/proof constants. "
+                    "Arrow direction is dependent -> dependency."
+                ),
+            }
+            created[name] = result
+            conn.execute(
+                """INSERT OR REPLACE INTO library_theorem_details(
+                       environment_hash,lean_name,detail_json,inspected_at
+                   ) VALUES(?,?,?,?)""",
+                (
+                    environment_hash,
+                    name,
+                    json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+                    now,
+                ),
+            )
+
+    combined = {**cached_items, **created}
+    return {
+        "ok": True,
+        "ready": True,
+        "items": [combined[name] for name in cleaned if name in combined],
+        "lean_invocations": 1,
+        "cache_hits": len(cached_items),
+        "prefetched": len(created),
+        "duration_ms": int(inspected.get("duration_ms") or 0),
+        "inspection_mode": "lean-direct-batch",
+    }
+
+
+
 def random_library_theorem() -> dict[str, Any]:
     status = global_library_status()
     environment_hash = str(status.get("environment_hash") or "")
