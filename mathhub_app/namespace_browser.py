@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import server as core
@@ -58,25 +61,166 @@ def _namespace_scan_lock(environment_hash: str, imports_hash: str, namespace: st
             _NAMESPACE_SCAN_LOCKS[key] = lock
         return lock
 
-LEAN_GLOBAL_LIBRARY_COMMAND = r'''
-open Lean Elab Command
+MATHLIB_DECL_RE = re.compile(
+    r"^\s*(?P<prefix>(?:(?:@\[[^\]]*\]\s*)|(?:(?:private|protected|noncomputable|unsafe)\s+))*)"
+    r"(?P<kind>theorem|lemma)\s+"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)\b"
+)
+MATHLIB_NAMESPACE_RE = re.compile(
+    r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)\s*$"
+)
+MATHLIB_SECTION_RE = re.compile(
+    r"^\s*section(?:\s+([A-Za-z_][A-Za-z0-9_']*))?\s*$"
+)
+MATHLIB_END_RE = re.compile(
+    r"^\s*end(?:\s+([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*))?\s*$"
+)
 
-elab "#mathhub_scan_library" : command => do
-  let env ← getEnv
-  let mut theoremNames : Array Name := #[]
-  for (name, info) in env.constants do
-    if !name.isInternal then
-      match info with
-      | .thmInfo _ => theoremNames := theoremNames.push name
-      | _ => pure ()
-  let sortedNames := theoremNames.qsort Name.quickLt
-  logInfo m!"MATHHUB_LIBRARY_COUNT:{sortedNames.size}"
-  let mut emitted := 0
-  for name in sortedNames do
-    if emitted < __MATHHUB_GLOBAL_THEOREM_LIMIT__ then
-      logInfo m!"MATHHUB_LIBRARY_ITEM:{name}"
-      emitted := emitted + 1
-'''
+
+def _mathlib_source_root() -> Path:
+    override = os.environ.get("MATHHUB_MATHLIB_SOURCE_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return (core.ROOT / ".lake" / "packages" / "mathlib" / "Mathlib").resolve()
+
+
+def _strip_lean_comments(lines: list[str]) -> list[str]:
+    """Remove Lean line/nested block comments while preserving line structure."""
+    cleaned: list[str] = []
+    block_depth = 0
+    for raw in lines:
+        out: list[str] = []
+        i = 0
+        in_string = False
+        escaped = False
+        while i < len(raw):
+            if block_depth:
+                if raw.startswith("/-", i):
+                    block_depth += 1
+                    i += 2
+                    continue
+                if raw.startswith("-/", i):
+                    block_depth -= 1
+                    i += 2
+                    continue
+                i += 1
+                continue
+            ch = raw[i]
+            if in_string:
+                out.append(ch)
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                i += 1
+                continue
+            if raw.startswith("--", i):
+                break
+            if raw.startswith("/-", i):
+                block_depth = 1
+                i += 2
+                continue
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+            i += 1
+        cleaned.append("".join(out))
+    return cleaned
+
+
+def _declaration_source(lines: list[str], start: int, *, max_lines: int = 48) -> str:
+    """Capture a readable theorem/lemma declaration header without its proof."""
+    parts: list[str] = []
+    for raw in lines[start : min(len(lines), start + max_lines)]:
+        line = raw.rstrip()
+        parts.append(line)
+        joined = "\n".join(parts)
+        marker = joined.find(":=")
+        if marker >= 0:
+            return joined[:marker].strip()
+        if len(parts) > 1 and re.match(r"^\s*(?:theorem|lemma|def|namespace|section|end)\b", line):
+            parts.pop()
+            break
+    return "\n".join(parts).strip()
+
+
+def _scan_mathlib_source_tree() -> tuple[list[dict[str, Any]], int, int]:
+    """Index public theorem/lemma declarations from the installed Mathlib sources.
+
+    This is deliberately a source-file navigation index. It does not invoke Lean
+    and does not claim kernel verification; explicit Import remains that boundary.
+    """
+    root = _mathlib_source_root()
+    if not root.is_dir():
+        raise FileNotFoundError(f"Mathlib source tree not found: {root}")
+
+    entries: list[dict[str, Any]] = []
+    total_seen = 0
+    files_scanned = 0
+    for file_path in sorted(root.rglob("*.lean")):
+        try:
+            original = file_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        files_scanned += 1
+        code = _strip_lean_comments(original)
+        block_stack: list[tuple[str, tuple[str, ...]]] = []
+        namespace_parts: list[str] = []
+
+        for index, line in enumerate(code):
+            ns_match = MATHLIB_NAMESPACE_RE.match(line)
+            if ns_match:
+                parts = tuple(part for part in ns_match.group(1).split(".") if part)
+                namespace_parts.extend(parts)
+                block_stack.append(("namespace", parts))
+                continue
+            section_match = MATHLIB_SECTION_RE.match(line)
+            if section_match:
+                block_stack.append(("section", ()))
+                continue
+            if MATHLIB_END_RE.match(line):
+                if block_stack:
+                    kind, parts = block_stack.pop()
+                    if kind == "namespace" and parts:
+                        del namespace_parts[-len(parts):]
+                continue
+
+            decl = MATHLIB_DECL_RE.match(line)
+            if not decl:
+                continue
+            prefix = str(decl.group("prefix") or "")
+            if re.search(r"\bprivate\s+", prefix):
+                continue
+            raw_name = str(decl.group("name"))
+            full_name = ".".join([*namespace_parts, raw_name]) if namespace_parts else raw_name
+            total_seen += 1
+            if len(entries) >= MAX_GLOBAL_LIBRARY_THEOREMS:
+                continue
+
+            relative = file_path.relative_to(root)
+            module_parts = ("Mathlib", *relative.with_suffix("").parts)
+            entries.append(
+                {
+                    "lean_name": full_name,
+                    "namespace": full_name.rsplit(".", 1)[0] if "." in full_name else "",
+                    "short_name": full_name.rsplit(".", 1)[-1],
+                    "source_module": ".".join(module_parts),
+                    "source_path": str(Path("Mathlib") / relative),
+                    "source_line": index + 1,
+                    "declaration_source": _declaration_source(original, index),
+                }
+            )
+
+    # A duplicated declaration name cannot coexist in one Lean environment. If
+    # source parsing encounters generated/shadowed text, retain one deterministic
+    # source location rather than inventing multiple library nodes.
+    deduped: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        deduped.setdefault(str(entry["lean_name"]), entry)
+    return list(deduped.values()), total_seen, files_scanned
+
 
 LEAN_NAMESPACE_COMMAND = r'''
 open Lean Elab Command
@@ -114,21 +258,6 @@ def imports_fingerprint(imports: list[str]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def global_library_source(imports: list[str]) -> str:
-    import_lines = "\n".join(f"import {module}" for module in imports)
-    command = LEAN_GLOBAL_LIBRARY_COMMAND.replace(
-        "__MATHHUB_GLOBAL_THEOREM_LIMIT__",
-        str(MAX_GLOBAL_LIBRARY_THEOREMS),
-    )
-    return f"{import_lines}\n\n{command}\n#mathhub_scan_library\n"
-
-
-def parse_global_library(output: str) -> tuple[list[str], list[tuple[str, str]], int]:
-    names = sorted(set(core.parse_marker(output, "MATHHUB_LIBRARY_ITEM:")))
-    count_match = re.search(r"MATHHUB_LIBRARY_COUNT:([0-9]+)", output or "")
-    total = int(count_match.group(1)) if count_match else len(names)
-    return names, [], total
-
 def _ensure_global_cache_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
@@ -147,6 +276,10 @@ def _ensure_global_cache_schema(conn: sqlite3.Connection) -> None:
             lean_name TEXT NOT NULL,
             namespace TEXT NOT NULL,
             short_name TEXT NOT NULL,
+            source_module TEXT NOT NULL DEFAULT '',
+            source_path TEXT NOT NULL DEFAULT '',
+            source_line INTEGER NOT NULL DEFAULT 0,
+            declaration_source TEXT NOT NULL DEFAULT '',
             PRIMARY KEY(environment_hash, lean_name)
         );
         CREATE INDEX IF NOT EXISTS idx_library_global_namespace
@@ -170,6 +303,18 @@ def _ensure_global_cache_schema(conn: sqlite3.Connection) -> None:
             ON library_global_edges(environment_hash, target_name);
         """
     )
+    columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(library_global_theorems)").fetchall()
+    }
+    for name, ddl in (
+        ("source_module", "TEXT NOT NULL DEFAULT ''"),
+        ("source_path", "TEXT NOT NULL DEFAULT ''"),
+        ("source_line", "INTEGER NOT NULL DEFAULT 0"),
+        ("declaration_source", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE library_global_theorems ADD COLUMN {name} {ddl}")
 
 
 def _global_scan_record(environment_hash: str) -> dict[str, Any] | None:
@@ -185,17 +330,16 @@ def _global_scan_record(environment_hash: str) -> dict[str, Any] | None:
 def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
     environment = core.runtime_status()
     if not environment.get("ready"):
-        error = str(environment.get("message") or "Lean environment unavailable")
+        error = str(environment.get("message") or "Mathlib environment unavailable")
         _set_global_library_state(state="idle", last_error=error)
         return {"ok": False, "ready": False, "error": error}
     environment_hash = str(environment.get("environment_hash") or "")
     if not environment_hash:
-        error = "pinned Lean environment has no environment hash"
+        error = "pinned Mathlib environment has no environment hash"
         _set_global_library_state(state="error", last_error=error)
         return {"ok": False, "ready": False, "error": error}
 
-    imports = ["Mathlib"]
-    imports_hash = imports_fingerprint(imports)
+    imports_hash = imports_fingerprint(["Mathlib"])
     existing = None if refresh else _global_scan_record(environment_hash)
     if existing is not None:
         _set_global_library_state(
@@ -205,20 +349,27 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
             last_error=None,
             last_duration_ms=int(existing.get("duration_ms") or 0),
         )
-        return {"ok": True, "ready": True, "cache_hit": True, **existing}
+        return {
+            "ok": True,
+            "ready": True,
+            "cache_hit": True,
+            "index_method": "mathlib-source-files",
+            "lean_invocations": 0,
+            **existing,
+        }
 
     lock = _namespace_scan_lock(environment_hash, imports_hash, "__GLOBAL__")
     with lock:
         existing = None if refresh else _global_scan_record(environment_hash)
         if existing is not None:
-            _set_global_library_state(
-                state="ready",
-                environment_hash=environment_hash,
-                finished_at=existing.get("scanned_at"),
-                last_error=None,
-                last_duration_ms=int(existing.get("duration_ms") or 0),
-            )
-            return {"ok": True, "ready": True, "cache_hit": True, **existing}
+            return {
+                "ok": True,
+                "ready": True,
+                "cache_hit": True,
+                "index_method": "mathlib-source-files",
+                "lean_invocations": 0,
+                **existing,
+            }
 
         state = _global_library_state()
         _set_global_library_state(
@@ -229,32 +380,29 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
             finished_at=None,
             last_error=None,
         )
-        run = core.invoke_lean(
-            global_library_source(imports),
-            timeout_seconds=max(core.INDEX_TIMEOUT_SECONDS, 180),
-        )
-        if not run.get("ok"):
-            error = str(
-                run.get("engine_error")
-                or run.get("output")
-                or "Lean library scan failed"
-            )[-4000:]
+        started = time.perf_counter()
+        try:
+            entries, total, files_scanned = _scan_mathlib_source_tree()
+        except (OSError, ValueError) as exc:
+            duration_ms = round((time.perf_counter() - started) * 1000)
+            error = str(exc)
             _set_global_library_state(
                 state="error",
                 finished_at=utc_now(),
                 last_error=error,
-                last_duration_ms=int(run.get("duration_ms") or 0),
+                last_duration_ms=duration_ms,
             )
             return {
                 "ok": False,
                 "ready": False,
                 "cache_hit": False,
+                "index_method": "mathlib-source-files",
+                "lean_invocations": 0,
                 "error": error,
-                "duration_ms": int(run.get("duration_ms") or 0),
+                "duration_ms": duration_ms,
             }
 
-        names, _edges, total = parse_global_library(str(run.get("output") or ""))
-        names = names[:MAX_GLOBAL_LIBRARY_THEOREMS]
+        duration_ms = round((time.perf_counter() - started) * 1000)
         now = utc_now()
         with core.FORMAL.connect() as conn:
             _ensure_global_cache_schema(conn)
@@ -266,19 +414,24 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
                 "DELETE FROM library_global_edges WHERE environment_hash=?",
                 (environment_hash,),
             )
-            if names:
+            if entries:
                 conn.executemany(
-                    """INSERT INTO library_global_theorems(
-                           environment_hash,lean_name,namespace,short_name
-                       ) VALUES(?,?,?,?)""",
+                    """INSERT OR REPLACE INTO library_global_theorems(
+                           environment_hash,lean_name,namespace,short_name,
+                           source_module,source_path,source_line,declaration_source
+                       ) VALUES(?,?,?,?,?,?,?,?)""",
                     [
                         (
                             environment_hash,
-                            name,
-                            name.rsplit(".", 1)[0] if "." in name else "",
-                            name.rsplit(".", 1)[-1],
+                            entry["lean_name"],
+                            entry["namespace"],
+                            entry["short_name"],
+                            entry["source_module"],
+                            entry["source_path"],
+                            int(entry["source_line"]),
+                            entry["declaration_source"],
                         )
-                        for name in names
+                        for entry in entries
                     ],
                 )
             conn.execute(
@@ -298,10 +451,10 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
                     environment_hash,
                     imports_hash,
                     total,
-                    len(names),
+                    len(entries),
                     0,
-                    1 if total <= len(names) else 0,
-                    int(run.get("duration_ms") or 0),
+                    1 if total <= len(entries) else 0,
+                    duration_ms,
                     now,
                 ),
             )
@@ -311,21 +464,25 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
             environment_hash=environment_hash,
             finished_at=now,
             last_error=None,
-            last_duration_ms=int(run.get("duration_ms") or 0),
+            last_duration_ms=duration_ms,
         )
         return {
             "ok": True,
             "ready": True,
             "cache_hit": False,
+            "index_method": "mathlib-source-files",
+            "lean_invocations": 0,
             "environment_hash": environment_hash,
             "imports_hash": imports_hash,
             "total_theorems": total,
-            "indexed_theorems": len(names),
+            "indexed_theorems": len(entries),
             "indexed_edges": 0,
-            "complete": total <= len(names),
-            "duration_ms": int(run.get("duration_ms") or 0),
+            "files_scanned": files_scanned,
+            "complete": total <= len(entries),
+            "duration_ms": duration_ms,
             "scanned_at": now,
         }
+
 
 def global_library_status() -> dict[str, Any]:
     environment = core.runtime_status()
@@ -347,6 +504,9 @@ def global_library_status() -> dict[str, Any]:
         "environment_hash": environment_hash,
         "indexed": record is not None,
         "scan": record,
+        "index_method": "mathlib-source-files",
+        "lean_invocations": 0,
+        "source_root": str(_mathlib_source_root()),
         **lifecycle,
     }
 
@@ -525,95 +685,61 @@ def _cached_library_theorem_detail(
 
 
 def library_theorem_detail(name: str, *, refresh: bool = False) -> dict[str, Any]:
+    """Return browsing detail from the installed Mathlib source index.
+
+    No Lean process runs here. Kernel/dependency evidence is intentionally
+    deferred until explicit Import as Claim.
+    """
     name = str(name or "").strip()
     if not name or not core.LEAN_NAME_RE.fullmatch(name):
         raise ValueError("name must be a conservative Lean identifier")
 
     runtime = core.runtime_status()
-    if not runtime.get("ready"):
-        return {
-            "ok": False,
-            "ready": False,
-            "error": str(runtime.get("message") or "Lean environment unavailable"),
-        }
     environment_hash = str(runtime.get("environment_hash") or "")
     if not environment_hash:
         return {"ok": False, "ready": False, "error": "missing environment hash"}
-    if not _library_theorem_exists(environment_hash, name):
-        raise ValueError("theorem is not present in the indexed Mathlib environment")
 
-    if not refresh:
-        cached = _cached_library_theorem_detail(environment_hash, name)
-        if cached is not None:
-            return cached
-
-    inspected = core.inspect_declaration(
-        {"imports": ["Mathlib"], "declaration_name": name}
-    )
-    if not inspected.get("ok"):
-        return {
-            "ok": False,
-            "ready": True,
-            "declaration_name": name,
-            "error": str(
-                inspected.get("error")
-                or inspected.get("engine_error")
-                or inspected.get("output")
-                or "Lean could not inspect theorem"
-            )[-4000:],
-            "duration_ms": int(inspected.get("duration_ms") or 0),
-        }
-
-    statement_dependencies = [
-        str(item) for item in (inspected.get("statement_dependencies") or [])
-    ]
-    proof_dependencies = [
-        str(item) for item in (inspected.get("proof_dependencies") or [])
-    ]
-    transitive_dependencies = [
-        str(item) for item in (inspected.get("transitive_dependencies") or [])
-    ]
-    axioms = [str(item) for item in (inspected.get("axioms") or [])]
-
-    detail = {
-        "ok": True,
-        "ready": True,
-        "cache_hit": False,
-        "environment_hash": environment_hash,
-        "declaration_name": name,
-        "namespace": name.rsplit(".", 1)[0] if "." in name else "",
-        "short_name": name.rsplit(".", 1)[-1],
-        "pretty_type": str(inspected.get("pretty_type") or ""),
-        "type_hash": str(inspected.get("type_hash") or ""),
-        "formal_fingerprint": str(inspected.get("formal_fingerprint") or ""),
-        "axioms": axioms,
-        "statement_dependencies": statement_dependencies[:160],
-        "statement_dependency_count": len(statement_dependencies),
-        "proof_dependencies": proof_dependencies[:160],
-        "proof_dependency_count": len(proof_dependencies),
-        "transitive_dependencies": transitive_dependencies[:240],
-        "transitive_dependency_count": len(transitive_dependencies),
-        "duration_ms": int(inspected.get("duration_ms") or 0),
-    }
-    inspected_at = utc_now()
     with core.FORMAL.connect() as conn:
         _ensure_global_cache_schema(conn)
-        conn.execute(
-            """INSERT INTO library_theorem_details(
-                   environment_hash,lean_name,detail_json,inspected_at
-               ) VALUES(?,?,?,?)
-               ON CONFLICT(environment_hash,lean_name) DO UPDATE SET
-                   detail_json=excluded.detail_json,
-                   inspected_at=excluded.inspected_at""",
-            (
-                environment_hash,
-                name,
-                json.dumps(detail, ensure_ascii=False, separators=(",", ":")),
-                inspected_at,
-            ),
-        )
-    detail["inspected_at"] = inspected_at
-    return detail
+        row = conn.execute(
+            """SELECT lean_name,namespace,short_name,source_module,source_path,
+                      source_line,declaration_source
+               FROM library_global_theorems
+               WHERE environment_hash=? AND lean_name=?""",
+            (environment_hash, name),
+        ).fetchone()
+    if row is None:
+        raise ValueError("theorem is not present in the indexed Mathlib sources")
+
+    registered = _registered_names([name], environment_hash)
+    declaration = str(row["declaration_source"] or "")
+    return {
+        "ok": True,
+        "ready": True,
+        "cache_hit": True,
+        "inspection_mode": "source-index",
+        "lean_invocations": 0,
+        "environment_hash": environment_hash,
+        "declaration_name": name,
+        "namespace": str(row["namespace"] or ""),
+        "short_name": str(row["short_name"] or ""),
+        "source_module": str(row["source_module"] or ""),
+        "source_path": str(row["source_path"] or ""),
+        "source_line": int(row["source_line"] or 0),
+        "source_declaration": declaration,
+        "pretty_type": declaration,
+        "axioms": [],
+        "statement_dependencies": [],
+        "statement_dependency_count": 0,
+        "proof_dependencies": [],
+        "proof_dependency_count": 0,
+        "transitive_dependencies": [],
+        "transitive_dependency_count": 0,
+        "duration_ms": 0,
+        "registered": name in registered,
+        "claim_id": registered.get(name),
+        "verification_note": "Browsing metadata comes from installed Mathlib source files; explicit Import performs Lean verification.",
+    }
 
 
 def random_library_theorem() -> dict[str, Any]:
