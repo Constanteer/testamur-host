@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import server as core
+from presentation import canonical_from_declaration
 from registry import claim_ref
 
 
@@ -222,6 +223,112 @@ def _scan_mathlib_source_tree() -> tuple[list[dict[str, Any]], int, int]:
     return list(deduped.values()), total_seen, files_scanned
 
 
+LEAN_REFERENCE_TOKEN_RE = re.compile(
+    r"\b[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*\b"
+)
+LEAN_REFERENCE_IGNORED = {
+    "theorem", "lemma", "private", "protected", "noncomputable", "unsafe",
+    "where", "by", "let", "fun", "forall", "if", "then", "else", "match",
+    "with", "Type", "Prop", "Sort", "True", "False",
+}
+
+
+def _resolve_source_reference(
+    token: str,
+    *,
+    namespace: str,
+    known_names: set[str],
+) -> str | None:
+    if token in LEAN_REFERENCE_IGNORED:
+        return None
+    if token in known_names:
+        return token
+    # Lean source commonly uses an unqualified theorem from the current or a
+    # parent namespace. Resolve only those deterministic namespace candidates;
+    # do not guess through imports/open namespaces, which would create fake
+    # mathematical edges in a browsing index.
+    if "." not in token and namespace:
+        parts = namespace.split(".")
+        for end in range(len(parts), 0, -1):
+            candidate = ".".join([*parts[:end], token])
+            if candidate in known_names:
+                return candidate
+    return None
+
+
+def _build_source_reference_edges(
+    entries: list[dict[str, Any]],
+) -> list[tuple[str, str]]:
+    """Build conservative theorem-statement reference edges without running Lean.
+
+    These are navigation/source-index edges only. They intentionally remain
+    distinct from verified ProofDependency evidence created by explicit Import.
+    """
+    known_names = {str(entry.get("lean_name") or "") for entry in entries}
+    known_names.discard("")
+    edges: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in entries:
+        source = str(entry.get("lean_name") or "")
+        if not source:
+            continue
+        declaration = str(entry.get("declaration_source") or "")
+        namespace = str(entry.get("namespace") or "")
+        per_source = 0
+        for token in LEAN_REFERENCE_TOKEN_RE.findall(declaration):
+            target = _resolve_source_reference(
+                token, namespace=namespace, known_names=known_names
+            )
+            if not target or target == source:
+                continue
+            edge = (source, target)
+            if edge in seen:
+                continue
+            seen.add(edge)
+            edges.append(edge)
+            per_source += 1
+            if len(edges) >= MAX_GLOBAL_LIBRARY_EDGES:
+                return edges
+            # One giant theorem signature should not monopolize the global edge
+            # budget or turn a local expansion into a hairball.
+            if per_source >= 24:
+                break
+    return edges
+
+
+def _rebuild_global_edges_from_cached_index(environment_hash: str) -> int:
+    """Backfill source-reference edges for pre-edge global indexes in place."""
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        rows = conn.execute(
+            """SELECT lean_name,namespace,declaration_source
+               FROM library_global_theorems
+               WHERE environment_hash=?
+               ORDER BY lean_name""",
+            (environment_hash,),
+        ).fetchall()
+        entries = [dict(row) for row in rows]
+        edges = _build_source_reference_edges(entries)
+        conn.execute(
+            "DELETE FROM library_global_edges WHERE environment_hash=?",
+            (environment_hash,),
+        )
+        if edges:
+            conn.executemany(
+                """INSERT OR IGNORE INTO library_global_edges(
+                       environment_hash,source_name,target_name
+                   ) VALUES(?,?,?)""",
+                [(environment_hash, source, target) for source, target in edges],
+            )
+        conn.execute(
+            """UPDATE library_global_scans
+               SET indexed_edges=?
+               WHERE environment_hash=?""",
+            (len(edges), environment_hash),
+        )
+    return len(edges)
+
+
 LEAN_NAMESPACE_COMMAND = r'''
 open Lean Elab Command
 
@@ -342,6 +449,11 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
     imports_hash = imports_fingerprint(["Mathlib"])
     existing = None if refresh else _global_scan_record(environment_hash)
     if existing is not None:
+        if int(existing.get("indexed_edges") or 0) == 0 and int(existing.get("indexed_theorems") or 0) > 0:
+            existing = {
+                **existing,
+                "indexed_edges": _rebuild_global_edges_from_cached_index(environment_hash),
+            }
         _set_global_library_state(
             state="ready",
             environment_hash=environment_hash,
@@ -362,6 +474,11 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
     with lock:
         existing = None if refresh else _global_scan_record(environment_hash)
         if existing is not None:
+            if int(existing.get("indexed_edges") or 0) == 0 and int(existing.get("indexed_theorems") or 0) > 0:
+                existing = {
+                    **existing,
+                    "indexed_edges": _rebuild_global_edges_from_cached_index(environment_hash),
+                }
             return {
                 "ok": True,
                 "ready": True,
@@ -402,6 +519,7 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
                 "duration_ms": duration_ms,
             }
 
+        edges = _build_source_reference_edges(entries)
         duration_ms = round((time.perf_counter() - started) * 1000)
         now = utc_now()
         with core.FORMAL.connect() as conn:
@@ -434,6 +552,13 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
                         for entry in entries
                     ],
                 )
+            if edges:
+                conn.executemany(
+                    """INSERT OR IGNORE INTO library_global_edges(
+                           environment_hash,source_name,target_name
+                       ) VALUES(?,?,?)""",
+                    [(environment_hash, source, target) for source, target in edges],
+                )
             conn.execute(
                 """INSERT INTO library_global_scans(
                        environment_hash,imports_hash,total_theorems,indexed_theorems,indexed_edges,
@@ -452,7 +577,7 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
                     imports_hash,
                     total,
                     len(entries),
-                    0,
+                    len(edges),
                     1 if total <= len(entries) else 0,
                     duration_ms,
                     now,
@@ -476,7 +601,7 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
             "imports_hash": imports_hash,
             "total_theorems": total,
             "indexed_theorems": len(entries),
-            "indexed_edges": 0,
+            "indexed_edges": len(edges),
             "files_scanned": files_scanned,
             "complete": total <= len(entries),
             "duration_ms": duration_ms,
@@ -522,12 +647,11 @@ def _module_path_from_source(source_module: str) -> str:
 
 
 def global_library_world() -> dict[str, Any]:
-    """Return a small first layer grouped by Mathlib source modules.
+    """Return the Mathlib root plus its first source-module layer.
 
-    Lean namespaces are excellent identifiers but poor first-screen navigation:
-    current Mathlib has thousands of top-level namespace roots. Source modules
-    provide a much smaller, human-recognizable hierarchy such as Algebra,
-    Analysis, Topology and NumberTheory.
+    Containment edges are explicit so the first screen is a graph rather than a
+    cloud of unrelated circles. The root is navigational; theorem dependency
+    edges appear when theorem-bearing branches are expanded.
     """
     status = global_library_status()
     environment_hash = str(status.get("environment_hash") or "")
@@ -543,51 +667,61 @@ def global_library_world() -> dict[str, Any]:
         ).fetchall()
 
     counts: dict[str, int] = {}
-    root_count = 0
     for row in rows:
         module_path = _module_path_from_source(str(row["source_module"] or ""))
         if not module_path:
-            root_count += 1
             continue
         root = module_path.split(".", 1)[0]
         counts[root] = counts.get(root, 0) + 1
 
-    nodes = [
+    root_id = "LIBMOD:(root)"
+    nodes: list[dict[str, Any]] = [
         {
-            "id": f"LIBMOD:{module}",
+            "id": root_id,
             "kind": "cluster",
             "cluster_source": "mathlib-module",
-            "cluster_key": f"libmod:{module}",
-            "module_path": module,
-            "namespace_path": module,
-            "title": module,
-            "claim_count": count,
-            "library_count": count,
+            "cluster_key": "libmod:(root)",
+            "module_path": "(root)",
+            "namespace_path": "(root)",
+            "title": "Mathlib",
+            "claim_count": len(rows),
+            "library_count": len(rows),
         }
-        for module, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
-    if root_count:
+    for module, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
         nodes.append(
             {
-                "id": "LIBMOD:(root)",
+                "id": f"LIBMOD:{module}",
                 "kind": "cluster",
                 "cluster_source": "mathlib-module",
-                "cluster_key": "libmod:(root)",
-                "module_path": "(root)",
-                "namespace_path": "(root)",
-                "title": "(root)",
-                "claim_count": root_count,
-                "library_count": root_count,
+                "cluster_key": f"libmod:{module}",
+                "module_path": module,
+                "namespace_path": module,
+                "title": module,
+                "claim_count": count,
+                "library_count": count,
+                "parent_cluster_id": root_id,
             }
         )
 
+    edges = [
+        {
+            "from": root_id,
+            "to": node["id"],
+            "evidence_kind": "module-contains",
+            "proof_count": 0,
+            "proof_ids": [],
+        }
+        for node in nodes
+        if node["id"] != root_id
+    ]
     return {
         "ok": True,
         "indexed": True,
         "library_mode": True,
         "hierarchy": "module",
         "nodes": nodes,
-        "edges": [],
+        "edges": edges,
         "theorem_count": len(rows),
         "claim_count": 0,
         "cluster_count": len(nodes),
@@ -595,12 +729,7 @@ def global_library_world() -> dict[str, Any]:
 
 
 def global_library_module(module_path: str, *, limit: int = 36) -> dict[str, Any]:
-    """Expand one Mathlib source-module node by one level.
-
-    The response is intentionally bounded so the canvas never turns the entire
-    library into an unreadable hairball. Every hidden theorem remains available
-    through search and Random theorem.
-    """
+    """Expand one Mathlib source-module node by one level in the current canvas."""
     status = global_library_status()
     environment_hash = str(status.get("environment_hash") or "")
     if not status.get("indexed") or not environment_hash:
@@ -626,8 +755,8 @@ def global_library_module(module_path: str, *, limit: int = 36) -> dict[str, Any
             rows = conn.execute(
                 """SELECT lean_name,namespace,short_name,source_module
                    FROM library_global_theorems
-                   WHERE environment_hash=? AND source_module='Mathlib'
-                   ORDER BY lean_name""",
+                   WHERE environment_hash=?
+                   ORDER BY source_module,lean_name""",
                 (environment_hash,),
             ).fetchall()
 
@@ -642,6 +771,9 @@ def global_library_module(module_path: str, *, limit: int = 36) -> dict[str, Any
                 continue
             rest = source_path[len(prefix) + 1 :] if source_path.startswith(prefix + ".") else source_path
         else:
+            if not source_path:
+                direct.append(str(row["lean_name"]))
+                continue
             rest = source_path
         if "." in rest:
             child = rest.split(".", 1)[0]
@@ -650,11 +782,10 @@ def global_library_module(module_path: str, *, limit: int = 36) -> dict[str, Any
         elif rest:
             child_path = f"{prefix}.{rest}" if prefix else rest
             child_counts[child_path] = child_counts.get(child_path, 0) + 1
-        else:
-            direct.append(str(row["lean_name"]))
 
     ordered_children = sorted(child_counts.items(), key=lambda item: (-item[1], item[0]))
     child_slice = ordered_children[:limit]
+    parent_id = f"LIBMOD:{module_path}"
     nodes: list[dict[str, Any]] = [
         {
             "id": f"LIBMOD:{child}",
@@ -666,7 +797,7 @@ def global_library_module(module_path: str, *, limit: int = 36) -> dict[str, Any
             "title": child.split(".")[-1],
             "claim_count": count,
             "library_count": count,
-            "parent_cluster_id": f"LIBMOD:{module_path}",
+            "parent_cluster_id": parent_id,
         }
         for child, count in child_slice
     ]
@@ -681,13 +812,47 @@ def global_library_module(module_path: str, *, limit: int = 36) -> dict[str, Any
             "lean_name": name,
             "title": name.rsplit(".", 1)[-1],
             "namespace_path": name.rsplit(".", 1)[0] if "." in name else "",
-            "parent_cluster_id": f"LIBMOD:{module_path}",
+            "parent_cluster_id": parent_id,
             "status": "library",
             "registered": name in registered,
             "claim_id": registered.get(name),
         }
         for name in theorem_names
     )
+
+    # Module containment is deliberately a different edge kind from theorem
+    # references. Both are visible, but only the latter expresses a statement
+    # relationship.
+    edges: list[dict[str, Any]] = [
+        {
+            "from": parent_id,
+            "to": node["id"],
+            "evidence_kind": "module-contains",
+            "proof_count": 0,
+            "proof_ids": [],
+        }
+        for node in nodes
+    ]
+    if theorem_names:
+        placeholders = ",".join("?" for _ in theorem_names)
+        with core.FORMAL.connect() as conn:
+            edge_rows = conn.execute(
+                f"""SELECT source_name,target_name FROM library_global_edges
+                    WHERE environment_hash=?
+                      AND source_name IN({placeholders})
+                      AND target_name IN({placeholders})""",
+                (environment_hash, *theorem_names, *theorem_names),
+            ).fetchall()
+        edges.extend(
+            {
+                "from": f"LIB:{row['source_name']}",
+                "to": f"LIB:{row['target_name']}",
+                "evidence_kind": "mathlib-source-ref",
+                "proof_count": 0,
+                "proof_ids": [],
+            }
+            for row in edge_rows
+        )
 
     total_children = len(ordered_children)
     total_direct = len(direct)
@@ -698,7 +863,7 @@ def global_library_module(module_path: str, *, limit: int = 36) -> dict[str, Any
         "hierarchy": "module",
         "module_path": module_path,
         "nodes": nodes,
-        "edges": [],
+        "edges": edges,
         "child_module_count": total_children,
         "direct_theorem_count": total_direct,
         "shown_count": len(nodes),
@@ -791,7 +956,7 @@ def global_library_cluster(namespace: str, *, limit: int = 100) -> dict[str, Any
             {
                 "from": f"LIB:{row['source_name']}",
                 "to": f"LIB:{row['target_name']}",
-                "evidence_kind": "mathlib-direct-ref",
+                "evidence_kind": "mathlib-source-ref",
                 "proof_count": 0,
                 "proof_ids": [],
             }
@@ -836,10 +1001,10 @@ def _cached_library_theorem_detail(
 
 
 def library_theorem_detail(name: str, *, refresh: bool = False) -> dict[str, Any]:
-    """Return browsing detail from the installed Mathlib source index.
+    """Return read-only source detail, deterministic presentation, and source refs.
 
-    No Lean process runs here. Kernel/dependency evidence is intentionally
-    deferred until explicit Import as Claim.
+    No Lean process runs here. Source-reference edges are navigation evidence,
+    not verified proof dependencies; explicit Import remains that boundary.
     """
     name = str(name or "").strip()
     if not name or not core.LEAN_NAME_RE.fullmatch(name):
@@ -859,11 +1024,39 @@ def library_theorem_detail(name: str, *, refresh: bool = False) -> dict[str, Any
                WHERE environment_hash=? AND lean_name=?""",
             (environment_hash, name),
         ).fetchone()
+        outgoing = conn.execute(
+            """SELECT target_name FROM library_global_edges
+               WHERE environment_hash=? AND source_name=?
+               ORDER BY target_name LIMIT 32""",
+            (environment_hash, name),
+        ).fetchall()
+        incoming = conn.execute(
+            """SELECT source_name FROM library_global_edges
+               WHERE environment_hash=? AND target_name=?
+               ORDER BY source_name LIMIT 24""",
+            (environment_hash, name),
+        ).fetchall()
     if row is None:
         raise ValueError("theorem is not present in the indexed Mathlib sources")
 
     registered = _registered_names([name], environment_hash)
     declaration = str(row["declaration_source"] or "")
+    presentation_text = ""
+    presentation_latex = ""
+    presentation_renderer_version = ""
+    if declaration:
+        try:
+            rendered = canonical_from_declaration(declaration)
+            presentation_text = str(rendered.get("text") or "")
+            presentation_latex = str(rendered.get("latex") or "")
+            presentation_renderer_version = str(rendered.get("renderer_version") or "")
+        except (ValueError, TypeError, KeyError):
+            # Some advanced Lean syntax is intentionally outside the conservative
+            # presentation parser. The raw source remains available unchanged.
+            pass
+
+    source_dependencies = [str(item["target_name"]) for item in outgoing]
+    source_used_by = [str(item["source_name"]) for item in incoming]
     return {
         "ok": True,
         "ready": True,
@@ -879,6 +1072,13 @@ def library_theorem_detail(name: str, *, refresh: bool = False) -> dict[str, Any
         "source_line": int(row["source_line"] or 0),
         "source_declaration": declaration,
         "pretty_type": declaration,
+        "presentation_text": presentation_text,
+        "presentation_latex": presentation_latex,
+        "presentation_renderer_version": presentation_renderer_version,
+        "source_dependencies": source_dependencies,
+        "source_dependency_count": len(source_dependencies),
+        "source_used_by": source_used_by,
+        "source_used_by_count": len(source_used_by),
         "axioms": [],
         "statement_dependencies": [],
         "statement_dependency_count": 0,
@@ -889,7 +1089,10 @@ def library_theorem_detail(name: str, *, refresh: bool = False) -> dict[str, Any
         "duration_ms": 0,
         "registered": name in registered,
         "claim_id": registered.get(name),
-        "verification_note": "Browsing metadata comes from installed Mathlib source files; explicit Import performs Lean verification.",
+        "verification_note": (
+            "Formula and reference links come from the installed Mathlib source index. "
+            "Import as Claim runs Lean and records verified dependency evidence."
+        ),
     }
 
 
