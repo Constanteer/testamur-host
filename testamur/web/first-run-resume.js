@@ -7,9 +7,9 @@
   const STORAGE_KEY = 'testamur.first-run-progress.v1';
   const LAST_OBJECT_KEY = 'testamur.first-run-last-object.v1';
   const steps = [
-    ['project', 'Create a project', '/', 'Define the workspace boundary'],
-    ['monitor', 'Add a monitor', '/', 'Choose what Testamur records'],
-    ['baseline', 'Record a baseline', '/', 'Create the first observation'],
+    ['project', 'Create a project', '/projects/new', 'Define the workspace boundary'],
+    ['monitor', 'Add a monitor', '/projects', 'Choose what Testamur records'],
+    ['baseline', 'Record a baseline', '/monitoring', 'Create the first observation'],
     ['compare', 'Open Compare', '/demo?stage=compare', 'Inspect change without calling it invalid'],
     ['impact', 'Review Impact', '/demo?stage=impact', 'Inspect consequences without guessing reliance'],
     ['revalidation', 'Revalidation', '/demo?stage=revalidate', 'Decide what evidence must run again'],
@@ -38,8 +38,22 @@
     } catch (_) { return ''; }
   }
 
+  function firstProjectPath() {
+    const href = document.querySelector('.project-card .project-title[href^="/projects/"]')?.getAttribute('href') || '';
+    return href.startsWith('/projects/') ? href : '';
+  }
+
   function continuationHref(step) {
     const [key, , fallback] = step;
+
+    if (key === 'project') return '/projects/new';
+
+    if (key === 'monitor' || key === 'baseline') {
+      const projectPath = firstProjectPath();
+      if (projectPath) return `${projectPath}?tab=monitors`;
+      return fallback;
+    }
+
     if (!['compare', 'impact', 'revalidation'].includes(key)) return fallback;
     const objectPath = lastObjectPath();
     if (!objectPath) return fallback;
