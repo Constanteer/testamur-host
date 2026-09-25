@@ -14,6 +14,7 @@ const graphProofFocusBaseDraw=drawGraphCanvas;
 drawGraphCanvas=function drawFocusedProofRoute(canvas){
   graphProofFocusBaseDraw(canvas);
   const route=focusedGraphRoute(),graph=argumentState.graph;if(!canvas||!route||!graph)return;
+  if(typeof graphGlobalState!=='undefined'&&graphGlobalState.libraryMode)return;
   const positions=graphCanvasState.positions,palette=graphCanvasPalette(canvas),ctx=canvas.getContext('2d');
   const sourceWorld=positions.get(route.source);if(!sourceWorld)return;
   const source=graphScreenPoint(sourceWorld),visibleTargets=route.targets.filter(id=>positions.has(id));
