@@ -87,7 +87,8 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     namespace_browser = read(MATHHUB / "namespace_browser.py")
     assert "last_error" in namespace_browser
     assert "library_declaration_dependencies" in namespace_browser
-    assert '"dependency_graph_version": "lean-direct-v1"' in namespace_browser
+    assert '"dependency_graph_version": "lean-direct-fast-v2"' in namespace_browser
+    assert "inspect_direct_dependencies" in namespace_browser
     assert "_scan_mathlib_source_tree" in namespace_browser
     assert '"index_method": "mathlib-source-files"' in namespace_browser
     assert '"lean_invocations": 0' in namespace_browser
@@ -126,6 +127,8 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "data-library-open-dependencies" in library
     assert "Expand next level" in graph_global
     assert "data-library-open-dependency-graph" in graph_global
+    assert "dependencyFocusCard" in graph_global
+    assert "reading direct Lean dependencies" in graph_global
     assert "Add to MathHub (" not in library
     assert ".global-starter-empty" in graph_css
     assert ".library-theorem-type" in graph_css
