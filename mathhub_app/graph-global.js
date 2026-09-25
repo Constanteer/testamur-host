@@ -377,21 +377,101 @@ buildCanvasLayout=function globalInitialLayout(graph){
 };
 
 const graphGlobalBaseDraw=drawGraphCanvas;
+const graphGlobalBaseHitTest=graphHitTest;
+
+function graphGlobalModuleMetrics(ctx,node,{selected=false,hover=false}={}){
+  const root=node?.id==='LIBMOD:(root)';
+  const label=root?'Mathlib':String(node?.title||'Module').split('.').slice(-1)[0];
+  const fontSize=root?12.5:(selected||hover?11.5:10.5);
+  ctx.font=`${root||selected?'650 ':'600 '}${fontSize}px ui-sans-serif,system-ui,sans-serif`;
+  const labelWidth=Math.min(150,ctx.measureText(label).width);
+  return {root,label,fontSize,labelWidth,width:root?Math.max(82,labelWidth+42):labelWidth+24,height:root?34:24};
+}
+
+function graphGlobalRoundRect(ctx,x,y,w,h,r){
+  const radius=Math.min(r,w/2,h/2);
+  if(typeof ctx.roundRect==='function'){
+    ctx.beginPath();ctx.roundRect(x,y,w,h,radius);return;
+  }
+  ctx.beginPath();ctx.moveTo(x+radius,y);ctx.arcTo(x+w,y,x+w,y+h,radius);ctx.arcTo(x+w,y+h,x,y+h,radius);ctx.arcTo(x,y+h,x,y,radius);ctx.arcTo(x,y,x+w,y,radius);ctx.closePath();
+}
+
+graphHitTest=function globalGraphHitTest(canvas,x,y){
+  const graph=argumentState.graph;
+  if(!graph?.persistent)return graphGlobalBaseHitTest(canvas,x,y);
+  const ctx=canvas?.getContext?.('2d');
+  if(!ctx)return graphGlobalBaseHitTest(canvas,x,y);
+  // Test module labels as real click targets; theorem/Claim nodes keep the base
+  // circular hit target. This makes the compact module glyphs easy to use.
+  for(const node of [...(graph.nodes||[])].reverse()){
+    if(!graphIsCluster(node))continue;
+    const world=graphCanvasState.positions.get(node.id);if(!world)continue;
+    const p=graphScreenPoint(world),m=graphGlobalModuleMetrics(ctx,node,{selected:node.id===state.graphSelected,hover:node.id===graphCanvasState.hoverId});
+    const left=p.x-m.width/2,top=p.y-m.height/2;
+    if(x>=left-4&&x<=left+m.width+4&&y>=top-4&&y<=top+m.height+4)return node;
+  }
+  return graphGlobalBaseHitTest(canvas,x,y);
+};
+
 drawGraphCanvas=function drawGlobalGraph(canvas){
   const graph=argumentState.graph;if(!canvas||!graph?.persistent){graphGlobalBaseDraw(canvas);return;}
+
+  // The generic canvas renderer still owns theorem/Claim nodes and directional
+  // theorem-reference arrows. Module containment is drawn separately below so
+  // hierarchy reads as a quiet tree, not as a second kind of proof arrow.
   const original=argumentState.graph;
-  argumentState.graph={...graph,nodes:(graph.nodes||[]).map(node=>graphIsCluster(node)?{...node,title:'',lean_name:''}:node)};
+  argumentState.graph={
+    ...graph,
+    edges:(graph.edges||[]).filter(edge=>edge.evidence_kind!=='module-contains'),
+    nodes:(graph.nodes||[]).map(node=>graphIsCluster(node)?{...node,title:'',lean_name:''}:node),
+  };
   graphGlobalBaseDraw(canvas);argumentState.graph=original;
-  const ctx=canvas.getContext('2d'),palette=graphCanvasPalette(canvas),selected=state.graphSelected;
+
+  const ctx=canvas.getContext('2d'),palette=graphCanvasPalette(canvas),selected=state.graphSelected,hover=graphCanvasState.hoverId;
   ctx.save();
-  for(const node of graph.nodes||[]){if(!graphIsCluster(node))continue;const world=graphCanvasState.positions.get(node.id);if(!world)continue;
-    const p=graphScreenPoint(world),count=Math.max(1,Number(node.claim_count||1)),baseRadius=graphGlobalState.libraryMode?16+Math.log10(count+1)*5.4:18+Math.sqrt(count)*2.1,r=Math.max(18,Math.min(graphGlobalState.libraryMode?39:46,baseRadius))*Math.max(.76,Math.min(1.18,graphCanvasState.view.scale));
+
+  // Module containment: thin, non-directional, lower visual priority.
+  ctx.strokeStyle='rgba(91,100,108,.20)';
+  ctx.lineWidth=1;
+  for(const edge of graph.edges||[]){
+    if(edge.evidence_kind!=='module-contains')continue;
+    const a=graphCanvasState.positions.get(edge.from),b=graphCanvasState.positions.get(edge.to);if(!a||!b)continue;
+    const from=graphScreenPoint(a),to=graphScreenPoint(b);
+    ctx.beginPath();ctx.moveTo(from.x,from.y);ctx.lineTo(to.x,to.y);ctx.stroke();
+  }
+
+  for(const node of graph.nodes||[]){
+    if(!graphIsCluster(node))continue;
+    const world=graphCanvasState.positions.get(node.id);if(!world)continue;
+    const p=graphScreenPoint(world),isSelected=node.id===selected,isHover=node.id===hover;
+    const m=graphGlobalModuleMetrics(ctx,node,{selected:isSelected,hover:isHover}),x=p.x-m.width/2,y=p.y-m.height/2;
     const libraryCluster=graphGlobalState.libraryMode&&(node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library');
-    ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.fillStyle=libraryCluster?'rgba(79,96,112,.060)':(node.cluster_source==='curated-area'?'rgba(61,91,121,.055)':'rgba(75,105,95,.055)');ctx.fill();
-    ctx.strokeStyle=node.id===selected?palette.ink:(libraryCluster?'rgba(70,86,102,.34)':(node.cluster_source==='curated-area'?'rgba(61,91,121,.30)':'rgba(75,105,95,.28)'));ctx.lineWidth=node.id===selected?2:1.15;ctx.stroke();
-    if(graphCanvasState.view.scale>.42){
-      ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=palette.ink;ctx.font=`600 ${node.id===selected?12.5:10.5}px ui-sans-serif,system-ui,sans-serif`;ctx.fillText(String(node.title||'Cluster').split('.').slice(-1)[0].slice(0,24),p.x,p.y-3);
-      if(graphCanvasState.view.scale>.58){ctx.font='8.5px ui-sans-serif,system-ui,sans-serif';ctx.fillStyle=palette.muted;ctx.fillText(`${count.toLocaleString()} ${graphGlobalState.libraryMode?'theorems':'claims'}`,p.x,p.y+12);}
+
+    // Compact label-chip nodes replace the previous giant hollow circles.
+    graphGlobalRoundRect(ctx,x,y,m.width,m.height,m.root?8:6);
+    ctx.fillStyle=m.root?'rgba(29,34,39,.94)':(libraryCluster?'rgba(255,255,255,.94)':'rgba(255,255,255,.91)');
+    ctx.fill();
+    ctx.strokeStyle=isSelected?palette.ink:(isHover?'rgba(70,78,86,.62)':'rgba(92,101,109,.30)');
+    ctx.lineWidth=isSelected?1.7:1;
+    ctx.stroke();
+
+    // Small hierarchy glyph — square for modules, solid center for Mathlib.
+    const gx=x+(m.root?13:10),gy=p.y;
+    ctx.beginPath();ctx.rect(gx-3.5,gy-3.5,7,7);
+    ctx.fillStyle=m.root?'#fff':(isSelected?palette.ink:'rgba(78,88,97,.70)');
+    ctx.fill();
+
+    ctx.textAlign='left';ctx.textBaseline='middle';
+    ctx.fillStyle=m.root?'#fff':palette.ink;
+    ctx.font=`${m.root||isSelected?'650 ':'600 '}${m.fontSize}px ui-sans-serif,system-ui,sans-serif`;
+    const label=m.label.length>24?m.label.slice(0,23)+'…':m.label;
+    ctx.fillText(label,gx+(m.root?10:9),p.y+.2);
+
+    // Counts stay off the node until hover/selection; topology is primary.
+    if((isSelected||isHover)&&!m.root&&graphCanvasState.view.scale>.52){
+      const count=Math.max(0,Number(node.claim_count||0));
+      ctx.font='8.5px ui-sans-serif,system-ui,sans-serif';ctx.fillStyle=palette.muted;ctx.textAlign='center';ctx.textBaseline='top';
+      ctx.fillText(`${count.toLocaleString()} ${graphGlobalState.libraryMode?'theorems':'claims'}`,p.x,y+m.height+5);
     }
   }
   ctx.restore();
