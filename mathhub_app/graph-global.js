@@ -158,14 +158,20 @@ renderGraph=function renderPersistentGlobalGraph(){
   const graph=argumentState.graph;
   if(!graphGlobalState.loaded||!graph)return `<main class="global-graph-page"><div class="global-graph-loading"><div class="eyebrow">Global argument graph</div><h1>Opening the mathematical universe…</h1><p>MathHub shows durable Claims when they exist and otherwise reads the pinned Mathlib library directly.</p><button class="btn btn-primary" data-load-global-world>Open global graph</button></div></main>`;
   if(graphGlobalState.claimCount===0&&!graphGlobalState.libraryIndexed){
-    const status=graphGlobalState.libraryStatus||{},scan=status.scan||{},error=String(status.error||'');
+    const status=graphGlobalState.libraryStatus||{},scanState=String(status.state||'idle'),attempts=Number(status.attempts||0),error=String(status.last_error||status.error||'');
+    const failed=scanState==='error'||scanState==='retry_wait';
+    const heading=failed?'Mathlib index retrying…':scanState==='scanning'?'Indexing Mathlib once…':'Preparing Mathlib index…';
+    const copy=failed
+      ? 'The last one-time Lean scan failed. MathHub is retrying with backoff; no Claims, Proofs or Builds are being created.'
+      : 'Lean is scanning theorem names from the pinned environment into a read-only navigation cache. This happens once per Mathlib environment.';
     return `<main class="global-graph-page"><section class="global-starter-empty">
       <div class="eyebrow">Mathlib library substrate</div><div class="global-starter-spinner" aria-hidden="true"></div>
-      <h1>Indexing Mathlib once…</h1>
-      <p>Lean is scanning the pinned environment into a read-only navigation cache. No Claims, Proofs or Builds are being created.</p>
-      ${error?`<details class="global-starter-detail"><summary>Technical detail</summary><code>${esc(error)}</code></details>`:''}
+      <h1>${esc(heading)}</h1>
+      <p>${esc(copy)}</p>
+      <div class="global-starter-worker-state"><strong>State: ${esc(scanState)}</strong><small>${attempts? `attempt ${attempts}` : 'waiting to start'}</small></div>
+      ${error?`<details class="global-starter-detail" open><summary>Technical detail</summary><code>${esc(error)}</code></details>`:''}
       <div class="global-starter-actions"><button class="btn btn-primary" data-refresh-library-world>Refresh now</button><a class="btn" href="./?view=library">Open Math library</a></div>
-      <small>After this environment scan, browsing uses SQLite and does not rerun Lean.</small>
+      <small>After this environment scan, Connections and Math library read SQLite and do not rerun Lean.</small>
     </section></main>`;
   }
   const selected=graphGlobalNode(state.graphSelected)||graph.nodes?.[0],nonClusters=(graph.nodes||[]).filter(node=>!graphIsCluster(node)).length,focus=!graphGlobalState.libraryMode&&typeof graphProofFocusHtml==='function'?graphProofFocusHtml():'',trail=!graphGlobalState.libraryMode&&typeof graphTrailHtml==='function'?graphTrailHtml():'';

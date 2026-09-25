@@ -70,6 +70,7 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "start_library_warmup()" in mathhub
     assert "ensure_global_library_scan" in mathhub
     assert "/api/library/world" in mathhub
+    assert "last_error" in mathhub
     assert "/api/library/cluster" in mathhub
     assert 'MATHHUB_AUTO_STARTER_CLAIMS","0"' in mathhub
     app = read(MATHHUB / "app.js")
@@ -87,6 +88,7 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "Mathlib, directly from the pinned environment." in graph_global
     assert "/api/library/world" in graph_global
     assert "/api/library/cluster" in graph_global
+    assert "Mathlib index retrying" in graph_global
     assert ".global-starter-empty" in graph_css
 
 
@@ -104,4 +106,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 98891e3803b8e2cc87635725fc0a1553ea46da37"
+    assert marker == "Constanteer/Mathub main @ eae0c2e2cab2666920b3f796f6d659fb1e04f453"
