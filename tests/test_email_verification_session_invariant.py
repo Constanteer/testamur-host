@@ -11,7 +11,7 @@ class EmailVerificationSessionInvariantTests(unittest.TestCase):
     def test_session_is_revoked_if_durable_verification_is_cleared(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = AccountStore(Path(tmp) / "accounts.sqlite3")
-            _pending, verification_token = store.sign_up(
+            _pending, verification_token, _verification_code = store.sign_up(
                 username="verified-session-user",
                 email="verified-session@example.com",
                 password="a-long-test-password",
