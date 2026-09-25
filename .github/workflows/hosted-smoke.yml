@@ -28,7 +28,12 @@ jobs:
           node --check testamur/web/supply-chain-guidance.js
           node --check testamur/web/advisory-review-ui.js
           node --check testamur/web/advisory-revalidation-ui.js
-      - run: python3 -m unittest tests.test_email_verification tests.test_hosted_onboarding_web_contract
+      - run: >-
+          python3 -m unittest
+          tests.test_email_verification
+          tests.test_mail_backend_configuration
+          tests.test_mail_origin_validation
+          tests.test_hosted_onboarding_web_contract
 
   compile-mathhub:
     runs-on: self-hosted
