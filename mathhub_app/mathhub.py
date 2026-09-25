@@ -281,22 +281,28 @@ def start_import_worker()->bool:
 
 
 def _library_warmup_loop()->None:
-    """Build the read-only Mathlib substrate once for the current environment.
-
-    This is navigation/index state only. It does not create Claims, Proofs,
-    Builds or FormalBindings.
-    """
+    """Build the read-only Mathlib substrate once, retrying failed scans safely."""
     while True:
         runtime=core.runtime_status()
-        if runtime.get("ready"):
-            break
         if runtime.get("setup_error"):
             return
+        if runtime.get("ready"):
+            break
         time.sleep(LIBRARY_WARMUP_POLL_SECONDS)
-    try:
-        ensure_global_library_scan()
-    except (ValueError,RuntimeError,sqlite3.Error):
-        pass
+
+    backoff=5.0
+    while True:
+        try:
+            result=ensure_global_library_scan()
+        except (ValueError,RuntimeError,sqlite3.Error) as exc:
+            result={"ok":False,"error":str(exc)}
+        if result.get("ok"):
+            return
+        # A failed full-environment scan is operator-visible through
+        # /api/library/status. Retry with bounded backoff instead of silently
+        # abandoning the library forever or hot-looping CPU.
+        time.sleep(backoff)
+        backoff=min(backoff*2.0,300.0)
 
 
 def start_library_warmup()->bool:
