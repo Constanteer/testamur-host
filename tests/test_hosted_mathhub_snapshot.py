@@ -105,6 +105,10 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "openLibraryModule" in graph_global
     assert "data-library-module-back" in graph_global
     assert "Module open failed" in graph_global
+    graph_budgets = read(MATHHUB / "graph-budgets.js")
+    assert "graphBudgetBaseExpandGlobalArea" in graph_budgets
+    assert "graphGlobalState.libraryMode" in graph_budgets
+    assert "return graphBudgetBaseExpandGlobalArea(clusterId)" in graph_budgets
     assert "Focus branch" in graph_global
     assert "Random theorem" in graph_global
     assert "Import as Claim" in graph_global
@@ -131,4 +135,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 32875849de32c39adb700866f4c1fb93e1ddb925"
+    assert marker == "Constanteer/Mathub main @ 870d17ff2cf477491a49431590d1ec4c4521d719"

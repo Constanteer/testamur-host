@@ -11,8 +11,14 @@ loadGlobalWorld=async function budgetedGlobalWorld(options={}){
   return graphBudgetBaseWorld(options);
 };
 
+const graphBudgetBaseExpandGlobalArea=expandGlobalArea;
 expandGlobalArea=async function budgetedExpandGlobalCluster(clusterId){
   const cluster=graphGlobalNode(clusterId);if(!cluster||!graphIsCluster(cluster)||graphGlobalState.loading)return;
+  // Mathlib browsing is a separate read-only module hierarchy. Its drill-down
+  // must never be rewritten into the durable Claim-cluster paging protocol.
+  if(graphGlobalState.libraryMode||cluster.cluster_source==='mathlib-module'||cluster.cluster_source==='mathlib-library'){
+    return graphBudgetBaseExpandGlobalArea(clusterId);
+  }
   const key=graphClusterKey(cluster);if(!key)return;
   const cursor=graphClusterPaging.cursor.get(key)||'';
   graphGlobalState.loading=true;state.graphSelected=clusterId;render();
@@ -40,6 +46,11 @@ expandGlobalClaim=async function budgetedExpandGlobalClaim(claimId){
 const graphBudgetBaseInspector=globalInspector;
 globalInspector=function pagedClusterInspector(node){
   if(!graphIsCluster(node))return graphBudgetBaseInspector(node);
+  // Preserve Mathlib module/theorem semantics from graph-global.js. This budget
+  // wrapper only pages durable Claim clusters.
+  if(graphGlobalState.libraryMode||node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library'){
+    return graphBudgetBaseInspector(node);
+  }
   const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),cursor=graphClusterPaging.cursor.get(key)||'',remaining=Number(graphClusterPaging.remaining.get(key)||0),loaded=Number(graphClusterPaging.loaded.get(key)||0),namespace=node.cluster_source==='lean-namespace',kind=namespace?'Lean namespace':'Curated field',path=namespace?(node.namespace_path||node.title):node.title;
   let action=namespace?'Expand namespace':'Expand field',disabled='';
   if(expanded&&cursor)action=`Load next ${Math.min(GRAPH_CLUSTER_UNFOLD_LIMIT,remaining||GRAPH_CLUSTER_UNFOLD_LIMIT)}`;
