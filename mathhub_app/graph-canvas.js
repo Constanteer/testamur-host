@@ -1,7 +1,7 @@
 /* Scalable browser renderer for bounded argument-graph neighborhoods.
    The server remains responsible for graph size: the browser never downloads the
    whole registry. Canvas avoids one DOM/SVG element per node or edge. */
-const graphCanvasState={key:'',positions:new Map(),view:{scale:1,panX:0,panY:0},hoverId:'',pointer:null,resizeObserver:null};
+const graphCanvasState={key:'',positions:new Map(),view:{scale:1,panX:0,panY:0},hoverId:'',pointer:null,resizeObserver:null,lastClick:{id:'',at:0,x:0,y:0}};
 
 function graphCanvasKey(graph){
   return [graph?.root||'recent',graph?.depth||0,(graph?.nodes||[]).map(n=>n.id).join('|')].join('::');
@@ -139,11 +139,26 @@ function mountGraphCanvas(){
   if(fresh){graphCanvasState.key=key;graphCanvasState.positions=buildCanvasLayout(graph);graphCanvasState.hoverId='';}
   const local=(event)=>{const r=canvas.getBoundingClientRect();return {x:event.clientX-r.left,y:event.clientY-r.top};};
   canvas.addEventListener('pointerdown',event=>{const p=local(event);canvas.setPointerCapture?.(event.pointerId);graphCanvasState.pointer={id:event.pointerId,startX:p.x,startY:p.y,panX:graphCanvasState.view.panX,panY:graphCanvasState.view.panY,moved:false};});
-  canvas.addEventListener('pointermove',event=>{const p=local(event),drag=graphCanvasState.pointer;if(drag&&drag.id===event.pointerId){const dx=p.x-drag.startX,dy=p.y-drag.startY;if(Math.hypot(dx,dy)>3)drag.moved=true;graphCanvasState.view.panX=drag.panX+dx;graphCanvasState.view.panY=drag.panY+dy;drawGraphCanvas(canvas);return;}const hit=graphHitTest(canvas,p.x,p.y),next=hit?.id||'';if(next!==graphCanvasState.hoverId){graphCanvasState.hoverId=next;canvas.style.cursor=next?'pointer':'grab';drawGraphCanvas(canvas);}});
-  canvas.addEventListener('pointerup',event=>{const p=local(event),drag=graphCanvasState.pointer;graphCanvasState.pointer=null;if(drag&&!drag.moved){const hit=graphHitTest(canvas,p.x,p.y);if(hit){state.graphSelected=hit.id;render();}}});
+  canvas.addEventListener('pointermove',event=>{const p=local(event),drag=graphCanvasState.pointer;if(drag&&drag.id===event.pointerId){const dx=p.x-drag.startX,dy=p.y-drag.startY;if(Math.hypot(dx,dy)>6)drag.moved=true;graphCanvasState.view.panX=drag.panX+dx;graphCanvasState.view.panY=drag.panY+dy;drawGraphCanvas(canvas);return;}const hit=graphHitTest(canvas,p.x,p.y),next=hit?.id||'';if(next!==graphCanvasState.hoverId){graphCanvasState.hoverId=next;canvas.style.cursor=next?'pointer':'grab';drawGraphCanvas(canvas);}});
+  canvas.addEventListener('pointerup',event=>{
+    const p=local(event),drag=graphCanvasState.pointer;graphCanvasState.pointer=null;
+    if(!drag||drag.moved)return;
+    const hit=graphHitTest(canvas,p.x,p.y);if(!hit)return;
+    const now=performance.now(),last=graphCanvasState.lastClick||{id:'',at:0,x:0,y:0};
+    const doubleClick=last.id===hit.id&&(now-last.at)<=360&&Math.hypot(p.x-last.x,p.y-last.y)<=14;
+    graphCanvasState.lastClick=doubleClick?{id:'',at:0,x:0,y:0}:{id:hit.id,at:now,x:p.x,y:p.y};
+    state.graphSelected=hit.id;
+    if(doubleClick){
+      // Do not depend on the browser's native dblclick event: the first click
+      // re-renders the inspector and may replace the canvas DOM node.
+      Promise.resolve(loadGraph(hit.id)).catch(()=>{});
+      return;
+    }
+    render();
+  });
   canvas.addEventListener('pointerleave',()=>{if(!graphCanvasState.pointer&&graphCanvasState.hoverId){graphCanvasState.hoverId='';drawGraphCanvas(canvas);}});
   canvas.addEventListener('wheel',event=>{event.preventDefault();const p=local(event),old=graphCanvasState.view.scale,factor=Math.exp(-event.deltaY*.0012),next=Math.max(.18,Math.min(4,old*factor));graphCanvasState.view.panX=p.x-(p.x-graphCanvasState.view.panX)*(next/old);graphCanvasState.view.panY=p.y-(p.y-graphCanvasState.view.panY)*(next/old);graphCanvasState.view.scale=next;drawGraphCanvas(canvas);},{passive:false});
-  canvas.addEventListener('dblclick',event=>{const p=local(event),hit=graphHitTest(canvas,p.x,p.y);if(hit){state.graphSelected=hit.id;loadGraph(hit.id);}});
+  canvas.addEventListener('dblclick',event=>event.preventDefault());
   document.querySelector('[data-graph-fit]')?.addEventListener('click',()=>fitGraphCanvas(canvas));
   graphCanvasState.resizeObserver?.disconnect();graphCanvasState.resizeObserver=new ResizeObserver(()=>drawGraphCanvas(canvas));graphCanvasState.resizeObserver.observe(canvas);
   if(fresh)requestAnimationFrame(()=>fitGraphCanvas(canvas));else requestAnimationFrame(()=>drawGraphCanvas(canvas));
