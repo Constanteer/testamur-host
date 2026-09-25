@@ -364,7 +364,7 @@ def dispatch_account_write(
                 raise AccountError("invalid_argument", "username, email and password are required strings")
             if display_name is not None and not isinstance(display_name, str):
                 raise AccountError("invalid_argument", "display_name must be a string")
-            user, verification_token = store.sign_up(
+            user, verification_token, verification_code = store.sign_up(
                 username=username,
                 email=email,
                 password=password,
@@ -372,7 +372,11 @@ def dispatch_account_write(
             )
             email_sent = True
             try:
-                mailer.send_verification(user=user, token=verification_token)
+                mailer.send_verification(
+                    user=user,
+                    token=verification_token,
+                    code=verification_code,
+                )
                 store.confirm_email_verification_delivery(token=verification_token)
                 if mail_delivery_reporter is not None:
                     mail_delivery_reporter(True, None)
@@ -413,6 +417,28 @@ def dispatch_account_write(
             response["headers"]["Set-Cookie"] = _set_cookie(session, secure=secure_cookie)
             return response
 
+        if path == "/v1/account/email-verification/verify-code":
+            unknown = set(payload) - {"identifier", "code"}
+            if unknown:
+                raise AccountError("invalid_argument", f"Unknown verification fields: {', '.join(sorted(unknown))}")
+            identifier = payload.get("identifier")
+            code = payload.get("code")
+            if not isinstance(identifier, str) or not isinstance(code, str):
+                raise AccountError("invalid_argument", "identifier and code must be strings")
+            user, session = store.verify_email_code(identifier=identifier, code=code)
+            response = _json(
+                {
+                    "ok": True,
+                    "schema": "testamur.hosted.email-verification.v1",
+                    "authenticated": True,
+                    "verified": True,
+                    "method": "code",
+                    "user": user,
+                }
+            )
+            response["headers"]["Set-Cookie"] = _set_cookie(session, secure=secure_cookie)
+            return response
+
         if path == "/v1/account/email-verification/resend":
             if mailer is None:
                 return _error(
@@ -433,9 +459,13 @@ def dispatch_account_write(
                     raise
                 pending = None
             if pending is not None:
-                pending_user, verification_token = pending
+                pending_user, verification_token, verification_code = pending
                 try:
-                    mailer.send_verification(user=pending_user, token=verification_token)
+                    mailer.send_verification(
+                        user=pending_user,
+                        token=verification_token,
+                        code=verification_code,
+                    )
                     store.confirm_email_verification_delivery(token=verification_token)
                     if mail_delivery_reporter is not None:
                         mail_delivery_reporter(True, None)
