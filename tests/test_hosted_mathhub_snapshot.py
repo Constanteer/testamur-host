@@ -70,7 +70,7 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "start_library_warmup()" in mathhub
     assert "ensure_global_library_scan" in mathhub
     assert "/api/library/world" in mathhub
-    assert "last_error" in mathhub
+    # Global Mathlib scan retry state is owned by namespace_browser, not the HTTP router.
     assert "/api/library/cluster" in mathhub
     assert "/api/library/module" in mathhub
     assert "/api/library/theorem" in mathhub
@@ -85,6 +85,9 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "library-setup-progress" in library
     assert 'MATHHUB_AUTO_INDEX_NAMESPACES","Nat"' in mathhub
     namespace_browser = read(MATHHUB / "namespace_browser.py")
+    assert "last_error" in namespace_browser
+    assert "library_declaration_dependencies" in namespace_browser
+    assert '"dependency_graph_version": "lean-direct-v1"' in namespace_browser
     assert "_scan_mathlib_source_tree" in namespace_browser
     assert '"index_method": "mathlib-source-files"' in namespace_browser
     assert '"lean_invocations": 0' in namespace_browser
@@ -121,6 +124,8 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "Mathlib index retrying" in graph_global
     assert "/api/lean/inspect" not in library
     assert "data-library-open-dependencies" in library
+    assert "Expand next level" in graph_global
+    assert "data-library-open-dependency-graph" in graph_global
     assert "Add to MathHub (" not in library
     assert ".global-starter-empty" in graph_css
     assert ".library-theorem-type" in graph_css
