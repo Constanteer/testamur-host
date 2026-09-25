@@ -25,6 +25,8 @@ from namespace_browser import (
     global_library_cluster,
     global_library_status,
     global_library_world,
+    library_theorem_detail,
+    random_library_theorem,
     list_namespace_declarations,
 )
 from ontology import validate_claim_declaration
@@ -507,6 +509,11 @@ class Handler(core.Handler):
             if path=="/api/library/cluster":
                 q=parse_qs(p.query);ns=str((q.get("namespace") or [""])[0]);limit=iparam(q,"limit",100)
                 self.json_response(200,global_library_cluster(ns,limit=limit));return
+            if path=="/api/library/theorem":
+                q=parse_qs(p.query);name=str((q.get("name") or [""])[0]);refresh=first(q,"refresh","0") in {"1","true","yes"}
+                self.json_response(200,publicize(library_theorem_detail(name,refresh=refresh)));return
+            if path=="/api/library/random":
+                self.json_response(200,random_library_theorem());return
             if path=="/api/starter-status":self.json_response(200,publicize(starter_claim_status()));return
             m=re.fullmatch(rf"/api/import-tasks/({TASKISH})",path,re.I)
             if m:self.json_response(200,publicize(TASKS.get(m.group(1).upper())));return
@@ -570,7 +577,7 @@ class Handler(core.Handler):
 
 if __name__=="__main__":
     core.request_runtime_setup()
+    retire_legacy_starter_tasks()
     start_import_worker()
     start_library_warmup()
-    start_starter_claim_bootstrap()
     print(f"MathHub: http://{core.HOST}:{core.PORT}"); print(core.runtime_status()["message"]); print("Ontology: Claim / Proof / ProofDependency."); ThreadingHTTPServer((core.HOST,core.PORT),Handler).serve_forever()
