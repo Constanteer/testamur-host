@@ -10,7 +10,6 @@ from .namespace_gate import NamespaceViolation, scan_python_namespace_dependenci
 
 CANONICAL_CLI_TARGET = "testamur.front_router:main"
 LEGACY_RUNTIME_TREES = ("witness", "witness_service")
-CANONICAL_MATHHUB_ENTRYPOINT = "mathhub.py"
 
 
 @dataclass(frozen=True)
@@ -35,8 +34,7 @@ def audit_release_surface(repository_root: str | Path) -> dict[str, Any]:
 
     This is deliberately a structural release check, not an epistemic check.
     Historical storage/wire strings are allowed; retired Python runtime trees
-    and imports are not. The shared transition repository additionally checks
-    Testamur tests and the canonical MathHub entrypoint for reverse dependencies.
+    and imports are not.
     """
 
     root = Path(repository_root)
@@ -50,62 +48,108 @@ def audit_release_surface(repository_root: str | Path) -> dict[str, Any]:
     scripts = scripts if isinstance(scripts, dict) else {}
     script_target = scripts.get("testamur")
     if script_target != CANONICAL_CLI_TARGET:
-        violations.append(ReleaseViolation("cli_entrypoint_not_canonical", f"expected {CANONICAL_CLI_TARGET}, got {script_target!r}"))
+        violations.append(
+            ReleaseViolation(
+                "cli_entrypoint_not_canonical",
+                f"expected {CANONICAL_CLI_TARGET}, got {script_target!r}",
+            )
+        )
+
     legacy_cli_entries = sorted(
-        f"{name}={target}" for name, target in scripts.items()
+        f"{name}={target}"
+        for name, target in scripts.items()
         if str(name).startswith("witness") or str(target).startswith("witness")
     )
     for entry in legacy_cli_entries:
         violations.append(ReleaseViolation("legacy_cli_entrypoint", entry))
 
-    package_find = project.get("tool", {}).get("setuptools", {}).get("packages", {}).get("find", {})
+    package_find = (
+        project.get("tool", {})
+        .get("setuptools", {})
+        .get("packages", {})
+        .get("find", {})
+    )
     include = package_find.get("include", []) if isinstance(package_find, dict) else []
     if not isinstance(include, list):
         include = []
+
     package_patterns = [str(pattern) for pattern in include]
-    testamur_included = any(pattern == "testamur" or pattern.startswith("testamur*") for pattern in package_patterns)
+    testamur_included = any(
+        pattern == "testamur" or pattern.startswith("testamur*")
+        for pattern in package_patterns
+    )
     if not testamur_included:
-        violations.append(ReleaseViolation("canonical_runtime_package_missing", "testamur package is not included"))
+        violations.append(
+            ReleaseViolation(
+                "canonical_runtime_package_missing",
+                "testamur package is not included",
+            )
+        )
+
     forbidden_package_patterns = sorted(
-        pattern for pattern in package_patterns
+        pattern
+        for pattern in package_patterns
         if pattern.split("*", 1)[0] in {"witness", "witness_service"}
     )
     for pattern in forbidden_package_patterns:
-        violations.append(ReleaseViolation("legacy_runtime_package_in_distribution", pattern))
+        violations.append(
+            ReleaseViolation("legacy_runtime_package_in_distribution", pattern)
+        )
 
-    legacy_runtime_trees = [name for name in LEGACY_RUNTIME_TREES if (root / name).exists()]
+    legacy_runtime_trees = [
+        name for name in LEGACY_RUNTIME_TREES if (root / name).exists()
+    ]
     for name in legacy_runtime_trees:
         violations.append(ReleaseViolation("legacy_runtime_tree_present", name))
 
-    namespace_violations: tuple[NamespaceViolation, ...] = scan_python_namespace_dependencies(testamur_root)
+    namespace_violations: tuple[NamespaceViolation, ...] = (
+        scan_python_namespace_dependencies(testamur_root)
+    )
     for item in namespace_violations:
-        violations.append(ReleaseViolation("legacy_runtime_import", f"testamur/{item.path}:{item.line}: {item.target}"))
+        violations.append(
+            ReleaseViolation(
+                "legacy_runtime_import",
+                f"testamur/{item.path}:{item.line}: {item.target}",
+            )
+        )
 
-    # Paths returned by the scanner are relative to tests_root, so filtering on
-    # the basename is the reliable way to cover every test_testamur_* module.
     test_namespace_violations: tuple[NamespaceViolation, ...] = tuple(
-        item for item in scan_python_namespace_dependencies(tests_root)
+        item
+        for item in scan_python_namespace_dependencies(tests_root)
         if Path(item.path).name.startswith("test_testamur_")
     )
     for item in test_namespace_violations:
-        violations.append(ReleaseViolation("legacy_runtime_test_import", f"tests/{item.path}:{item.line}: {item.target}"))
-
-    mathhub_path = root / CANONICAL_MATHHUB_ENTRYPOINT
-    mathhub_namespace_violations = scan_python_namespace_dependencies(mathhub_path)
-    for item in mathhub_namespace_violations:
-        violations.append(ReleaseViolation("mathhub_legacy_runtime_import", f"{item.path}:{item.line}: {item.target}"))
+        violations.append(
+            ReleaseViolation(
+                "legacy_runtime_test_import",
+                f"tests/{item.path}:{item.line}: {item.target}",
+            )
+        )
 
     ordered = sorted(violations, key=lambda item: (item.code, item.detail))
     return {
         "ok": not ordered,
-        "cli": {"public_command": "testamur", "target": script_target, "canonical": script_target == CANONICAL_CLI_TARGET, "legacy_entries": legacy_cli_entries},
-        "package": {"patterns": package_patterns, "testamur_included": testamur_included, "legacy_runtime_patterns": forbidden_package_patterns, "testamur_only": testamur_included and not forbidden_package_patterns},
+        "cli": {
+            "public_command": "testamur",
+            "target": script_target,
+            "canonical": script_target == CANONICAL_CLI_TARGET,
+            "legacy_entries": legacy_cli_entries,
+        },
+        "package": {
+            "patterns": package_patterns,
+            "testamur_included": testamur_included,
+            "legacy_runtime_patterns": forbidden_package_patterns,
+            "testamur_only": testamur_included and not forbidden_package_patterns,
+        },
         "runtime": {
             "legacy_runtime_trees": legacy_runtime_trees,
             "legacy_import_count": len(namespace_violations),
             "legacy_test_import_count": len(test_namespace_violations),
-            "mathhub_legacy_import_count": len(mathhub_namespace_violations),
-            "testamur_only": not legacy_runtime_trees and not namespace_violations and not test_namespace_violations and not mathhub_namespace_violations,
+            "testamur_only": (
+                not legacy_runtime_trees
+                and not namespace_violations
+                and not test_namespace_violations
+            ),
         },
         "violations": [item.to_dict() for item in ordered],
         "semantics": {

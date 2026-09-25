@@ -8,8 +8,11 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
+from .product_service import TestamurProductService
+from .project_review_surface import project_with_advisory_reviews
 from .source_fetch import SourceFetchPolicy
 from .source_gateway import TestamurSourceGateway
+from .supply_chain import diff_project_supply_chain, scan_bound_project_supply_chain
 
 
 SERVER_INFO = {"name": "testamur-source-gateway", "version": "0.1.0"}
@@ -92,6 +95,69 @@ TOOLS = [
                 "allow_private_network": {"type": "boolean", "default": False},
             },
             "required": ["watch_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "testamur.project_supply_chain",
+        "title": "Inspect a Project supply-chain inventory",
+        "description": (
+            "Return the latest immutable dependency-manifest inventory and advisory review "
+            "projection for an existing Testamur Project. Advisory overlap is not an affectedness verdict."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project_ref": {"type": "string"}},
+            "required": ["project_ref"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "testamur.project_scan",
+        "title": "Rescan a bound Project repository",
+        "description": (
+            "Scan dependency manifests through an explicit Project repository binding and "
+            "append immutable scan evidence when the observed inventory changes."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_ref": {"type": "string"},
+                "binding": {"type": "string", "default": "primary"},
+            },
+            "required": ["project_ref"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "testamur.project_supply_chain_diff",
+        "title": "Compare Project supply-chain scans",
+        "description": (
+            "Mechanically compare two immutable Project supply-chain scans. Changed dependencies "
+            "are not automatically invalid or vulnerable."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_ref": {"type": "string"},
+                "from_scan_revision_id": {"type": "string"},
+                "to_scan_revision_id": {"type": "string"},
+            },
+            "required": ["project_ref"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "testamur.project_advisories",
+        "title": "Inspect Project advisory review candidates",
+        "description": (
+            "Return advisory candidates and recorded affectedness review state for an existing Project "
+            "without converting provider/version overlap into a local affectedness verdict."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project_ref": {"type": "string"}},
+            "required": ["project_ref"],
             "additionalProperties": False,
         },
     },
@@ -216,6 +282,60 @@ def _required(arguments: Mapping[str, Any], key: str) -> str:
 
 
 def _call_tool(name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    if name.startswith("testamur.project_"):
+        service = TestamurProductService.integrated(_db_path())
+        project_ref = _required(arguments, "project_ref")
+        if name == "testamur.project_supply_chain":
+            detail = project_with_advisory_reviews(service, project_ref)
+            if detail.get("ok") is not True:
+                return detail
+            return {
+                "ok": True,
+                "schema": "testamur.mcp.project-supply-chain.v1",
+                "project": detail["project"],
+                "supply_chain": detail.get("supply_chain"),
+            }
+        if name == "testamur.project_scan":
+            binding = str(arguments.get("binding") or "primary").strip() or "primary"
+            return scan_bound_project_supply_chain(service, project_ref, binding_key=binding)
+        if name == "testamur.project_supply_chain_diff":
+            from_revision = arguments.get("from_scan_revision_id")
+            to_revision = arguments.get("to_scan_revision_id")
+            return diff_project_supply_chain(
+                service,
+                project_ref,
+                from_scan_revision_id=None
+                if from_revision is None
+                else str(from_revision).strip() or None,
+                to_scan_revision_id=None
+                if to_revision is None
+                else str(to_revision).strip() or None,
+            )
+        if name == "testamur.project_advisories":
+            detail = project_with_advisory_reviews(service, project_ref)
+            if detail.get("ok") is not True:
+                return detail
+            supply = detail.get("supply_chain")
+            if not isinstance(supply, Mapping):
+                supply = {}
+            return {
+                "ok": True,
+                "schema": "testamur.mcp.project-advisories.v1",
+                "project": detail["project"],
+                "advisory_candidates": list(supply.get("advisory_candidates") or []),
+                "advisory_candidate_count": int(supply.get("advisory_candidate_count") or 0),
+                "advisory_review_required_count": int(
+                    supply.get("advisory_review_required_count") or 0
+                ),
+                "unresolved_advisory_count": int(supply.get("unresolved_advisory_count") or 0),
+                "semantics": {
+                    "candidate_overlap_is_not_affectedness_verdict": True,
+                    "recorded_assessment_is_not_generic_verification": True,
+                    "generic_trust_score_used": False,
+                },
+            }
+        raise McpError(-32602, f"unknown tool: {name}")
+
     actor = {"ref": "testamur:mcp-source-gateway"}
     with TestamurSourceGateway(_db_path()) as gateway:
         if name == "testamur.fetch":

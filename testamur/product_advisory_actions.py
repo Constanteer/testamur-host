@@ -24,15 +24,20 @@ def assess_advisory_candidate(
 ) -> dict[str, Any]:
     """Record an explicit applicability assessment for one advisory candidate.
 
-    The caller supplies evidence and basis, never a verdict. Applicability remains
-    engine-resolved; identity overlap, fetching, change, or model exposure cannot
-    silently become verification, reliance, or affectedness.
+    This is the product write boundary for moving from an exact identity-overlap
+    candidate to an immutable affectedness assessment.  It deliberately accepts
+    evidence and basis rather than a caller-supplied verdict: the canonical W5
+    engine resolves applicability from those facts.  A fetched advisory, identity
+    match, changed revision, or model exposure therefore cannot silently become a
+    verified/relied/affected conclusion here.
     """
+
     path = Path(database_path)
     advisories = TestamurAdvisoryStore(path)
     event_revision = advisories.get_revision(str(event_revision_id).strip())
     if event_revision is None:
         raise KeyError(str(event_revision_id).strip())
+
     engine = TestamurAffectednessEngine(
         lineage=TestamurLineageStore(path),
         assessments=TestamurAffectednessStore(path),

@@ -101,6 +101,8 @@ def _install() -> None:
         return base_call(name, arguments)
 
     setattr(call_tool, "_testamur_binding_extension", True)
+    # The wrapper includes the complete project extension. Marking both keeps
+    # repeated installs from wrapping the dispatch chain recursively.
     setattr(call_tool, "_testamur_project_extension", True)
     _base._call_tool = call_tool
 

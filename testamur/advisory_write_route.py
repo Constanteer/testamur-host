@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .product_advisory_assessment import assess_advisory_candidate
+from .product_advisory_actions import assess_advisory_candidate
 from .product_service import TestamurProductService
 
 _ALLOWED_FIELDS = {
@@ -20,8 +20,16 @@ _ALLOWED_FIELDS = {
 _FORBIDDEN_CONCLUSION_FIELDS = {"state", "verdict", "trust_score"}
 
 
-def record_advisory_assessment(service: TestamurProductService, payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate a hosted HTTP payload and record one canonical assessment."""
+def record_advisory_assessment(
+    service: TestamurProductService,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the HTTP product payload and record one canonical assessment.
+
+    The caller supplies evidence and provenance/basis, never a conclusion.  The
+    affectedness engine remains the only component allowed to resolve state.
+    """
+
     forbidden = sorted(set(payload) & _FORBIDDEN_CONCLUSION_FIELDS)
     if forbidden:
         raise ValueError(

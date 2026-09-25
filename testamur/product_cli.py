@@ -11,6 +11,12 @@ from .product_actions import create_monitor, create_project, refresh_monitor, re
 from .environment import DB_FILE_NAME, ENV_DIR_NAME, discover
 from .monitor_provider_manifest import load_monitor_provider_registry
 from .product_service import TestamurProductService
+from .supply_chain import (
+    diff_project_supply_chain,
+    import_project_supply_chain,
+    project_supply_chain_history,
+    scan_bound_project_supply_chain,
+)
 
 
 EXIT_OK = 0
@@ -45,6 +51,38 @@ def _parser() -> argparse.ArgumentParser:
     project_show.add_argument("ref")
     project_refresh = project_sub.add_parser("refresh")
     project_refresh.add_argument("ref")
+    project_import = project_sub.add_parser(
+        "import", help="scan dependency manifests/lockfiles and import a project supply chain"
+    )
+    project_import.add_argument("path", nargs="?", default=".")
+    project_import.add_argument("--name")
+    project_import.add_argument("--visibility", choices=("private", "public"), default="private")
+    project_bind_repo = project_sub.add_parser(
+        "bind-repo", help="bind an existing Project to a repository scanner input"
+    )
+    project_bind_repo.add_argument("ref")
+    project_bind_repo.add_argument("locator")
+    project_bind_repo.add_argument("--kind", choices=("local-path", "git"), default="local-path")
+    project_bind_repo.add_argument("--git-ref")
+    project_bind_repo.add_argument("--binding", default="primary")
+    project_repo = project_sub.add_parser("repo", help="show Project repository bindings")
+    project_repo.add_argument("ref")
+    project_scan = project_sub.add_parser("scan", help="rescan a bound existing Project")
+    project_scan.add_argument("ref")
+    project_scan.add_argument("--binding", default="primary")
+    project_supply = project_sub.add_parser("supply-chain", help="show current Project supply-chain inventory")
+    project_supply.add_argument("ref")
+    project_supply_history = project_sub.add_parser(
+        "supply-chain-history", help="show immutable Project supply-chain scan revisions"
+    )
+    project_supply_history.add_argument("ref")
+    project_supply_history.add_argument("--limit", type=int, default=50)
+    project_supply_diff = project_sub.add_parser(
+        "supply-chain-diff", help="mechanically compare two Project supply-chain scans"
+    )
+    project_supply_diff.add_argument("ref")
+    project_supply_diff.add_argument("--from", dest="from_scan_revision_id")
+    project_supply_diff.add_argument("--to", dest="to_scan_revision_id")
 
     monitor = sub.add_parser("monitor")
     monitor_sub = monitor.add_subparsers(dest="monitor_command", required=True)
@@ -219,6 +257,66 @@ def dispatch(
                 payload = product.project(args.ref)
             elif args.project_command == "refresh":
                 payload = refresh_project_monitors(product, project_ref=args.ref)
+            elif args.project_command == "import":
+                payload = import_project_supply_chain(
+                    product,
+                    Path(args.path),
+                    project_name=args.name,
+                    visibility=args.visibility,
+                )
+            elif args.project_command == "bind-repo":
+                payload = {
+                    "ok": True,
+                    "schema": "testamur.product.project-repository-binding.v1",
+                    **product.projects.bind_repository(
+                        args.ref,
+                        locator=args.locator,
+                        kind=args.kind,
+                        git_ref=args.git_ref,
+                        binding_key=args.binding,
+                    ),
+                }
+            elif args.project_command == "repo":
+                project_value = product.projects.get_project(args.ref)
+                if project_value is None:
+                    raise ValueError(f"project does not exist: {args.ref}")
+                payload = {
+                    "ok": True,
+                    "schema": "testamur.product.project-repositories.v1",
+                    "project": project_value,
+                    "bindings": product.projects.repository_bindings(args.ref),
+                }
+            elif args.project_command == "scan":
+                payload = scan_bound_project_supply_chain(
+                    product,
+                    args.ref,
+                    binding_key=args.binding,
+                )
+            elif args.project_command == "supply-chain":
+                detail = product.project(args.ref)
+                payload = detail if not detail.get("ok") else {
+                    "ok": True,
+                    "schema": "testamur.product.project-supply-chain.v1",
+                    "project": detail["project"],
+                    "supply_chain": detail["supply_chain"],
+                }
+            elif args.project_command == "supply-chain-history":
+                project_value = product.projects.get_project(args.ref)
+                if project_value is None:
+                    raise ValueError(f"project does not exist: {args.ref}")
+                payload = {
+                    "ok": True,
+                    "schema": "testamur.product.project-supply-chain-history.v1",
+                    "project": project_value,
+                    "items": project_supply_chain_history(product, args.ref, limit=args.limit),
+                }
+            elif args.project_command == "supply-chain-diff":
+                payload = diff_project_supply_chain(
+                    product,
+                    args.ref,
+                    from_scan_revision_id=args.from_scan_revision_id,
+                    to_scan_revision_id=args.to_scan_revision_id,
+                )
             else:
                 raise ValueError(f"unsupported project command: {args.project_command}")
         elif args.command == "monitor":
