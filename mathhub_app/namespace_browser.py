@@ -1004,7 +1004,7 @@ def library_theorem_detail(name: str, *, refresh: bool = False) -> dict[str, Any
     """Return read-only source detail, deterministic presentation, and source refs.
 
     No Lean process runs here. Source-reference edges are navigation evidence,
-    not verified proof dependencies; explicit Import remains that boundary.
+    not verified proof dependencies. Browsing never materializes a Claim.
     """
     name = str(name or "").strip()
     if not name or not core.LEAN_NAME_RE.fullmatch(name):
@@ -1090,8 +1090,9 @@ def library_theorem_detail(name: str, *, refresh: bool = False) -> dict[str, Any
         "registered": name in registered,
         "claim_id": registered.get(name),
         "verification_note": (
-            "Formula and reference links come from the installed Mathlib source index. "
-            "Import as Claim runs Lean and records verified dependency evidence."
+            "Formula and source-reference links come from the installed Mathlib source index. "
+            "Read-only browsing creates no Claim. Direct Lean dependencies are exposed separately; "
+            "materialization is optional when a durable workspace record is actually needed."
         ),
     }
 
