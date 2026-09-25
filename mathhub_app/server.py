@@ -91,6 +91,90 @@ def _write_runtime_setup_marker() -> None:
     )
 
 
+def _setup_output(proc: subprocess.CompletedProcess[str]) -> str:
+    return "\n".join(
+        chunk for chunk in [(proc.stdout or "").strip(), (proc.stderr or "").strip()] if chunk
+    )
+
+
+def _mathlib_checkout_is_corrupt(output: str) -> bool:
+    text = str(output or "").casefold()
+    markers = (
+        "could not resolve 'head' to a commit",
+        'could not resolve "head" to a commit',
+        "repository may be corrupt",
+        "not a git repository",
+        "bad object head",
+        "fatal: ambiguous argument 'head'",
+        "invalid object name 'head'",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _transient_git_failure(output: str) -> bool:
+    text = str(output or "").casefold()
+    markers = (
+        "early eof",
+        "invalid index-pack output",
+        "rpc failed",
+        "curl 92",
+        "http/2 stream",
+        "connection reset",
+        "connection timed out",
+        "could not resolve host",
+        "temporary failure",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _reset_mathlib_checkout() -> bool:
+    """Remove only the disposable Mathlib checkout; durable MathHub data lives elsewhere."""
+    checkout = ROOT / ".lake" / "packages" / "mathlib"
+    try:
+        if checkout.is_symlink() or checkout.is_file():
+            checkout.unlink(missing_ok=True)
+            return True
+        if checkout.is_dir():
+            shutil.rmtree(checkout)
+            return True
+    except OSError:
+        return False
+    return False
+
+
+def _run_setup_command(command: list[str], *, retries: int = 1) -> None:
+    last_output = ""
+    for attempt in range(1, max(1, retries) + 1):
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=SETUP_TIMEOUT_SECONDS,
+            env={**os.environ, "NO_COLOR": "1"},
+        )
+        if proc.returncode == 0:
+            return
+
+        output = _setup_output(proc)
+        last_output = output
+        is_lake_update = len(command) >= 2 and command[-1] == "update"
+        if is_lake_update and _mathlib_checkout_is_corrupt(output):
+            _reset_mathlib_checkout()
+            if attempt < retries:
+                time.sleep(min(2.0 * attempt, 5.0))
+                continue
+        if is_lake_update and _transient_git_failure(output) and attempt < retries:
+            time.sleep(min(2.0 * attempt, 5.0))
+            continue
+
+        tail = output[-4000:] if output else f"exit code {proc.returncode}"
+        raise RuntimeError(f"{' '.join(command[1:])} failed: {tail}")
+
+    tail = last_output[-4000:] if last_output else "setup command failed"
+    raise RuntimeError(f"{' '.join(command[1:])} failed after {retries} attempts: {tail}")
+
+
 def _runtime_setup_worker(lake: str) -> None:
     error = ""
     try:
@@ -118,20 +202,8 @@ def _runtime_setup_worker(lake: str) -> None:
             with _RUNTIME_SETUP_LOCK:
                 _RUNTIME_SETUP_STATE["stage"] = stage
                 _RUNTIME_SETUP_STATE["step"] = index
-            proc = subprocess.run(
-                command,
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                timeout=SETUP_TIMEOUT_SECONDS,
-                env={**os.environ, "NO_COLOR": "1"},
-            )
-            if proc.returncode != 0:
-                output = "\n".join(
-                    chunk for chunk in [(proc.stdout or "").strip(), (proc.stderr or "").strip()] if chunk
-                )
-                tail = output[-4000:] if output else f"exit code {proc.returncode}"
-                raise RuntimeError(f"{' '.join(command[1:])} failed: {tail}")
+            retries = 3 if len(command) >= 2 and command[-1] == "update" else 1
+            _run_setup_command(command, retries=retries)
         _write_runtime_setup_marker()
         with _RUNTIME_SETUP_LOCK:
             _RUNTIME_SETUP_STATE["stage"] = "Math library ready"

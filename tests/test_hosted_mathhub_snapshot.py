@@ -63,6 +63,9 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "RUNTIME_SETUP_MARKER" in server
     assert '[elan, "toolchain", "install", toolchain]' in server
     assert '[lake, "exe", "cache", "get"]' in server
+    assert "_mathlib_checkout_is_corrupt" in server
+    assert "_reset_mathlib_checkout" in server
+    assert "_transient_git_failure" in server
     assert "start_import_worker()" in mathhub
     assert "start_library_warmup()" in mathhub
     app = read(MATHHUB / "app.js")
@@ -89,4 +92,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 26bc2c8818af353f218303e16b119b6c0d08c75e"
+    assert marker == "Constanteer/Mathub main @ 7647fb94a3675eca2d502d8ca59b0ae4b3b9b9e3"
