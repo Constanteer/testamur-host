@@ -27,6 +27,7 @@ from namespace_browser import (
     global_library_status,
     global_library_world,
     library_theorem_detail,
+    library_declaration_dependencies,
     random_library_theorem,
     list_namespace_declarations,
 )
@@ -516,6 +517,9 @@ class Handler(core.Handler):
             if path=="/api/library/theorem":
                 q=parse_qs(p.query);name=str((q.get("name") or [""])[0]);refresh=first(q,"refresh","0") in {"1","true","yes"}
                 self.json_response(200,publicize(library_theorem_detail(name,refresh=refresh)));return
+            if path=="/api/library/dependencies":
+                q=parse_qs(p.query);name=str((q.get("name") or [""])[0]);refresh=first(q,"refresh","0") in {"1","true","yes"}
+                self.json_response(200,publicize(library_declaration_dependencies(name,refresh=refresh)));return
             if path=="/api/library/random":
                 self.json_response(200,random_library_theorem());return
             if path=="/api/starter-status":self.json_response(200,publicize(starter_claim_status()));return
