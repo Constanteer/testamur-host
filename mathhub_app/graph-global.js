@@ -8,7 +8,7 @@ const graphGlobalState={
   libraryMode:false,libraryIndexed:false,libraryStatus:null,libraryTheoremCount:0,
   libraryModulePath:'',libraryModuleHiddenCount:0,libraryModuleError:'',openingModulePath:'',
   libraryContextPrunedCount:0,
-  dependencyMode:false,dependencyRoot:'',dependencyDetails:new Map(),dependencyLoading:new Set(),dependencyExpanded:new Set(),dependencyBulkLoading:false,
+  dependencyMode:false,dependencyRoot:'',dependencyDetails:new Map(),dependencyLoading:new Set(),dependencyExpanded:new Set(),dependencyBulkLoading:false,dependencyPrefetching:false,dependencyPrefetchedCount:0,
   needsInitialFit:true,pendingFocusIds:[],
   theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),theoremImporting:new Set(),
 };
@@ -99,10 +99,76 @@ function mergeLibraryDependencyResult(result,{anchorName=''}={}){
   return newcomers;
 }
 
+function dependencyContextModule(){
+  const root=graphGlobalNode(`LIB:${graphGlobalState.dependencyRoot}`);
+  return String(root?.source_module||'').trim();
+}
+
+async function prefetchDependencyLookahead(names,{limit=24}={}){
+  if(!graphGlobalState.dependencyMode||graphGlobalState.dependencyPrefetching)return 0;
+  const wanted=[...new Set((names||[]).map(String).filter(Boolean))]
+    .filter(name=>!graphGlobalState.dependencyDetails.has(name)&&!graphGlobalState.dependencyLoading.has(name))
+    .slice(0,Math.max(1,Math.min(24,limit)));
+  if(!wanted.length)return 0;
+  graphGlobalState.dependencyPrefetching=true;render();
+  try{
+    const batch=await apiJson('/api/library/dependencies/batch',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        declaration_names:wanted,
+        context_module:dependencyContextModule(),
+      }),
+    });
+    if(!batch?.ok)throw new Error(batch?.error||'Dependency look-ahead failed');
+    let stored=0;
+    for(const result of batch.items||[]){
+      const name=String(result?.declaration_name||'').trim();
+      if(!name||!result?.ok)continue;
+      graphGlobalState.dependencyDetails.set(name,result);
+      const existing=graphGlobalNode(`LIB:${name}`);
+      const rootMeta=(result.nodes||[]).find(node=>node.id===`LIB:${name}`);
+      if(existing&&rootMeta)graphGlobalState.nodes.set(existing.id,{...existing,...rootMeta,dependency_root:existing.dependency_root});
+      stored++;
+    }
+    graphGlobalState.dependencyPrefetchedCount+=stored;
+    return stored;
+  }catch(error){
+    // Look-ahead is an optimization only. A node can still fall back to an
+    // on-demand inspection if this batch fails.
+    return 0;
+  }finally{
+    graphGlobalState.dependencyPrefetching=false;render();
+  }
+}
+
+function scheduleDependencyLookahead(name){
+  const id=`LIB:${name}`;
+  const children=dependencyChildren(id)
+    .map(childId=>dependencyNodeName(graphGlobalNode(childId)))
+    .filter(Boolean);
+  if(!children.length)return;
+  const run=()=>void prefetchDependencyLookahead(children,{limit:24});
+  if('requestIdleCallback' in window)window.requestIdleCallback(run,{timeout:450});
+  else setTimeout(run,40);
+}
+
 async function expandLibraryDependencyNode(name,{refresh=false}={}){
   name=String(name||'').trim();if(!name||graphGlobalState.dependencyLoading.has(name))return null;
   if(graphGlobalState.dependencyExpanded.has(name)&&!refresh){
     const id=`LIB:${name}`;render();requestAnimationFrame(()=>fitGlobalGraphNodes([id,...dependencyChildren(id)],{maxScale:1.1,padding:88}));return graphGlobalState.dependencyDetails.get(name)||null;
+  }
+  if(!refresh&&graphGlobalState.dependencyDetails.has(name)){
+    const cached=graphGlobalState.dependencyDetails.get(name);
+    state.graphSelected=`LIB:${name}`;
+    mergeLibraryDependencyResult(cached,{anchorName:name});
+    render();
+    scheduleDependencyLookahead(name);
+    requestAnimationFrame(()=>{
+      const id=`LIB:${name}`;
+      fitGlobalGraphNodes([id,...dependencyChildren(id)],{maxScale:1.1,padding:88});
+    });
+    return cached;
   }
   graphGlobalState.dependencyLoading.add(name);state.graphSelected=`LIB:${name}`;render();
   try{
@@ -110,6 +176,7 @@ async function expandLibraryDependencyNode(name,{refresh=false}={}){
     const result=await apiJson(`/api/library/dependencies?name=${encodeURIComponent(name)}${suffix}`);
     if(!result?.ok)throw new Error(result?.error||'Dependency inspection failed');
     mergeLibraryDependencyResult(result,{anchorName:name});
+    scheduleDependencyLookahead(name);
     return result;
   }catch(error){
     graphGlobalState.theoremErrors.set(name,error?.message||String(error));
@@ -129,14 +196,18 @@ async function expandDependencyFrontier(){
   const frontier=visible
     .map(node=>dependencyNodeName(node))
     .filter(name=>name&&name!==graphGlobalState.dependencyRoot&&!graphGlobalState.dependencyExpanded.has(name))
-    .slice(0,12);
+    .slice(0,24);
   if(!frontier.length)return;
   graphGlobalState.dependencyBulkLoading=true;render();
   try{
-    // Keep Lean pressure bounded. The dependency cache makes revisits cheap.
-    for(let i=0;i<frontier.length;i+=2){
-      await Promise.all(frontier.slice(i,i+2).map(name=>expandLibraryDependencyNode(name)));
+    await prefetchDependencyLookahead(frontier,{limit:24});
+    for(const name of frontier){
+      const cached=graphGlobalState.dependencyDetails.get(name);
+      if(cached&&!graphGlobalState.dependencyExpanded.has(name))mergeLibraryDependencyResult(cached,{anchorName:name});
     }
+    // Prime the next frontier too, but do not draw it yet.
+    const next=[...new Set(frontier.flatMap(name=>dependencyChildren(`LIB:${name}`).map(id=>dependencyNodeName(graphGlobalNode(id))).filter(Boolean)))];
+    if(next.length)setTimeout(()=>void prefetchDependencyLookahead(next,{limit:24}),30);
   }finally{
     graphGlobalState.dependencyBulkLoading=false;render();
     requestAnimationFrame(()=>fitGlobalGraphNodes(graphGlobalGraph().nodes.map(node=>node.id),{maxScale:.95,padding:92}));
@@ -150,7 +221,7 @@ async function openLibraryDependencyGraph(name){
   graphGlobalState.loaded=true;graphGlobalState.loading=false;
   graphGlobalState.libraryMode=true;graphGlobalState.libraryIndexed=true;
   graphGlobalState.dependencyMode=true;graphGlobalState.dependencyRoot=name;
-  graphGlobalState.dependencyDetails.clear();graphGlobalState.dependencyLoading.clear();graphGlobalState.dependencyExpanded.clear();graphGlobalState.dependencyBulkLoading=false;
+  graphGlobalState.dependencyDetails.clear();graphGlobalState.dependencyLoading.clear();graphGlobalState.dependencyExpanded.clear();graphGlobalState.dependencyBulkLoading=false;graphGlobalState.dependencyPrefetching=false;graphGlobalState.dependencyPrefetchedCount=0;
   graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();
   graphGlobalState.libraryModulePath='';graphGlobalState.libraryModuleHiddenCount=0;graphGlobalState.libraryContextPrunedCount=0;
   const rootId=`LIB:${name}`;
@@ -937,7 +1008,7 @@ renderGraph=function renderPersistentGlobalGraph(){
       ? `${graphGlobalState.libraryModulePath?'<button class="btn" data-library-module-back>Back</button>':''}<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button><button class="btn" data-reset-global-world>Reset world</button>`
       : `<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button><button class="btn" data-reset-global-world>Reset world</button>`;
   const meta=dependency
-    ? `<div class="global-world-meta"><span>${represented}</span><span>${Number(rootMeta?.direct_dependency_count||0).toLocaleString()} direct from root</span><span>${graphGlobalState.dependencyExpanded.size.toLocaleString()} declarations inspected</span>${graphGlobalState.dependencyLoading.size?'<strong>reading direct Lean dependencies…</strong>':''}</div>`
+    ? `<div class="global-world-meta"><span>${represented}</span><span>${Number(rootMeta?.direct_dependency_count||0).toLocaleString()} direct from root</span><span>${graphGlobalState.dependencyExpanded.size.toLocaleString()} opened</span>${graphGlobalState.dependencyPrefetchedCount?`<span>${graphGlobalState.dependencyPrefetchedCount.toLocaleString()} look-ahead cached</span>`:''}${graphGlobalState.dependencyLoading.size?'<strong>reading current dependencies…</strong>':graphGlobalState.dependencyPrefetching?'<strong>caching the next step…</strong>':''}</div>`
     : `<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} ${graphGlobalState.libraryMode?(graphGlobalState.libraryModulePath?'child modules':'modules visible'):'root namespaces / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} visible</span>${graphGlobalState.libraryMode&&graphGlobalState.libraryContextPrunedCount? `<span>${graphGlobalState.libraryContextPrunedCount.toLocaleString()} older-context nodes compacted</span>` : graphGlobalState.libraryMode&&graphGlobalState.libraryModuleHiddenCount? `<span>${graphGlobalState.libraryModuleHiddenCount.toLocaleString()} more in this branch</span>` : `<span>${graphGlobalState.expandedAreas.size} clusters expanded</span>`}${graphGlobalState.loading?'<strong>loading…</strong>':''}</div>`;
   const hint=dependency?'drag · zoom · click to inspect · double-click to expand dependencies · arrow = depends on':'drag · zoom · click to inspect · double-click to expand · module → child = hierarchy · theorem → theorem = source reference';
   return `<main class="global-graph-page ${dependency?'dependency-graph-page':''}">${libraryBreadcrumbHtml()}${dependency?dependencyFocusCard():''}<div class="global-graph-top"><div><div class="eyebrow">${dependency?'Lean dependency graph':graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${actions}</div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}${meta}${graphGlobalState.libraryModuleError?`<div class="global-module-error"><strong>Module open failed</strong><code>${esc(graphGlobalState.libraryModuleError)}</code></div>`:''}<div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="${dependency?'Lean dependency graph':'Global mathematical graph'}"></canvas><div class="global-graph-hint">${esc(hint)}</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
