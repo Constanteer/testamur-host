@@ -101,35 +101,7 @@
     window.bindNavigation?.();
   }
 
-  function isResumeNode(node) {
-    if (!(node instanceof Element)) return false;
-    return node.matches('[data-first-run-resume]') || Boolean(node.closest('[data-first-run-resume]'));
-  }
-
-  function onlyResumeMutations(records) {
-    return records.length > 0 && records.every((record) => {
-      const changed = [...record.addedNodes, ...record.removedNodes];
-      return changed.length > 0 && changed.every(isResumeNode);
-    });
-  }
-
-  let renderQueued = false;
-  function queueRender() {
-    if (renderQueued) return;
-    renderQueued = true;
-    queueMicrotask(() => {
-      renderQueued = false;
-      render();
-    });
-  }
-
   addEventListener('DOMContentLoaded', queueRender);
   addEventListener('popstate', queueRender);
-  new MutationObserver((records) => {
-    // render() replaces this panel. Ignore those self-authored mutations or the
-    // observer would schedule render -> replace -> observer forever. Coalesce
-    // the remaining SPA churn so one DOM update batch causes at most one render.
-    if (onlyResumeMutations(records)) return;
-    queueRender();
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  addEventListener('testamur:rendered', queueRender);
 })();
