@@ -52,5 +52,5 @@
 
   addEventListener('DOMContentLoaded', enhance);
   addEventListener('popstate', enhance);
-  new MutationObserver(enhance).observe(document.documentElement, { childList: true, subtree: true });
+  addEventListener('testamur:rendered', enhance);
 })();
