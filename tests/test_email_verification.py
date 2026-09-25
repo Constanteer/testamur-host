@@ -223,6 +223,26 @@ class EmailVerificationTests(unittest.TestCase):
             self.assertIn('resend.dev testing domain', server.mail_last_error_hint or '')
         finally:
             server.server_close()
+    def test_unexpected_account_failure_is_recorded_safely(self) -> None:
+        server = build_hosted_server(
+            data_dir=Path(self.tempdir.name) / "account-diagnostic",
+            host="127.0.0.1",
+            port=0,
+            monitor_target_providers={},
+            monitor_target_provider_specs={},
+            monitor_scheduler_enabled=False,
+        )
+        try:
+            server.record_account_failure(sqlite3.OperationalError("database is locked"))
+            self.assertIsNotNone(server.account_last_error_at)
+            self.assertEqual(server.account_last_error_type, "OperationalError")
+            self.assertIn("Zeabur logs", server.account_last_error_hint or "")
+            server.clear_account_failure()
+            self.assertIsNone(server.account_last_error_at)
+            self.assertIsNone(server.account_last_error_type)
+        finally:
+            server.server_close()
+
     def test_bad_mail_configuration_does_not_crash_host_startup(self) -> None:
         with patch.dict(
             os.environ,
