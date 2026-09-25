@@ -1122,8 +1122,24 @@ def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dic
         if cached and cached.get("dependency_graph_version") == "lean-direct-fast-v2":
             return cached
 
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        indexed = conn.execute(
+            """SELECT lean_name,namespace,short_name,source_module,source_path,source_line
+               FROM library_global_theorems
+               WHERE environment_hash=? AND lean_name=?""",
+            (environment_hash, name),
+        ).fetchone()
+
+    # Import the declaration's own compiled module when known instead of the
+    # Mathlib umbrella. This materially reduces startup work for interactive
+    # inspection while preserving the same pinned environment.
+    inspection_imports = [
+        str(indexed["source_module"])
+    ] if indexed is not None and str(indexed["source_module"] or "") else ["Mathlib"]
+
     inspected = core.inspect_direct_dependencies(
-        {"imports": ["Mathlib"], "declaration_name": name}
+        {"imports": inspection_imports, "declaration_name": name}
     )
     if not inspected.get("ok"):
         return {
@@ -1156,14 +1172,17 @@ def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dic
     transitive: list[str] = []
     axioms: list[str] = []
 
-    with core.FORMAL.connect() as conn:
-        _ensure_global_cache_schema(conn)
-        indexed = conn.execute(
-            """SELECT lean_name,namespace,short_name,source_module,source_path,source_line
-               FROM library_global_theorems
-               WHERE environment_hash=? AND lean_name=?""",
-            (environment_hash, name),
-        ).fetchone()
+    indexed_dependencies: dict[str, dict[str, Any]] = {}
+    if direct:
+        placeholders = ",".join("?" for _ in direct)
+        with core.FORMAL.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT lean_name,namespace,short_name,source_module,source_path,source_line
+                    FROM library_global_theorems
+                    WHERE environment_hash=? AND lean_name IN ({placeholders})""",
+                (environment_hash, *direct),
+            ).fetchall()
+        indexed_dependencies = {str(row["lean_name"]): dict(row) for row in rows}
 
     roles: dict[str, list[str]] = {}
     for dep in statement:
@@ -1186,13 +1205,17 @@ def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dic
         }
     ]
     for dep in direct:
+        dep_indexed = indexed_dependencies.get(dep)
         nodes.append(
             {
                 "id": f"LIB:{dep}",
                 "kind": "library-declaration",
                 "lean_name": dep,
-                "title": dep.rsplit(".", 1)[-1],
-                "namespace_path": dep.rsplit(".", 1)[0] if "." in dep else "",
+                "title": str(dep_indexed["short_name"]) if dep_indexed else dep.rsplit(".", 1)[-1],
+                "namespace_path": str(dep_indexed["namespace"]) if dep_indexed else (dep.rsplit(".", 1)[0] if "." in dep else ""),
+                "source_module": str(dep_indexed["source_module"]) if dep_indexed else "",
+                "source_path": str(dep_indexed["source_path"]) if dep_indexed else "",
+                "source_line": int(dep_indexed["source_line"] or 0) if dep_indexed else 0,
                 "dependency_roles": roles.get(dep, []),
                 "dependency_depth": 1,
                 "is_axiom": dep in axioms,
@@ -1218,6 +1241,7 @@ def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dic
         "dependency_graph_version": "lean-direct-fast-v2",
         "inspection_mode": "lean-direct",
         "lean_invocations": 1,
+        "inspection_imports": inspection_imports,
         "environment_hash": environment_hash,
         "declaration_name": name,
         "pretty_type": str(inspected.get("pretty_type") or ""),
