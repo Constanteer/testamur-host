@@ -40,7 +40,7 @@ function libraryInspectionHtml(name){
 function libraryRow(item){
   const name=item.declaration_name,status=libraryBrowserState.importStatus.get(name),registered=item.registered||status?.ok,claimId=status?.claim_id||item.claim_id||'';
   const friendly=humanizeLeanName(item.short_name||name);
-  return `<div class="library-row ${registered?'registered':''}"><div class="library-row-main"><div class="library-friendly-name"><strong>${esc(friendly)}</strong>${registered?'<span class="library-registered">workspace record</span>':''}</div><span class="library-row-kind">Mathlib theorem · already available</span>${libraryInspectionHtml(name)}</div><div class="library-row-actions"><button class="btn" data-library-inspect="${esc(name)}">Details</button><button class="btn btn-primary" data-library-edit-copy="${esc(name)}">Edit a copy</button>${registered&&claimId?`<button class="btn" data-library-open-claim="${esc(claimId)}">Open record</button>`:''}</div></div>`;
+  return `<div class="library-row ${registered?'registered':''}"><div class="library-row-main"><div class="library-friendly-name"><strong>${esc(friendly)}</strong>${registered?'<span class="library-registered">workspace record</span>':''}</div><span class="library-row-kind">Mathlib theorem · already available</span>${libraryInspectionHtml(name)}</div><div class="library-row-actions"><button class="btn btn-primary" data-library-open-dependencies="${esc(name)}">Open</button><button class="btn" data-library-inspect="${esc(name)}">Source</button><button class="btn" data-library-edit-copy="${esc(name)}">Edit a copy</button>${registered&&claimId?`<button class="btn" data-library-open-claim="${esc(claimId)}">Open record</button>`:''}</div></div>`;
 }
 
 async function editLibraryTheoremCopy(name){
@@ -187,6 +187,7 @@ function bindLibraryBrowserOverlay(host){
   host.querySelector('[data-library-search-clear]')?.addEventListener('click',()=>searchLibraryNamespace(''));
   host.querySelector('[data-library-retry-setup]')?.addEventListener('click',async()=>{const button=host.querySelector('[data-library-retry-setup]');if(button){button.disabled=true;button.textContent='Retrying…';}try{await apiJson('/api/runtime/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}catch(error){libraryBrowserState.error=error.message||String(error);}finally{if(typeof checkRuntime==='function')await checkRuntime();renderLibraryBrowser();}});
   host.querySelector('[data-library-import-activity]')?.addEventListener('click',()=>{if(typeof openImportTasks==='function')openImportTasks();});
+  host.querySelectorAll('[data-library-open-dependencies]').forEach(button=>button.addEventListener('click',()=>{if(typeof openLibraryDependencyGraph==='function')void openLibraryDependencyGraph(button.dataset.libraryOpenDependencies);}));
   host.querySelectorAll('[data-library-inspect]').forEach(button=>button.addEventListener('click',()=>inspectLibraryDeclaration(button.dataset.libraryInspect)));
   host.querySelectorAll('[data-library-edit-copy]').forEach(button=>button.addEventListener('click',()=>void editLibraryTheoremCopy(button.dataset.libraryEditCopy)));
   host.querySelectorAll('[data-library-open-claim]').forEach(button=>button.addEventListener('click',()=>openLibraryClaim(button.dataset.libraryOpenClaim)));
