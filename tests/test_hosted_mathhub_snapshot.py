@@ -151,4 +151,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 870d17ff2cf477491a49431590d1ec4c4521d719"
+    assert marker == "Constanteer/Mathub main @ 063fffbe54e3b87ac99a8e6bf95e32fb43f653a1"
