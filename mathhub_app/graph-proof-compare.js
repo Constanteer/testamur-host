@@ -8,6 +8,7 @@ function graphProofCompareRouteData(){
 const graphProofCompareBaseDraw=drawGraphCanvas;
 drawGraphCanvas=function drawComparedProofRoutes(canvas){
   graphProofCompareBaseDraw(canvas);const route=graphProofCompareRouteData(),graph=argumentState.graph;if(!canvas||!route||!graph)return;
+  if(typeof graphGlobalState!=='undefined'&&graphGlobalState.libraryMode)return;
   const positions=graphCanvasState.positions,sourceWorld=positions.get(route.source);if(!sourceWorld)return;
   const ctx=canvas.getContext('2d'),palette=graphCanvasPalette(canvas),source=graphScreenPoint(sourceWorld),left=new Set(route.left),right=new Set(route.right),all=[...new Set([...left,...right])];
   ctx.save();
