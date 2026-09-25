@@ -17,6 +17,7 @@ _ORG_ROLES = {"owner", "admin", "member"}
 _SESSION_SECONDS = 60 * 60 * 24 * 30
 _EMAIL_VERIFICATION_SECONDS = 60 * 30
 _EMAIL_RESEND_COOLDOWN_SECONDS = 60
+_EMAIL_CODE_MAX_ATTEMPTS = 8
 
 
 @dataclass
@@ -87,6 +88,14 @@ def _session_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _verification_code_hash(token_hash: str, code: str) -> str:
+    return hmac.new(
+        bytes.fromhex(token_hash),
+        code.encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 class AccountStore:
     """Hosted account/session state. This is intentionally outside the Testamur core package."""
 
@@ -133,6 +142,8 @@ class AccountStore:
                     user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
+                    code_hash TEXT,
+                    code_attempts INTEGER NOT NULL DEFAULT 0,
                     consumed_at INTEGER,
                     invalidated_at INTEGER
                 );
@@ -188,6 +199,16 @@ class AccountStore:
                     SET email_verified_at = COALESCE(email_verified_at, created_at),
                         email_verification_source = COALESCE(email_verification_source, 'legacy_migration')
                     """
+                )
+            verification_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(email_verification_tokens)").fetchall()
+            }
+            if "code_hash" not in verification_columns:
+                connection.execute("ALTER TABLE email_verification_tokens ADD COLUMN code_hash TEXT")
+            if "code_attempts" not in verification_columns:
+                connection.execute(
+                    "ALTER TABLE email_verification_tokens ADD COLUMN code_attempts INTEGER NOT NULL DEFAULT 0"
                 )
 
     @staticmethod
@@ -521,7 +542,7 @@ class AccountStore:
         user_id: str,
         *,
         enforce_cooldown: bool = False,
-    ) -> str:
+    ) -> tuple[str, str]:
         now = _now()
         if enforce_cooldown:
             latest = connection.execute(
@@ -545,15 +566,24 @@ class AccountStore:
                     429,
                 )
         token = secrets.token_urlsafe(32)
+        token_hash = _session_hash(token)
+        code = f"{secrets.randbelow(1_000_000):06d}"
         connection.execute(
             """
             INSERT INTO email_verification_tokens(
-                token_hash, user_id, created_at, expires_at, consumed_at, invalidated_at
-            ) VALUES (?, ?, ?, ?, NULL, NULL)
+                token_hash, user_id, created_at, expires_at,
+                code_hash, code_attempts, consumed_at, invalidated_at
+            ) VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)
             """,
-            (_session_hash(token), user_id, now, now + _EMAIL_VERIFICATION_SECONDS),
+            (
+                token_hash,
+                user_id,
+                now,
+                now + _EMAIL_VERIFICATION_SECONDS,
+                _verification_code_hash(token_hash, code),
+            ),
         )
-        return token
+        return token, code
 
     def confirm_email_verification_delivery(self, *, token: str) -> None:
         """Make the delivered token canonical and retire older active links."""
@@ -602,7 +632,7 @@ class AccountStore:
         email: str,
         password: str,
         display_name: str | None = None,
-    ) -> tuple[dict[str, Any], str]:
+    ) -> tuple[dict[str, Any], str, str]:
         normalized_username = _normalize_username(username)
         normalized_email = _normalize_email(email)
         name = (display_name or username).strip()
@@ -622,7 +652,7 @@ class AccountStore:
                     """,
                     (user_id, normalized_username, normalized_email, name, digest, now, now),
                 )
-                verification_token = self._new_email_verification(connection, user_id)
+                verification_token, verification_code = self._new_email_verification(connection, user_id)
                 row = connection.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
         except sqlite3.IntegrityError as exc:
             text = str(exc).lower()
@@ -632,9 +662,9 @@ class AccountStore:
                 raise AccountError("email_taken", "That email address is already in use.", 409) from exc
             raise AccountError("account_conflict", "Account already exists.", 409) from exc
         assert row is not None
-        return self._public_user(row), verification_token
+        return self._public_user(row), verification_token, verification_code
 
-    def request_email_verification(self, *, identifier: str) -> tuple[dict[str, Any], str] | None:
+    def request_email_verification(self, *, identifier: str) -> tuple[dict[str, Any], str, str] | None:
         normalized = identifier.strip().casefold()
         if not normalized:
             return None
@@ -645,8 +675,8 @@ class AccountStore:
             ).fetchone()
             if row is None or row["email_verified_at"] is not None:
                 return None
-            token = self._new_email_verification(connection, row["user_id"], enforce_cooldown=True)
-            return self._public_user(row), token
+            token, code = self._new_email_verification(connection, row["user_id"], enforce_cooldown=True)
+            return self._public_user(row), token, code
 
     def verify_email(self, *, token: str) -> tuple[dict[str, Any], str]:
         if not isinstance(token, str) or len(token) < 20 or len(token) > 512:
@@ -680,6 +710,114 @@ class AccountStore:
                 UPDATE users
                 SET email_verified_at = COALESCE(email_verified_at, ?),
                     email_verification_source = COALESCE(email_verification_source, 'email_link'),
+                    updated_at = ?
+                WHERE user_id = ?
+                """,
+                (now, now, user_id),
+            )
+            connection.execute(
+                """
+                UPDATE email_verification_tokens
+                SET consumed_at = CASE WHEN token_hash = ? THEN ? ELSE consumed_at END,
+                    invalidated_at = CASE
+                        WHEN token_hash <> ? AND consumed_at IS NULL AND invalidated_at IS NULL THEN ?
+                        ELSE invalidated_at
+                    END
+                WHERE user_id = ?
+                """,
+                (token_hash, now, token_hash, now, user_id),
+            )
+            row = connection.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            assert row is not None
+            session = self._new_session(connection, user_id)
+            return self._public_user(row), session
+
+    def verify_email_code(self, *, identifier: str, code: str) -> tuple[dict[str, Any], str]:
+        normalized = identifier.strip().casefold()
+        clean_code = code.strip()
+        if not normalized:
+            raise AccountError("invalid_verification_code", "Enter the email address and verification code.", 400)
+        if not re.fullmatch(r"\d{6}", clean_code):
+            raise AccountError("invalid_verification_code", "Verification code must be 6 digits.", 400)
+
+        now = _now()
+        with self._connect() as connection:
+            record = connection.execute(
+                """
+                SELECT email_verification_tokens.*, users.*
+                FROM users
+                JOIN email_verification_tokens
+                  ON email_verification_tokens.user_id = users.user_id
+                WHERE (users.username = ? OR users.email = ?)
+                  AND email_verification_tokens.consumed_at IS NULL
+                  AND email_verification_tokens.invalidated_at IS NULL
+                ORDER BY email_verification_tokens.created_at DESC
+                LIMIT 1
+                """,
+                (normalized, normalized),
+            ).fetchone()
+            if record is None:
+                raise AccountError(
+                    "invalid_verification_code",
+                    "That verification code is not active. Request a new email.",
+                    400,
+                )
+            token_hash = str(record["token_hash"])
+            if int(record["expires_at"]) <= now:
+                connection.execute(
+                    "UPDATE email_verification_tokens SET invalidated_at = ? WHERE token_hash = ?",
+                    (now, token_hash),
+                )
+                raise AccountError(
+                    "verification_code_expired",
+                    "This verification code has expired. Request a new email.",
+                    400,
+                )
+            expected = str(record["code_hash"] or "")
+            attempts = int(record["code_attempts"] or 0)
+            if not expected:
+                raise AccountError(
+                    "verification_code_unavailable",
+                    "This older verification email has no code. Request a new email.",
+                    400,
+                )
+            if attempts >= _EMAIL_CODE_MAX_ATTEMPTS:
+                connection.execute(
+                    "UPDATE email_verification_tokens SET invalidated_at = ? WHERE token_hash = ?",
+                    (now, token_hash),
+                )
+                raise AccountError(
+                    "verification_code_locked",
+                    "Too many incorrect attempts. Request a new verification email.",
+                    429,
+                )
+
+            actual = _verification_code_hash(token_hash, clean_code)
+            if not hmac.compare_digest(actual, expected):
+                new_attempts = attempts + 1
+                invalidate_at = now if new_attempts >= _EMAIL_CODE_MAX_ATTEMPTS else None
+                connection.execute(
+                    """
+                    UPDATE email_verification_tokens
+                    SET code_attempts = ?, invalidated_at = COALESCE(invalidated_at, ?)
+                    WHERE token_hash = ?
+                    """,
+                    (new_attempts, invalidate_at, token_hash),
+                )
+                if new_attempts >= _EMAIL_CODE_MAX_ATTEMPTS:
+                    raise AccountError(
+                        "verification_code_locked",
+                        "Too many incorrect attempts. Request a new verification email.",
+                        429,
+                    )
+                raise AccountError("invalid_verification_code", "Incorrect verification code.", 400)
+
+            user_id = str(record["user_id"])
+            connection.execute(
+                """
+                UPDATE users
+                SET email_verified_at = COALESCE(email_verified_at, ?),
+                    email_verification_source = COALESCE(email_verification_source, 'email_code'),
                     updated_at = ?
                 WHERE user_id = ?
                 """,
