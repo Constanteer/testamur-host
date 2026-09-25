@@ -24,7 +24,7 @@ class WorkSessionStore(_ReconciliationMixin):
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys=ON")
         if self.database_path != ":memory:":
-            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=2000")
         self._init_schema()
 
     def close(self) -> None:
