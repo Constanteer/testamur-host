@@ -205,7 +205,7 @@ def _mathhub_static(relative_path: str) -> dict[str, Any]:
     if target.name == "index.html":
         # Older deployments cached MathHub JS/CSS for five minutes. Revalidation
         # headers on a new deployment cannot invalidate a still-fresh browser
-        # entry, so version local assets by the recorded MathHub snapshot.
+        # entry, so version URLs by the bytes of the bundled MathHub assets.
         cache_token = _mathhub_asset_cache_token()
         html = body.decode("utf-8")
         html = re.sub(
