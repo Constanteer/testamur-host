@@ -297,8 +297,6 @@
     );
   }
 
-  new MutationObserver(mutations => {
-    if (mutations.length && mutations.every(mutationIsAdvisorySelfMutation)) return;
-    queueRender();
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  addEventListener('testamur:rendered', queueRender);
+  addEventListener('DOMContentLoaded', queueRender);
 })();
