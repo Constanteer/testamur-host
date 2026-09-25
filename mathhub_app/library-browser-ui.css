@@ -53,19 +53,19 @@
 .library-result-head span,.library-result-head small,.library-selection-bar span,.library-progress span{color:var(--muted);font-size:10px}
 .library-search{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:end;padding:2px 0 17px}
 .library-selection-bar{position:sticky;top:0;z-index:4;background:color-mix(in srgb,var(--panel) 94%,transparent);backdrop-filter:blur(8px)}
-.library-selection-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.library-selection-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.library-readonly-note{display:flex;gap:10px;align-items:baseline;padding:11px 0 13px;border-top:1px solid var(--line);color:var(--muted);font-size:10px}.library-readonly-note strong{color:var(--ink);font-size:10px}
 .library-progress{justify-content:flex-start;background:color-mix(in srgb,var(--blue) 4%,transparent)}
 .library-progress strong{font-variant-numeric:tabular-nums}
 
 .library-list{border-top:1px solid var(--line)}
-.library-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:12px;align-items:start;padding:16px 2px;border-bottom:1px solid color-mix(in srgb,var(--line) 75%,transparent)}
+.library-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;padding:16px 2px;border-bottom:1px solid color-mix(in srgb,var(--line) 75%,transparent)}
 .library-row:hover{background:linear-gradient(90deg,color-mix(in srgb,var(--blue) 3%,transparent),transparent 60%)}
-.library-row.registered{opacity:.72}
+.library-row.registered{opacity:1}
 .library-select{padding-top:2px}
 .library-friendly-name{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .library-friendly-name strong{font-size:13px;font-weight:650}
 .library-row-kind{display:block;margin-top:4px;color:var(--muted);font-size:9px}
-.library-row-actions{display:flex;gap:7px}
+.library-row-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
 .library-registered,.library-import-failed{font-size:9px;border:1px solid var(--line);border-radius:999px;padding:2px 6px;color:var(--muted)}
 .library-registered{background:color-mix(in srgb,var(--accent) 8%,var(--panel))}
 .library-import-failed{background:color-mix(in srgb,var(--red) 8%,var(--panel));color:var(--red)}
@@ -105,7 +105,7 @@
 }
 @media(max-width:680px){
   .library-page{padding-top:28px}.library-current-head{grid-template-columns:1fr}.library-query.friendly{justify-content:space-between}
-  .library-topic-rail{grid-template-columns:1fr}.library-search{grid-template-columns:1fr}.library-row{grid-template-columns:24px minmax(0,1fr)}.library-row-actions{grid-column:2}
+  .library-topic-rail{grid-template-columns:1fr}.library-search{grid-template-columns:1fr}.library-row{grid-template-columns:1fr}.library-row-actions{grid-column:1;justify-content:flex-start}
   .library-selection-bar{align-items:flex-start;flex-direction:column}.library-selection-actions{justify-content:flex-start}
   .library-advanced-grid{position:static;width:auto;grid-template-columns:1fr;margin-top:8px}.mathhub-empty-start{grid-template-columns:1fr;padding:20px}
 }
