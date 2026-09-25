@@ -447,6 +447,31 @@ elab "#mathhub_inspect_decl " id:ident : command => do
   logInfo m!"MATHHUB_INSPECT_END:{name}"
 '''
 
+LEAN_DIRECT_DEP_COMMAND = r'''
+open Lean Elab Command
+
+private def mathhubDirectProofConstants (info : ConstantInfo) : Array Name :=
+  match info with
+  | .defnInfo v => v.value.getUsedConstants
+  | .thmInfo v => v.value.getUsedConstants
+  | .opaqueInfo v => v.value.getUsedConstants
+  | _ => #[]
+
+elab "#mathhub_direct_deps " id:ident : command => do
+  let name := id.getId
+  let env ← getEnv
+  let some info := env.find? name | throwError "unknown declaration {name}"
+  logInfo m!"MATHHUB_DIRECT_BEGIN:{name}"
+  let pretty ← liftTermElabM do
+    Lean.PrettyPrinter.ppExpr info.type
+  logInfo m!"MATHHUB_PRETTY_TYPE:{pretty.pretty 1000000}"
+  for dep in info.type.getUsedConstants do
+    if dep != name then logInfo m!"MATHHUB_STATEMENT_REF:{dep}"
+  for dep in mathhubDirectProofConstants info do
+    if dep != name then logInfo m!"MATHHUB_PROOF_REF:{dep}"
+  logInfo m!"MATHHUB_DIRECT_END:{name}"
+'''
+
 
 def source_for(imports: list[str], declaration: str, proof: str, name: str, audit_mode: bool) -> str:
     import_lines = "\n".join(f"import {module}" for module in imports)
@@ -464,6 +489,14 @@ def inspection_source(imports: list[str], name: str) -> str:
     return (
         f"import Mathlib.Tactic.MinImports\n{import_lines}\n\n{LEAN_AUDIT_COMMAND}\n"
         f"#check {name}\n#print axioms {name}\n#mathhub_inspect_decl {name}\n"
+    )
+
+
+def direct_dependency_source(imports: list[str], name: str) -> str:
+    import_lines = "\n".join(f"import {module}" for module in imports)
+    return (
+        f"{import_lines}\n\n{LEAN_DIRECT_DEP_COMMAND}\n"
+        f"#mathhub_direct_deps {name}\n"
     )
 
 
@@ -684,6 +717,44 @@ def inspect_declaration(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def inspect_direct_dependencies(payload: dict[str, Any]) -> dict[str, Any]:
+    """Fast dependency inspection for interactive graph expansion.
+
+    Unlike inspect_declaration(), this deliberately skips MinImports transitive
+    closure, type partitioning and #print axioms. It reads the declaration type
+    and proof constants only, so the graph can recurse one level at a time
+    without paying the full audit cost on every click.
+    """
+    imports = validate_imports(payload.get("imports"))
+    name = str(payload.get("declaration_name") or payload.get("name") or "").strip()
+    if not name or not LEAN_NAME_RE.fullmatch(name):
+        raise ValueError("declaration_name must be a Lean identifier")
+    source = direct_dependency_source(imports, name)
+    run = invoke_lean(source, timeout_seconds=min(INDEX_TIMEOUT_SECONDS, 20))
+    if run.get("engine_error"):
+        return {"error": run["engine_error"], **run}
+    output = run.get("output", "")
+    statement = parse_marker(output, "MATHHUB_STATEMENT_REF:")
+    proof = parse_marker(output, "MATHHUB_PROOF_REF:")
+    direct = unique([*statement, *proof])
+    return {
+        **run,
+        "declaration_name": name,
+        "imports": imports,
+        "statement_dependencies": statement,
+        "proof_dependencies": proof,
+        "direct_dependencies": direct,
+        "dependencies": direct,
+        "transitive_dependencies": [],
+        "axioms": [],
+        "pretty_type": parse_pretty_type(output),
+        "inspection_mode": "lean-direct",
+        "lean_invocations": 1,
+        "fast_path": True,
+        "source_hash": hashlib.sha256(source.encode()).hexdigest(),
+    }
+
+
 def build_registered_proof(proof_id: str) -> dict[str, Any]:
     proof = REGISTRY.get_proof(proof_id)
     result = audit(
@@ -780,6 +851,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/lean/inspect":
                 self.json_response(200, inspect_declaration(payload))
+                return
+            if path == "/api/lean/direct-dependencies":
+                self.json_response(200, inspect_direct_dependencies(payload))
                 return
             self.json_response(404, {"error": "unknown API endpoint"})
         except (ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
