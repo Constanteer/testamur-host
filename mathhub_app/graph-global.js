@@ -6,6 +6,7 @@ const graphGlobalState={
   loaded:false,loading:false,nodes:new Map(),edges:new Map(),
   expandedAreas:new Set(),expandedClaims:new Set(),claimCount:0,clusterCount:0,
   libraryMode:false,libraryIndexed:false,libraryStatus:null,
+  theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),theoremImporting:new Set(),
 };
 let graphLibraryPollTimer=null;
 
@@ -43,6 +44,83 @@ async function loadLibraryStatus(){
   try{graphGlobalState.libraryStatus=await apiJson('/api/library/status');}
   catch(error){graphGlobalState.libraryStatus={error:String(error?.message||error)};}
   return graphGlobalState.libraryStatus;
+}
+
+async function loadLibraryTheoremDetail(name,{refresh=false}={}){
+  name=String(name||'').trim();if(!name)return null;
+  if(!refresh&&graphGlobalState.theoremDetails.has(name))return graphGlobalState.theoremDetails.get(name);
+  if(graphGlobalState.theoremLoading.has(name))return null;
+  graphGlobalState.theoremLoading.add(name);graphGlobalState.theoremErrors.delete(name);render();
+  try{
+    const suffix=refresh?'&refresh=1':'';
+    const detail=await apiJson(`/api/library/theorem?name=${encodeURIComponent(name)}${suffix}`);
+    if(!detail?.ok)throw new Error(detail?.error||'Theorem inspection failed');
+    graphGlobalState.theoremDetails.set(name,detail);
+    return detail;
+  }catch(error){
+    graphGlobalState.theoremErrors.set(name,error?.message||String(error));
+    return null;
+  }finally{
+    graphGlobalState.theoremLoading.delete(name);render();
+  }
+}
+
+function selectLibraryTheorem(name,{anchorId=''}={}){
+  name=String(name||'').trim();if(!name)return;
+  const id=`LIB:${name}`;
+  let node=graphGlobalState.nodes.get(id);
+  if(!node){
+    node={
+      id,kind:'library-theorem',lean_name:name,title:name.split('.').pop()||name,
+      namespace_path:name.includes('.')?name.split('.').slice(0,-1).join('.'):'',
+      status:'library',registered:false,claim_id:null,
+    };
+    graphGlobalState.nodes.set(id,node);
+    if(anchorId)placeAround(anchorId,[node],118);
+    argumentState.graph=graphGlobalGraph();
+  }
+  state.graphSelected=id;render();
+  void loadLibraryTheoremDetail(name);
+}
+
+async function randomLibraryTheorem(){
+  try{
+    const result=await apiJson('/api/library/random');
+    if(!result?.ok)throw new Error(result?.error||'No theorem available');
+    selectLibraryTheorem(result.lean_name);
+  }catch(error){
+    graphGlobalState.libraryStatus={...(graphGlobalState.libraryStatus||{}),error:error?.message||String(error)};
+    render();
+  }
+}
+
+async function importLibraryTheorem(name){
+  name=String(name||'').trim();if(!name||graphGlobalState.theoremImporting.has(name))return;
+  graphGlobalState.theoremImporting.add(name);render();
+  try{
+    const result=await apiJson('/api/claims/import',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({declaration_name:name,imports:['Mathlib']}),
+    });
+    const id=`LIB:${name}`,node=graphGlobalState.nodes.get(id);
+    if(node){
+      node.registered=true;
+      node.claim_id=result.claim_id||result.public_id||node.claim_id||null;
+      graphGlobalState.nodes.set(id,node);
+    }
+    const detail=graphGlobalState.theoremDetails.get(name);
+    if(detail)graphGlobalState.theoremDetails.set(name,{...detail,registered:true,claim_id:result.claim_id||result.public_id||null});
+  }catch(error){
+    graphGlobalState.theoremErrors.set(name,error?.message||String(error));
+  }finally{
+    graphGlobalState.theoremImporting.delete(name);render();
+  }
+}
+
+function libraryDependencyList(title,names,anchorId){
+  const items=[...new Set((names||[]).map(String))].slice(0,18);
+  if(!items.length)return '';
+  return `<section class="library-theorem-deps"><h3>${esc(title)}</h3><div class="library-theorem-dep-list">${items.map(name=>`<button type="button" data-library-theorem-name="${esc(name)}" data-library-anchor="${esc(anchorId||'')}"><code>${esc(name)}</code></button>`).join('')}</div></section>`;
 }
 
 function scheduleLibraryGraphPoll(){
@@ -142,13 +220,31 @@ function globalInspector(node){
     const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),library=node.cluster_source==='mathlib-library',namespace=node.cluster_source==='lean-namespace',kind=library?'Mathlib namespace':(namespace?'Lean namespace':'Curated field'),path=node.namespace_path||node.title,action=expanded?'Expand again':(library||namespace?'Expand namespace':'Expand field');
     const countLabel=library?'theorems':'Claims';
     const copy=library
-      ? 'Read-only theorems from the pinned Mathlib environment. Expanding does not create MathHub Claims.'
+      ? 'Read-only theorems from the pinned Mathlib environment. Expand freely; nothing becomes a Claim until you explicitly import it.'
       : (namespace?'This deterministic fallback comes from the Lean declaration namespace. Expanding it reveals the next namespace level before theorem detail when available.':'This explicit mathematical area overrides namespace grouping. Expanding it reveals real Claims while the field remains as an anchor.');
     return `<div class="global-inspector-kind">${esc(kind)}</div><h2>${esc(path)}</h2><strong class="global-claim-count">${Number(node.claim_count||0).toLocaleString()} ${countLabel}</strong><p>${esc(copy)}</p><button class="btn btn-primary" data-expand-global-area="${esc(node.id)}">${esc(action)}</button>`;
   }
   if(graphIsLibraryTheorem(node)){
-    const q=encodeURIComponent(node.lean_name||node.title||'');
-    return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(node.lean_name||'')}</code><h2>${esc(node.title||'Theorem')}</h2><p>This theorem is visible directly from the pinned Mathlib environment. It becomes a MathHub Claim only when you explicitly import it.</p><div class="graph-inspector-actions"><a class="btn btn-primary" href="./?view=library&q=${q}">Open in Math library</a></div>`;
+    const name=String(node.lean_name||node.title||''),detail=graphGlobalState.theoremDetails.get(name),loading=graphGlobalState.theoremLoading.has(name),error=graphGlobalState.theoremErrors.get(name),importing=graphGlobalState.theoremImporting.has(name),registered=Boolean(node.registered||detail?.registered),claimId=node.claim_id||detail?.claim_id||'';
+    if(loading&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-loading"><span></span>Inspecting theorem with Lean…</div>`;
+    if(error&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-error">${esc(error)}</div><button class="btn" data-library-inspect-refresh="${esc(name)}">Retry inspection</button>`;
+    if(!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><p>Selecting a theorem inspects its statement on demand. This does not create a Claim.</p>`;
+    const axioms=(detail.axioms||[]).map(item=>`<code>${esc(item)}</code>`).join(' ');
+    const statementDeps=libraryDependencyList('Statement references',detail.statement_dependencies,node.id);
+    const proofDeps=libraryDependencyList('Proof references',detail.proof_dependencies,node.id);
+    const q=encodeURIComponent(name);
+    const action=registered&&claimId
+      ? `<button class="btn btn-primary" data-claim="${esc(claimId)}">Open Claim</button>`
+      : `<button class="btn btn-primary" data-library-import-theorem="${esc(name)}" ${importing?'disabled':''}>${importing?'Importing…':'Import as Claim'}</button>`;
+    return `<div class="global-inspector-kind">Mathlib theorem · read-only${detail.cache_hit?' · cached':''}</div>
+      <code class="library-theorem-name">${esc(name)}</code>
+      <h2>${esc(detail.short_name||node.title||'Theorem')}</h2>
+      <pre class="library-theorem-type">${esc(detail.pretty_type||'Type unavailable')}</pre>
+      ${axioms?`<div class="library-theorem-axioms"><span>Axioms</span>${axioms}</div>`:''}
+      ${statementDeps}${proofDeps}
+      <div class="library-theorem-meta"><span>${Number(detail.statement_dependency_count||0)} statement refs</span><span>${Number(detail.proof_dependency_count||0)} proof refs</span><span>${Number(detail.duration_ms||0)} ms first inspection</span></div>
+      ${error?`<div class="library-theorem-error">${esc(error)}</div>`:''}
+      <div class="graph-inspector-actions">${action}<button class="btn" data-library-inspect-refresh="${esc(name)}">Re-inspect</button><a class="btn" href="./?view=library&q=${q}">Open in Math library</a></div>`;
   }
   const relations=typeof graphRelations==='function'?graphRelations(node.id):{outgoing:[],incoming:[]};
   return `<div class="global-inspector-kind">Claim</div><code>${esc(node.lean_name||'')}</code><h2>${esc(node.title||'Claim')}</h2>${badge(node.status||'open')}<p>${esc(node.area||'')}</p><div class="graph-inspector-actions"><button class="btn btn-primary" data-claim="${esc(node.id)}">Open Claim</button><button class="btn" data-expand-global-claim="${esc(node.id)}">Expand neighbors</button></div>${typeof graphRelationList==='function'?graphRelationList('Depends on',relations.outgoing,'No loaded dependencies yet.')+graphRelationList('Used by',relations.incoming,'No loaded uses yet.'):''}`;
@@ -182,7 +278,7 @@ renderGraph=function renderPersistentGlobalGraph(){
   const represented=graphGlobalState.libraryMode
     ? `${[...graphGlobalState.nodes.values()].filter(node=>graphIsCluster(node)).reduce((sum,node)=>sum+Number(node.library_count||0),0).toLocaleString()} Mathlib theorems indexed`
     : `${Number(graphGlobalState.claimCount).toLocaleString()} Claims represented`;
-  return `<main class="global-graph-page"><div class="global-graph-top"><div><div class="eyebrow">${graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${graphGlobalState.libraryMode?'':`<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button>`}<button class="btn" data-reset-global-world>Reset world</button></div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} root namespaces${graphGlobalState.libraryMode?'':' / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} unfolded</span><span>${graphGlobalState.expandedAreas.size} clusters expanded</span>${graphGlobalState.loading?'<strong>growing graph…</strong>':''}</div><div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to unfold</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
+  return `<main class="global-graph-page"><div class="global-graph-top"><div><div class="eyebrow">${graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${graphGlobalState.libraryMode?'<button class="btn" data-random-library-theorem>Random theorem</button>':`<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button>`}<button class="btn" data-reset-global-world>Reset world</button></div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} root namespaces${graphGlobalState.libraryMode?'':' / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} unfolded</span><span>${graphGlobalState.expandedAreas.size} clusters expanded</span>${graphGlobalState.loading?'<strong>growing graph…</strong>':''}</div><div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to unfold</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
 };
 
 const graphGlobalBaseBind=bind;
@@ -194,8 +290,17 @@ bind=function bindPersistentGlobalGraph(){
   if(graphGlobalState.loaded&&graphGlobalState.claimCount===0&&!graphGlobalState.libraryIndexed)scheduleLibraryGraphPoll();
   else if(graphLibraryPollTimer){clearTimeout(graphLibraryPollTimer);graphLibraryPollTimer=null;}
   document.querySelector('[data-reset-global-world]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
+  document.querySelector('[data-random-library-theorem]')?.addEventListener('click',()=>randomLibraryTheorem());
   document.querySelector('[data-expand-global-area]')?.addEventListener('click',event=>expandGlobalArea(event.currentTarget.dataset.expandGlobalArea));
   document.querySelector('[data-expand-global-claim]')?.addEventListener('click',event=>expandGlobalClaim(event.currentTarget.dataset.expandGlobalClaim));
+  document.querySelectorAll('[data-library-theorem-name]').forEach(button=>button.addEventListener('click',()=>selectLibraryTheorem(button.dataset.libraryTheoremName,{anchorId:button.dataset.libraryAnchor||state.graphSelected})));
+  document.querySelector('[data-library-import-theorem]')?.addEventListener('click',event=>importLibraryTheorem(event.currentTarget.dataset.libraryImportTheorem));
+  document.querySelector('[data-library-inspect-refresh]')?.addEventListener('click',event=>loadLibraryTheoremDetail(event.currentTarget.dataset.libraryInspectRefresh,{refresh:true}));
+  const selected=graphGlobalNode(state.graphSelected);
+  if(graphIsLibraryTheorem(selected)){
+    const name=String(selected.lean_name||selected.title||'');
+    if(name&&!graphGlobalState.theoremDetails.has(name)&&!graphGlobalState.theoremLoading.has(name)&&!graphGlobalState.theoremErrors.has(name))void loadLibraryTheoremDetail(name);
+  }
 };
 
 restoreGraphLocation=async function restoreGlobalGraphLocation(){

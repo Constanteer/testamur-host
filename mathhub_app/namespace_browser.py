@@ -16,7 +16,7 @@ NAMESPACE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*
 DEFAULT_NAMESPACE_LIMIT = 80
 MAX_NAMESPACE_LIMIT = 200
 MAX_NAMESPACE_INDEX_ITEMS = 25_000
-MAX_GLOBAL_LIBRARY_THEOREMS = 60_000
+MAX_GLOBAL_LIBRARY_THEOREMS = 250_000
 MAX_GLOBAL_LIBRARY_EDGES = 300_000
 MAX_NAMESPACE_QUERY_CHARS = 160
 DEFAULT_INGESTION_CHUNK_SIZE = 400
@@ -156,6 +156,13 @@ def _ensure_global_cache_schema(conn: sqlite3.Connection) -> None:
             source_name TEXT NOT NULL,
             target_name TEXT NOT NULL,
             PRIMARY KEY(environment_hash, source_name, target_name)
+        );
+        CREATE TABLE IF NOT EXISTS library_theorem_details (
+            environment_hash TEXT NOT NULL,
+            lean_name TEXT NOT NULL,
+            detail_json TEXT NOT NULL,
+            inspected_at TEXT NOT NULL,
+            PRIMARY KEY(environment_hash, lean_name)
         );
         CREATE INDEX IF NOT EXISTS idx_library_global_edge_source
             ON library_global_edges(environment_hash, source_name);
@@ -442,6 +449,7 @@ def global_library_cluster(namespace: str, *, limit: int = 100) -> dict[str, Any
     ]
     remaining = max(0, limit - len(nodes))
     theorem_names = direct[:remaining]
+    registered = _registered_names(theorem_names, environment_hash)
     nodes.extend(
         {
             "id": f"LIB:{name}",
@@ -451,6 +459,8 @@ def global_library_cluster(namespace: str, *, limit: int = 100) -> dict[str, Any
             "namespace_path": name.rsplit(".", 1)[0] if "." in name else "",
             "parent_cluster_id": f"LIBNS:{namespace}",
             "status": "library",
+            "registered": name in registered,
+            "claim_id": registered.get(name),
         }
         for name in theorem_names
     )
@@ -477,6 +487,159 @@ def global_library_cluster(namespace: str, *, limit: int = 100) -> dict[str, Any
             for row in edge_rows
         ]
     return {"ok": True, "indexed": True, "library_mode": True, "nodes": nodes, "edges": edges}
+
+
+def _library_theorem_exists(environment_hash: str, name: str) -> bool:
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        row = conn.execute(
+            """SELECT 1 FROM library_global_theorems
+               WHERE environment_hash=? AND lean_name=?""",
+            (environment_hash, name),
+        ).fetchone()
+    return row is not None
+
+
+def _cached_library_theorem_detail(
+    environment_hash: str,
+    name: str,
+) -> dict[str, Any] | None:
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        row = conn.execute(
+            """SELECT detail_json,inspected_at FROM library_theorem_details
+               WHERE environment_hash=? AND lean_name=?""",
+            (environment_hash, name),
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        detail = json.loads(str(row["detail_json"]))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(detail, dict):
+        return None
+    detail["cache_hit"] = True
+    detail["inspected_at"] = str(row["inspected_at"])
+    return detail
+
+
+def library_theorem_detail(name: str, *, refresh: bool = False) -> dict[str, Any]:
+    name = str(name or "").strip()
+    if not name or not core.LEAN_NAME_RE.fullmatch(name):
+        raise ValueError("name must be a conservative Lean identifier")
+
+    runtime = core.runtime_status()
+    if not runtime.get("ready"):
+        return {
+            "ok": False,
+            "ready": False,
+            "error": str(runtime.get("message") or "Lean environment unavailable"),
+        }
+    environment_hash = str(runtime.get("environment_hash") or "")
+    if not environment_hash:
+        return {"ok": False, "ready": False, "error": "missing environment hash"}
+    if not _library_theorem_exists(environment_hash, name):
+        raise ValueError("theorem is not present in the indexed Mathlib environment")
+
+    if not refresh:
+        cached = _cached_library_theorem_detail(environment_hash, name)
+        if cached is not None:
+            return cached
+
+    inspected = core.inspect_declaration(
+        {"imports": ["Mathlib"], "declaration_name": name}
+    )
+    if not inspected.get("ok"):
+        return {
+            "ok": False,
+            "ready": True,
+            "declaration_name": name,
+            "error": str(
+                inspected.get("error")
+                or inspected.get("engine_error")
+                or inspected.get("output")
+                or "Lean could not inspect theorem"
+            )[-4000:],
+            "duration_ms": int(inspected.get("duration_ms") or 0),
+        }
+
+    statement_dependencies = [
+        str(item) for item in (inspected.get("statement_dependencies") or [])
+    ]
+    proof_dependencies = [
+        str(item) for item in (inspected.get("proof_dependencies") or [])
+    ]
+    transitive_dependencies = [
+        str(item) for item in (inspected.get("transitive_dependencies") or [])
+    ]
+    axioms = [str(item) for item in (inspected.get("axioms") or [])]
+
+    detail = {
+        "ok": True,
+        "ready": True,
+        "cache_hit": False,
+        "environment_hash": environment_hash,
+        "declaration_name": name,
+        "namespace": name.rsplit(".", 1)[0] if "." in name else "",
+        "short_name": name.rsplit(".", 1)[-1],
+        "pretty_type": str(inspected.get("pretty_type") or ""),
+        "type_hash": str(inspected.get("type_hash") or ""),
+        "formal_fingerprint": str(inspected.get("formal_fingerprint") or ""),
+        "axioms": axioms,
+        "statement_dependencies": statement_dependencies[:160],
+        "statement_dependency_count": len(statement_dependencies),
+        "proof_dependencies": proof_dependencies[:160],
+        "proof_dependency_count": len(proof_dependencies),
+        "transitive_dependencies": transitive_dependencies[:240],
+        "transitive_dependency_count": len(transitive_dependencies),
+        "duration_ms": int(inspected.get("duration_ms") or 0),
+    }
+    inspected_at = utc_now()
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        conn.execute(
+            """INSERT INTO library_theorem_details(
+                   environment_hash,lean_name,detail_json,inspected_at
+               ) VALUES(?,?,?,?)
+               ON CONFLICT(environment_hash,lean_name) DO UPDATE SET
+                   detail_json=excluded.detail_json,
+                   inspected_at=excluded.inspected_at""",
+            (
+                environment_hash,
+                name,
+                json.dumps(detail, ensure_ascii=False, separators=(",", ":")),
+                inspected_at,
+            ),
+        )
+    detail["inspected_at"] = inspected_at
+    return detail
+
+
+def random_library_theorem() -> dict[str, Any]:
+    status = global_library_status()
+    environment_hash = str(status.get("environment_hash") or "")
+    if not status.get("indexed") or not environment_hash:
+        return {"ok": False, "indexed": False, "error": "Mathlib index is not ready"}
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        row = conn.execute(
+            """SELECT lean_name,namespace,short_name
+               FROM library_global_theorems
+               WHERE environment_hash=?
+               ORDER BY RANDOM()
+               LIMIT 1""",
+            (environment_hash,),
+        ).fetchone()
+    if row is None:
+        return {"ok": False, "indexed": True, "error": "Mathlib index is empty"}
+    return {
+        "ok": True,
+        "indexed": True,
+        "lean_name": str(row["lean_name"]),
+        "namespace": str(row["namespace"]),
+        "short_name": str(row["short_name"]),
+    }
 
 
 def namespace_source(imports: list[str], namespace: str, limit: int) -> str:
