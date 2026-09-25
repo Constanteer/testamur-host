@@ -28,6 +28,7 @@ from namespace_browser import (
     global_library_world,
     library_theorem_detail,
     library_declaration_dependencies,
+    library_declaration_dependencies_batch,
     random_library_theorem,
     list_namespace_declarations,
 )
@@ -552,6 +553,11 @@ class Handler(core.Handler):
         try:
             if path=="/api/source-ingest":self.json_response(201,ingest_source(self.read_source_ingest_json(),data_root=core.DATA_ROOT));return
             if path=="/api/library/namespace":self.json_response(200,publicize(list_namespace_declarations(self.read_json())));return
+            if path=="/api/library/dependencies/batch":
+                payload=self.read_json()
+                names=payload.get("declaration_names") or payload.get("names") or []
+                context_module=str(payload.get("context_module") or "")
+                self.json_response(200,publicize(library_declaration_dependencies_batch(names,context_module=context_module)));return
             if path=="/api/import-tasks":self.json_response(201,publicize(TASKS.create(self.read_json())));return
             m=re.fullmatch(rf"/api/import-tasks/({TASKISH})/(step|pause|resume|cancel|recover|retry|extend)",path,re.I)
             if m:
