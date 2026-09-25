@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -253,18 +254,23 @@ class TestamurProductService:
             )
 
     def dashboard(self, *, limit: int = 30) -> dict[str, Any]:
-        """Project the canonical stores into a product-home activity surface.
+        """Return the home projection without opening nested store connections.
 
-        Dashboard reads are intentionally batched through one SQLite connection.
-        All canonical stores share the same database, so opening a connection for
-        every watch/project lookup only adds WAL/volume contention without adding
-        semantic isolation.
+        The dashboard is a read-only projection over tables that already live in
+        one SQLite database. Keep it on one query-only connection so dashboard
+        reads never re-run journal-mode PRAGMAs or wait behind unrelated store
+        setup work on a remote persistent volume.
         """
         bounded = max(1, min(int(limit), 100))
 
-        with self.sources.connect() as conn:
+        conn = sqlite3.connect(self.database_path, timeout=2.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("PRAGMA busy_timeout=2000")
+
             source_rows = conn.execute(
-                "SELECT record_json, created_at FROM testamur_sources "
+                "SELECT record_json FROM testamur_sources "
                 "ORDER BY created_at DESC, source_id DESC LIMIT ?",
                 (bounded,),
             ).fetchall()
@@ -288,6 +294,7 @@ class TestamurProductService:
                 "ORDER BY recorded_at DESC, alert_id DESC LIMIT ?",
                 (bounded,),
             ).fetchall()
+
             project_rows = conn.execute(
                 """
                 SELECT p.project_id, p.record_json, p.updated_at,
@@ -301,6 +308,7 @@ class TestamurProductService:
                 """,
                 (bounded,),
             ).fetchall()
+
             watch_rows = conn.execute(
                 """
                 WITH recent_watches AS (
@@ -325,7 +333,6 @@ class TestamurProductService:
                 )
                 SELECT
                     w.record_json AS watch_json,
-                    w.created_at AS watch_created_at,
                     pm.project_id AS project_id,
                     (
                         SELECT wr.record_json
@@ -342,14 +349,46 @@ class TestamurProductService:
                         LIMIT 1
                     ) AS evaluation_json
                 FROM candidate_watches AS cw
-                JOIN testamur_watches AS w
-                  ON w.watch_id = cw.watch_id
-                LEFT JOIN testamur_project_monitors AS pm
-                  ON pm.watch_id = w.watch_id
+                JOIN testamur_watches AS w ON w.watch_id = cw.watch_id
+                LEFT JOIN testamur_project_monitors AS pm ON pm.watch_id = w.watch_id
                 ORDER BY w.created_at DESC, w.watch_id DESC
                 """,
                 (bounded, bounded),
             ).fetchall()
+
+            status = {
+                "ok": True,
+                "schema": "testamur.product.status.v1",
+                "sources": {
+                    "sources": int(conn.execute("SELECT COUNT(*) FROM testamur_sources").fetchone()[0]),
+                    "revisions": int(conn.execute("SELECT COUNT(*) FROM testamur_source_revisions").fetchone()[0]),
+                    "snapshots": int(conn.execute("SELECT COUNT(*) FROM testamur_source_snapshots").fetchone()[0]),
+                    "snapshots_without_revision": int(conn.execute(
+                        "SELECT COUNT(*) FROM testamur_source_snapshots WHERE revision_id IS NULL"
+                    ).fetchone()[0]),
+                },
+                "records": {
+                    "records": int(conn.execute("SELECT COUNT(*) FROM testamur_records").fetchone()[0]),
+                    "record_revisions": int(conn.execute("SELECT COUNT(*) FROM testamur_record_revisions").fetchone()[0]),
+                    "relations": int(conn.execute("SELECT COUNT(*) FROM testamur_relations").fetchone()[0]),
+                },
+                "watches": {
+                    "watches": int(conn.execute("SELECT COUNT(*) FROM testamur_watches").fetchone()[0]),
+                    "watch_revisions": int(conn.execute("SELECT COUNT(*) FROM testamur_watch_revisions").fetchone()[0]),
+                    "evaluations": int(conn.execute("SELECT COUNT(*) FROM testamur_watch_evaluations").fetchone()[0]),
+                    "alerts": int(conn.execute("SELECT COUNT(*) FROM testamur_alerts").fetchone()[0]),
+                },
+                "projects": {
+                    "projects": int(conn.execute("SELECT COUNT(*) FROM testamur_projects").fetchone()[0]),
+                    "project_monitors": int(conn.execute("SELECT COUNT(*) FROM testamur_project_monitors").fetchone()[0]),
+                    "project_repository_bindings": int(conn.execute(
+                        "SELECT COUNT(*) FROM testamur_project_repository_bindings"
+                    ).fetchone()[0]),
+                },
+                "extensions": self.extensions.capabilities(),
+            }
+        finally:
+            conn.close()
 
         snapshots = [json.loads(str(row["record_json"])) for row in snapshot_rows]
         recent_records = [json.loads(str(row["record_json"])) for row in record_rows]
@@ -362,16 +401,8 @@ class TestamurProductService:
         for row in watch_rows:
             watch = json.loads(str(row["watch_json"]))
             watch_id = str(watch.get("watch_id") or "")
-            revision = (
-                None
-                if row["revision_json"] is None
-                else json.loads(str(row["revision_json"]))
-            )
-            evaluation = (
-                None
-                if row["evaluation_json"] is None
-                else json.loads(str(row["evaluation_json"]))
-            )
+            revision = None if row["revision_json"] is None else json.loads(str(row["revision_json"]))
+            evaluation = None if row["evaluation_json"] is None else json.loads(str(row["evaluation_json"]))
             project_id = None if row["project_id"] is None else str(row["project_id"])
             enriched = {
                 **watch,
@@ -402,25 +433,19 @@ class TestamurProductService:
                 if item.get("last_evaluated_at") or item.get("created_at")
             ]
             states = [str(item.get("latest_state") or "") for item in monitor_values]
-            status = "empty"
+            project_status = "empty"
             if any(state in {"changed", "unavailable"} for state in states):
-                status = "attention"
+                project_status = "attention"
             elif monitor_values:
-                status = "active"
-            projects.append(
-                {
-                    **project,
-                    "ref": project_id,
-                    "watch_count": int(row["watch_count"] or 0),
-                    "monitor_count": int(row["watch_count"] or 0),
-                    "status": status,
-                    "last_activity_at": (
-                        max(activity_times)
-                        if activity_times
-                        else str(row["updated_at"] or project.get("updated_at") or "")
-                    ),
-                }
-            )
+                project_status = "active"
+            projects.append({
+                **project,
+                "ref": project_id,
+                "watch_count": int(row["watch_count"] or 0),
+                "monitor_count": int(row["watch_count"] or 0),
+                "status": project_status,
+                "last_activity_at": max(activity_times) if activity_times else str(row["updated_at"] or project.get("updated_at") or ""),
+            })
 
         source_names: dict[str, str] = {}
         for row in source_rows:
@@ -430,52 +455,43 @@ class TestamurProductService:
         activity: list[dict[str, Any]] = []
         for snapshot in snapshots:
             source_id = str(snapshot.get("source_id") or "")
-            activity.append(
-                {
-                    "kind": "observation",
-                    "ref": snapshot.get("snapshot_id"),
-                    "subject_ref": source_id,
-                    "title": source_names.get(source_id, source_id),
-                    "at": snapshot.get("recorded_at"),
-                    "state": snapshot.get("status"),
-                    "changed_revision": snapshot.get("revision_id"),
-                }
-            )
+            activity.append({
+                "kind": "observation",
+                "ref": snapshot.get("snapshot_id"),
+                "subject_ref": source_id,
+                "title": source_names.get(source_id, source_id),
+                "at": snapshot.get("recorded_at"),
+                "state": snapshot.get("status"),
+                "changed_revision": snapshot.get("revision_id"),
+            })
         for alert in alerts:
             source_id = str(alert.get("source_id") or "")
-            activity.append(
-                {
-                    "kind": "alert",
-                    "ref": alert.get("alert_id"),
-                    "subject_ref": source_id,
-                    "title": source_names.get(source_id, source_id),
-                    "at": alert.get("recorded_at"),
-                    "state": alert.get("event_type"),
-                    "watch_id": alert.get("watch_id"),
-                }
-            )
+            activity.append({
+                "kind": "alert",
+                "ref": alert.get("alert_id"),
+                "subject_ref": source_id,
+                "title": source_names.get(source_id, source_id),
+                "at": alert.get("recorded_at"),
+                "state": alert.get("event_type"),
+                "watch_id": alert.get("watch_id"),
+            })
 
         revision_by_record: dict[str, dict[str, Any]] = {}
         for revision in revisions:
             record_id = str(revision.get("record_id") or "")
             revision_by_record.setdefault(record_id, revision)
-            activity.append(
-                {
-                    "kind": "record_revision",
-                    "ref": revision.get("revision_id"),
-                    "subject_ref": record_id,
-                    "title": revision.get("title") or revision.get("statement") or record_id,
-                    "at": revision.get("recorded_at"),
-                    "state": f"revision {revision.get('ordinal', '—')}",
-                }
-            )
+            activity.append({
+                "kind": "record_revision",
+                "ref": revision.get("revision_id"),
+                "subject_ref": record_id,
+                "title": revision.get("title") or revision.get("statement") or record_id,
+                "at": revision.get("recorded_at"),
+                "state": f"revision {revision.get('ordinal', '—')}",
+            })
         activity.sort(key=lambda item: str(item.get("at") or ""), reverse=True)
 
         records = [
-            {
-                **record,
-                "latest_revision": revision_by_record.get(str(record.get("record_id") or "")),
-            }
+            {**record, "latest_revision": revision_by_record.get(str(record.get("record_id") or ""))}
             for record in recent_records
         ]
 
@@ -487,10 +503,10 @@ class TestamurProductService:
             "watches": all_watches[:bounded],
             "alerts": alerts,
             "records": records,
-            "status": self.status(),
+            "status": status,
             "semantics": {
                 "read_projection_only": True,
-                "batched_sqlite_projection": True,
+                "single_query_only_sqlite_connection": True,
                 "projects_are_containers": True,
                 "project_entries_are_tracked_sources": False,
                 "monitors_link_projects_to_sources": True,
