@@ -239,6 +239,28 @@ def _import_worker_loop()->None:
         time.sleep(IMPORT_WORKER_INTERVAL_SECONDS)
 
 
+def recover_persisted_import_leases()->int:
+    """Clear leases left by a previous MathHub process before this worker starts.
+
+    A freshly started process cannot own any persisted task lease yet, so every
+    lease visible at this point belongs to a dead predecessor. Runtime stale
+    detection remains conservative for leases acquired after startup.
+    """
+    recovered=0
+    for task in (TASKS.list(limit=100) or {}).get("tasks") or []:
+        if not task.get("leased"):
+            continue
+        task_id=str(task.get("task_id") or "")
+        if not task_id:
+            continue
+        try:
+            TASKS.recover(task_id)
+            recovered+=1
+        except (KeyError,ValueError,sqlite3.Error):
+            pass
+    return recovered
+
+
 def start_import_worker()->bool:
     global _IMPORT_WORKER_STARTED
     if not AUTO_IMPORT_TASKS:
@@ -247,6 +269,7 @@ def start_import_worker()->bool:
         if _IMPORT_WORKER_STARTED:
             return False
         _IMPORT_WORKER_STARTED=True
+    recover_persisted_import_leases()
     threading.Thread(target=_import_worker_loop,name="mathhub-import-worker",daemon=True).start()
     return True
 
@@ -300,12 +323,23 @@ def starter_claim_status()->dict[str,Any]:
     if task and task.get("task_id"):
         try:detail=TASKS.get(str(task["task_id"]))
         except (KeyError,ValueError,sqlite3.Error):detail=dict(task)
+    lease_age_seconds=None
+    if detail and detail.get("leased") and detail.get("lease_started_at"):
+        try:
+            started=datetime.fromisoformat(str(detail["lease_started_at"]).replace("Z","+00:00"))
+            if started.tzinfo is None:
+                started=started.replace(tzinfo=timezone.utc)
+            lease_age_seconds=max(0,int((datetime.now(timezone.utc)-started).total_seconds()))
+        except ValueError:
+            lease_age_seconds=None
     return {
         "enabled":bool(AUTO_STARTER_CLAIMS and STARTER_CLAIM_ROOTS),
         "runtime_ready":bool(runtime.get("ready")),
         "registry_empty":not bool(current.get("claims")),
         "roots":list(STARTER_CLAIM_ROOTS),
         "task":detail,
+        "lease_age_seconds":lease_age_seconds,
+        "lease_stale_after_seconds":IMPORT_LEASE_STALE_SECONDS,
     }
 
 
