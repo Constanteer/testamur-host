@@ -107,12 +107,8 @@
     });
   }
 
-  const observer = new MutationObserver(records => {
-    const external = records.some(record => [...record.addedNodes, ...record.removedNodes].some(node =>
-      node instanceof Element && !node.matches('[data-advisory-revalidation]') && !node.closest('[data-advisory-revalidation]')));
-    if (external) queueRender();
-  });
-
+  window.addEventListener('testamur:rendered', queueRender);
+  window.addEventListener('DOMContentLoaded', queueRender);
   window.addEventListener('testamur:review-context', queueRender);
   observer.observe(document.documentElement, { childList: true, subtree: true });
 })();
