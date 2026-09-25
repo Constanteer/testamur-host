@@ -1026,6 +1026,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
             mathhub_ok = False
             mathhub_error = None
             mathhub_runtime: dict[str, Any] = {}
+            mathhub_library: dict[str, Any] = {}
             try:
                 with urllib.request.urlopen("http://127.0.0.1:8001/api/runtime", timeout=1.5) as response:
                     mathhub_ok = 200 <= int(getattr(response, "status", response.getcode())) < 500
@@ -1035,6 +1036,18 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                         mathhub_runtime = decoded_runtime
             except Exception as exc:
                 mathhub_error = str(getattr(exc, "reason", exc))
+            if mathhub_ok:
+                try:
+                    with urllib.request.urlopen("http://127.0.0.1:8001/api/library/status", timeout=1.5) as response:
+                        raw_library = response.read(128 * 1024)
+                        decoded_library = json.loads(raw_library.decode("utf-8")) if raw_library else {}
+                        if isinstance(decoded_library, dict):
+                            mathhub_library = decoded_library
+                except Exception as exc:
+                    mathhub_library = {
+                        "ok": False,
+                        "error": str(getattr(exc, "reason", exc)),
+                    }
             mathhub_last_log = None
             if not mathhub_ok:
                 try:
@@ -1097,6 +1110,7 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                     "setup_error": mathhub_runtime.get("setup_error"),
                     "lean_version": mathhub_runtime.get("lean_version"),
                     "mathlib_revision": mathhub_runtime.get("mathlib_revision"),
+                    "library": mathhub_library,
                     "snapshot": (
                         (Path(__file__).resolve().parents[2] / "MATHHUB_SNAPSHOT").read_text(
                             encoding="utf-8"
