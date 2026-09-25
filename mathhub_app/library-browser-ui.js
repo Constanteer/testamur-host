@@ -32,9 +32,9 @@ function librarySelectedAvailable(){return [...libraryBrowserState.selected].fil
 
 function libraryInspectionHtml(name){
   const value=libraryBrowserState.inspections.get(name);if(!value)return '';
-  if(value.loading)return '<div class="library-inspection quiet-empty">Loading formal details…</div>';
+  if(value.loading)return '<div class="library-inspection quiet-empty">Loading Mathlib source…</div>';
   if(value.error)return `<div class="library-inspection library-error">${esc(value.error)}</div>`;
-  return `<div class="library-inspection"><div class="library-inspection-type"><span>Formal statement</span><code>${esc(value.pretty_type||'—')}</code></div><details class="library-machine-details"><summary>Exact Lean record</summary><div><span>Lean name</span><code>${esc(name)}</code></div><div class="library-inspection-meta"><span>${(value.axioms||[]).length} axioms</span><span>${(value.statement_dependencies||[]).length} statement references</span><span>${(value.proof_dependencies||[]).length} proof references</span></div></details></div>`;
+  return `<div class="library-inspection"><div class="library-inspection-type"><span>Source declaration</span><code>${esc(value.source_declaration||value.pretty_type||'—')}</code></div><details class="library-machine-details"><summary>Source location</summary><div><span>Lean name</span><code>${esc(name)}</code></div><div><span>Module</span><code>${esc(value.source_module||'Mathlib')}</code></div><div><span>File</span><code>${esc(value.source_path||'—')}:${Number(value.source_line||0)}</code></div><div class="library-inspection-meta"><span>read-only source index</span><span>0 Lean calls</span></div></details></div>`;
 }
 
 function libraryRow(item){
@@ -45,7 +45,7 @@ function libraryRow(item){
 
 function libraryIndexSummary(result){
   const complete=result.index_complete?'complete index':`first ${Number(result.indexed_theorems||0).toLocaleString()} indexed`;
-  const source=result.cache_hit?'cached SQLite index':'fresh Lean environment scan';
+  const source=result.global_cache||result.cache_hit?'cached Mathlib source index':'Mathlib source index';
   return `${Number(result.indexed_theorems||0).toLocaleString()} indexed · ${complete} · ${source}`;
 }
 
@@ -104,8 +104,8 @@ async function searchLibraryNamespace(query=''){
 async function inspectLibraryDeclaration(name){
   libraryBrowserState.inspections.set(name,{loading:true});renderLibraryBrowser();
   try{
-    const result=await apiJson('/api/lean/inspect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({declaration_name:name,imports:libraryImports()})});
-    if(!result.ok)throw new Error(result.error||result.engine_error||'Lean inspection failed');
+    const result=await apiJson(`/api/library/theorem?name=${encodeURIComponent(name)}`);
+    if(!result.ok)throw new Error(result.error||'Mathlib source detail unavailable');
     libraryBrowserState.inspections.set(name,result);
   }catch(error){libraryBrowserState.inspections.set(name,{error:error.message||String(error)});}
   renderLibraryBrowser();
@@ -185,8 +185,8 @@ function mountLibraryEmptyStart(){
   document.querySelector('.overview-line')?.remove();
   const layout=document.querySelector('.registry-layout');if(!layout)return;
   const section=document.createElement('section');section.className='mathhub-empty-start';
-  const starterNote=state.runtime?.ready?'MathHub is importing a small starter set of real Mathlib statements in the background now.':'The starter set will begin automatically as soon as the pinned Mathlib environment is ready.';
-  section.innerHTML=`<div class="mathhub-empty-copy"><div class="eyebrow">Starting your library</div><h2>Your MathHub will not stay empty.</h2><p>${esc(starterNote)} You can also open the Math library immediately, choose a field, and add the exact statements you care about. Imported means recorded in MathHub; Lean verification remains a separate build result.</p><div class="mathhub-empty-actions"><button class="btn btn-primary mathhub-empty-primary" data-empty-browse>Open Math library</button><button class="btn" data-empty-add>Add your own statement</button></div></div><div class="mathhub-empty-example"><span>Browse a field</span><button data-empty-topic="Nat">Numbers & arithmetic</button><button data-empty-topic="LinearAlgebra">Linear algebra</button><button data-empty-topic="Topology">Topology</button><button data-empty-topic="Probability">Probability</button></div>`;
+  const starterNote=state.runtime?.ready?'The installed Mathlib sources are available to browse immediately.':'The Mathlib source index will appear as soon as the pinned environment finishes preparing.';
+  section.innerHTML=`<div class="mathhub-empty-copy"><div class="eyebrow">Starting your library</div><h2>Browse Mathlib before importing anything.</h2><p>${esc(starterNote)} You can also open the Math library immediately, choose a field, and add the exact statements you care about. Imported means recorded in MathHub; Lean verification remains a separate build result.</p><div class="mathhub-empty-actions"><button class="btn btn-primary mathhub-empty-primary" data-empty-browse>Open Math library</button><button class="btn" data-empty-add>Add your own statement</button></div></div><div class="mathhub-empty-example"><span>Browse a field</span><button data-empty-topic="Nat">Numbers & arithmetic</button><button data-empty-topic="LinearAlgebra">Linear algebra</button><button data-empty-topic="Topology">Topology</button><button data-empty-topic="Probability">Probability</button></div>`;
   layout.replaceWith(section);
   section.querySelector('[data-empty-browse]')?.addEventListener('click',openLibraryBrowser);
   section.querySelector('[data-empty-add]')?.addEventListener('click',()=>{state.view='submit';render();});
