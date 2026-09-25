@@ -319,7 +319,9 @@ function mergeLibrarySourceRelations(name,detail){
 async function loadLibraryTheoremDetail(name,{refresh=false}={}){
   name=String(name||'').trim();if(!name)return null;
   if(!refresh&&graphGlobalState.theoremDetails.has(name)){
-    const cached=graphGlobalState.theoremDetails.get(name);mergeLibrarySourceRelations(name,cached);return cached;
+    const cached=graphGlobalState.theoremDetails.get(name);
+    if(!graphGlobalState.dependencyMode)mergeLibrarySourceRelations(name,cached);
+    return cached;
   }
   if(graphGlobalState.theoremLoading.has(name))return null;
   graphGlobalState.theoremLoading.add(name);graphGlobalState.theoremErrors.delete(name);render();
@@ -328,7 +330,7 @@ async function loadLibraryTheoremDetail(name,{refresh=false}={}){
     const detail=await apiJson(`/api/library/theorem?name=${encodeURIComponent(name)}${suffix}`);
     if(!detail?.ok)throw new Error(detail?.error||'Theorem inspection failed');
     graphGlobalState.theoremDetails.set(name,detail);
-    mergeLibrarySourceRelations(name,detail);
+    if(!graphGlobalState.dependencyMode)mergeLibrarySourceRelations(name,detail);
     return detail;
   }catch(error){
     graphGlobalState.theoremErrors.set(name,error?.message||String(error));
