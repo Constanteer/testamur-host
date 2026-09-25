@@ -6,6 +6,7 @@ const graphGlobalState={
   loaded:false,loading:false,nodes:new Map(),edges:new Map(),
   expandedAreas:new Set(),expandedClaims:new Set(),claimCount:0,clusterCount:0,
   libraryMode:false,libraryIndexed:false,libraryStatus:null,libraryTheoremCount:0,
+  libraryModulePath:'',libraryModuleHiddenCount:0,libraryModuleError:'',openingModulePath:'',
   needsInitialFit:true,pendingFocusIds:[],
   theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),theoremImporting:new Set(),
 };
@@ -181,15 +182,86 @@ async function loadGlobalWorld({reset=false}={}){
         await loadLibraryStatus();
       }
     }
-    graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();graphGlobalState.pendingFocusIds=[];graphGlobalState.needsInitialFit=true;
+    graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();graphGlobalState.pendingFocusIds=[];graphGlobalState.needsInitialFit=true;graphGlobalState.libraryModulePath='';graphGlobalState.libraryModuleHiddenCount=0;graphGlobalState.libraryModuleError='';
     for(const node of world.nodes||[])graphGlobalState.nodes.set(node.id,node);mergeWorldEdges(world.edges||[]);
     graphGlobalState.clusterCount=Number(world.cluster_count||0);graphGlobalState.libraryTheoremCount=Number(world.theorem_count||0);graphGlobalState.loaded=true;
     argumentState.graph=graphGlobalGraph();graphCanvasState.key='';graphCanvasState.positions=new Map();state.graphSelected=(world.nodes||[])[0]?.id||'';
   }finally{graphGlobalState.loading=false;render();}
 }
 
+function parentLibraryModulePath(path){
+  const parts=String(path||'').split('.').filter(Boolean);
+  parts.pop();
+  return parts.join('.');
+}
+
+async function openLibraryModule(modulePath){
+  modulePath=String(modulePath||'').trim();
+  if(!modulePath||graphGlobalState.loading)return;
+  graphGlobalState.loading=true;
+  graphGlobalState.openingModulePath=modulePath;
+  graphGlobalState.libraryModuleError='';
+  render();
+  try{
+    const chunk=await apiJson(`/api/library/module?path=${encodeURIComponent(modulePath)}&limit=36`);
+    if(!chunk?.ok)throw new Error(chunk?.error||`Could not open Mathlib module ${modulePath}`);
+    const nodes=(chunk.nodes||[]).map(node=>({...node,parent_cluster_id:null}));
+    if(!nodes.length){
+      throw new Error(`No child modules or direct theorems were returned for ${modulePath}.`);
+    }
+    graphGlobalState.nodes.clear();
+    graphGlobalState.edges.clear();
+    graphGlobalState.expandedAreas.clear();
+    graphGlobalState.expandedClaims.clear();
+    for(const node of nodes)graphGlobalState.nodes.set(node.id,node);
+    mergeWorldEdges(chunk.edges||[]);
+    graphGlobalState.libraryModulePath=modulePath;
+    graphGlobalState.libraryModuleHiddenCount=Number(chunk.hidden_count||0);
+    graphGlobalState.clusterCount=nodes.filter(graphIsCluster).length;
+    argumentState.graph=graphGlobalGraph();
+    graphCanvasState.key='';
+    graphCanvasState.positions=new Map();
+    graphGlobalState.needsInitialFit=true;
+    state.graphSelected=nodes[0]?.id||'';
+  }catch(error){
+    graphGlobalState.libraryModuleError=error?.message||String(error);
+  }finally{
+    graphGlobalState.loading=false;
+    graphGlobalState.openingModulePath='';
+    render();
+  }
+}
+
+async function openLibraryModuleParent(){
+  const current=graphGlobalState.libraryModulePath;
+  if(!current){await loadGlobalWorld({reset:true});return;}
+  const parent=parentLibraryModulePath(current);
+  if(parent)await openLibraryModule(parent);
+  else await loadGlobalWorld({reset:true});
+}
+
+function libraryBreadcrumbHtml(){
+  if(!graphGlobalState.libraryMode)return '';
+  const path=String(graphGlobalState.libraryModulePath||'');
+  const parts=path.split('.').filter(Boolean);
+  const crumbs=[`<button type="button" data-library-module-root>Mathlib</button>`];
+  let acc='';
+  for(let i=0;i<parts.length;i++){
+    acc=acc?`${acc}.${parts[i]}`:parts[i];
+    const last=i===parts.length-1;
+    crumbs.push(last
+      ? `<span>${esc(parts[i])}</span>`
+      : `<button type="button" data-library-module-path="${esc(acc)}">${esc(parts[i])}</button>`);
+  }
+  return `<nav class="global-library-breadcrumb" aria-label="Mathlib module path">${crumbs.join('<i>/</i>')}</nav>`;
+}
+
 async function expandGlobalArea(clusterId){
   const cluster=graphGlobalNode(clusterId);if(!cluster||!graphIsCluster(cluster)||graphGlobalState.loading)return;
+  if(graphGlobalState.libraryMode&&cluster.cluster_source==='mathlib-module'){
+    await openLibraryModule(cluster.module_path||cluster.title||'');
+    return;
+  }
   const key=graphClusterKey(cluster);if(!key)return;
   state.graphSelected=clusterId;
   if(graphGlobalState.expandedAreas.has(key)){
@@ -307,7 +379,7 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
 function globalInspector(node){
   if(!node)return '<div class="global-inspector-empty">Select a module or theorem.</div>';
   if(graphIsCluster(node)){
-    const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),library=graphGlobalState.libraryMode&&(node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library'),moduleCluster=node.cluster_source==='mathlib-module',namespace=node.cluster_source==='lean-namespace',kind=library?(moduleCluster?'Mathlib module':'Mathlib namespace'):(namespace?'Lean namespace':'Curated field'),path=node.module_path||node.namespace_path||node.title,action=expanded?'Focus branch':(moduleCluster?'Expand module':(library||namespace?'Expand namespace':'Expand field'));
+    const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),library=graphGlobalState.libraryMode&&(node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library'),moduleCluster=node.cluster_source==='mathlib-module',namespace=node.cluster_source==='lean-namespace',kind=library?(moduleCluster?'Mathlib module':'Mathlib namespace'):(namespace?'Lean namespace':'Curated field'),path=node.module_path||node.namespace_path||node.title,action=moduleCluster?(graphGlobalState.openingModulePath===path?'Opening…':'Open module'):(expanded?'Focus branch':(library||namespace?'Expand namespace':'Expand field'));
     const countLabel=library?'theorems':'Claims';
     const hidden=Number(node.expansion_hidden_count||0);
     const copy=moduleCluster
@@ -315,7 +387,7 @@ function globalInspector(node){
       : library
         ? 'Read-only theorems from the installed Mathlib source index. Expand freely; nothing becomes a Claim until you explicitly import it.'
         : (namespace?'This deterministic fallback comes from the Lean declaration namespace.':'This curated mathematical field groups durable MathHub Claims.');
-    return `<div class="global-inspector-kind">${esc(kind)}</div><h2>${esc(path)}</h2><strong class="global-claim-count">${Number(node.claim_count||0).toLocaleString()} ${countLabel}</strong><p>${esc(copy)}</p>${hidden?`<div class="global-module-limit">Showing a bounded branch · ${hidden.toLocaleString()} more available through deeper modules or search.</div>`:''}<button class="btn btn-primary" data-expand-global-area="${esc(node.id)}">${esc(action)}</button>`;
+    return `<div class="global-inspector-kind">${esc(kind)}</div><h2>${esc(path)}</h2><strong class="global-claim-count">${Number(node.claim_count||0).toLocaleString()} ${countLabel}</strong><p>${esc(copy)}</p>${hidden?`<div class="global-module-limit">Showing a bounded branch · ${hidden.toLocaleString()} more available through deeper modules or search.</div>`:''}<button class="btn btn-primary" data-expand-global-area="${esc(node.id)}" ${moduleCluster&&graphGlobalState.openingModulePath===path?'disabled':''}>${esc(action)}</button>`;
   }
   if(graphIsLibraryTheorem(node)){
     const name=String(node.lean_name||node.title||''),detail=graphGlobalState.theoremDetails.get(name),loading=graphGlobalState.theoremLoading.has(name),error=graphGlobalState.theoremErrors.get(name),importing=graphGlobalState.theoremImporting.has(name),registered=Boolean(node.registered||detail?.registered),claimId=node.claim_id||detail?.claim_id||'';
@@ -367,7 +439,7 @@ renderGraph=function renderPersistentGlobalGraph(){
   const represented=graphGlobalState.libraryMode
     ? `${Number(graphGlobalState.libraryTheoremCount||0).toLocaleString()} Mathlib theorems indexed`
     : `${Number(graphGlobalState.claimCount).toLocaleString()} Claims represented`;
-  return `<main class="global-graph-page"><div class="global-graph-top"><div><div class="eyebrow">${graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${graphGlobalState.libraryMode?'<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button>':`<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button>`}<button class="btn" data-reset-global-world>Reset world</button></div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} ${graphGlobalState.libraryMode?'top-level modules':'root namespaces / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} unfolded</span><span>${graphGlobalState.expandedAreas.size} clusters expanded</span>${graphGlobalState.loading?'<strong>growing graph…</strong>':''}</div><div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to unfold</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
+  return `<main class="global-graph-page">${libraryBreadcrumbHtml()}<div class="global-graph-top"><div><div class="eyebrow">${graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${graphGlobalState.libraryMode?`${graphGlobalState.libraryModulePath?'<button class="btn" data-library-module-back>Back</button>':''}<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button>`:`<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button>`}<button class="btn" data-reset-global-world>Reset world</button></div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} ${graphGlobalState.libraryMode?(graphGlobalState.libraryModulePath?'child modules':'top-level modules'):'root namespaces / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} visible</span>${graphGlobalState.libraryMode&&graphGlobalState.libraryModuleHiddenCount? `<span>${graphGlobalState.libraryModuleHiddenCount.toLocaleString()} more in this branch</span>` : `<span>${graphGlobalState.expandedAreas.size} clusters expanded</span>`}${graphGlobalState.loading?'<strong>loading…</strong>':''}</div>${graphGlobalState.libraryModuleError?`<div class="global-module-error"><strong>Module open failed</strong><code>${esc(graphGlobalState.libraryModuleError)}</code></div>`:''}<div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to unfold</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
 };
 
 const graphGlobalBaseBind=bind;
@@ -386,6 +458,9 @@ bind=function bindPersistentGlobalGraph(){
     });
   }
   document.querySelector('[data-reset-global-world]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
+  document.querySelector('[data-library-module-root]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
+  document.querySelector('[data-library-module-back]')?.addEventListener('click',()=>openLibraryModuleParent());
+  document.querySelectorAll('[data-library-module-path]').forEach(button=>button.addEventListener('click',()=>openLibraryModule(button.dataset.libraryModulePath)));
   document.querySelector('[data-random-library-theorem]')?.addEventListener('click',()=>randomLibraryTheorem());
   document.querySelector('[data-expand-global-area]')?.addEventListener('click',event=>expandGlobalArea(event.currentTarget.dataset.expandGlobalArea));
   document.querySelector('[data-expand-global-claim]')?.addEventListener('click',event=>expandGlobalClaim(event.currentTarget.dataset.expandGlobalClaim));
