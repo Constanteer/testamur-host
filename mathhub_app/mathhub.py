@@ -20,7 +20,13 @@ from graph_query_catalog import GraphQueryCatalog as Catalog
 from graph_world import GraphWorld
 from history import HistoryReader
 from import_tasks import ImportTaskStore
-from namespace_browser import list_namespace_declarations
+from namespace_browser import (
+    ensure_global_library_scan,
+    global_library_cluster,
+    global_library_status,
+    global_library_world,
+    list_namespace_declarations,
+)
 from ontology import validate_claim_declaration
 from presentation import PresentationIndex, canonical_from_declaration, suggested_title
 from public_identity import PublicIdentity
@@ -35,7 +41,7 @@ AUTO_INDEX_NAMESPACES=tuple(
     part.strip() for part in os.environ.get("MATHHUB_AUTO_INDEX_NAMESPACES","Nat").split(",") if part.strip()
 )
 LIBRARY_WARMUP_POLL_SECONDS=max(0.5,float(os.environ.get("MATHHUB_LIBRARY_WARMUP_POLL","2")))
-AUTO_STARTER_CLAIMS=os.environ.get("MATHHUB_AUTO_STARTER_CLAIMS","1").strip().lower() not in {"0","false","no","off"}
+AUTO_STARTER_CLAIMS=os.environ.get("MATHHUB_AUTO_STARTER_CLAIMS","0").strip().lower() not in {"0","false","no","off"}
 STARTER_CLAIM_ROOTS=tuple(
     part.strip() for part in os.environ.get(
         "MATHHUB_STARTER_DECLARATIONS",
@@ -239,6 +245,28 @@ def _import_worker_loop()->None:
         time.sleep(IMPORT_WORKER_INTERVAL_SECONDS)
 
 
+def recover_persisted_import_leases()->int:
+    """Clear leases left by a previous MathHub process before this worker starts.
+
+    A freshly started process cannot own any persisted task lease yet, so every
+    lease visible at this point belongs to a dead predecessor. Runtime stale
+    detection remains conservative for leases acquired after startup.
+    """
+    recovered=0
+    for task in (TASKS.list(limit=100) or {}).get("tasks") or []:
+        if not task.get("leased"):
+            continue
+        task_id=str(task.get("task_id") or "")
+        if not task_id:
+            continue
+        try:
+            TASKS.recover(task_id)
+            recovered+=1
+        except (KeyError,ValueError,sqlite3.Error):
+            pass
+    return recovered
+
+
 def start_import_worker()->bool:
     global _IMPORT_WORKER_STARTED
     if not AUTO_IMPORT_TASKS:
@@ -247,15 +275,16 @@ def start_import_worker()->bool:
         if _IMPORT_WORKER_STARTED:
             return False
         _IMPORT_WORKER_STARTED=True
+    recover_persisted_import_leases()
     threading.Thread(target=_import_worker_loop,name="mathhub-import-worker",daemon=True).start()
     return True
 
 
 def _library_warmup_loop()->None:
-    """Prime a small default theorem index once the pinned runtime is ready.
+    """Build the read-only Mathlib substrate once for the current environment.
 
-    This never imports Claims. It only fills the disposable namespace read cache
-    so the first human library browse does not pay the full Lean scan startup.
+    This is navigation/index state only. It does not create Claims, Proofs,
+    Builds or FormalBindings.
     """
     while True:
         runtime=core.runtime_status()
@@ -264,15 +293,10 @@ def _library_warmup_loop()->None:
         if runtime.get("setup_error"):
             return
         time.sleep(LIBRARY_WARMUP_POLL_SECONDS)
-    for namespace in AUTO_INDEX_NAMESPACES:
-        try:
-            list_namespace_declarations({
-                "namespace":namespace,
-                "imports":["Mathlib"],
-                "limit":1,
-            })
-        except (ValueError,RuntimeError,sqlite3.Error):
-            pass
+    try:
+        ensure_global_library_scan()
+    except (ValueError,RuntimeError,sqlite3.Error):
+        pass
 
 
 def start_library_warmup()->bool:
@@ -300,12 +324,23 @@ def starter_claim_status()->dict[str,Any]:
     if task and task.get("task_id"):
         try:detail=TASKS.get(str(task["task_id"]))
         except (KeyError,ValueError,sqlite3.Error):detail=dict(task)
+    lease_age_seconds=None
+    if detail and detail.get("leased") and detail.get("lease_started_at"):
+        try:
+            started=datetime.fromisoformat(str(detail["lease_started_at"]).replace("Z","+00:00"))
+            if started.tzinfo is None:
+                started=started.replace(tzinfo=timezone.utc)
+            lease_age_seconds=max(0,int((datetime.now(timezone.utc)-started).total_seconds()))
+        except ValueError:
+            lease_age_seconds=None
     return {
         "enabled":bool(AUTO_STARTER_CLAIMS and STARTER_CLAIM_ROOTS),
         "runtime_ready":bool(runtime.get("ready")),
         "registry_empty":not bool(current.get("claims")),
         "roots":list(STARTER_CLAIM_ROOTS),
         "task":detail,
+        "lease_age_seconds":lease_age_seconds,
+        "lease_stale_after_seconds":IMPORT_LEASE_STALE_SECONDS,
     }
 
 
@@ -409,6 +444,33 @@ def _starter_claim_bootstrap_loop()->None:
         time.sleep(LIBRARY_WARMUP_POLL_SECONDS)
 
 
+def retire_legacy_starter_tasks()->int:
+    """Cancel persisted automatic starter tasks now that library browsing is read-only.
+
+    Exact starter-root tasks created by older MathHub versions must not keep the
+    import worker busy after this migration.
+    """
+    if AUTO_STARTER_CLAIMS:
+        return 0
+    retired=0
+    for task in (TASKS.list(limit=100) or {}).get("tasks") or []:
+        if not _starter_task_matches(task):
+            continue
+        if str(task.get("status") or "") not in {"active","paused"}:
+            continue
+        task_id=str(task.get("task_id") or "")
+        if not task_id:
+            continue
+        try:
+            if task.get("leased"):
+                TASKS.recover(task_id)
+            TASKS.cancel(task_id)
+            retired+=1
+        except (KeyError,ValueError,sqlite3.Error):
+            pass
+    return retired
+
+
 def start_starter_claim_bootstrap()->bool:
     global _STARTER_BOOTSTRAP_STARTED
     if not AUTO_STARTER_CLAIMS or not STARTER_CLAIM_ROOTS:
@@ -434,6 +496,11 @@ class Handler(core.Handler):
         try:
             if path=="/api/claims":self.json_response(200,publicize(catalog(p)));return
             if path=="/api/import-tasks":self.json_response(200,publicize(TASKS.list(limit=iparam(parse_qs(p.query),"limit",24))));return
+            if path=="/api/library/status":self.json_response(200,global_library_status());return
+            if path=="/api/library/world":self.json_response(200,global_library_world());return
+            if path=="/api/library/cluster":
+                q=parse_qs(p.query);ns=str((q.get("namespace") or [""])[0]);limit=iparam(q,"limit",100)
+                self.json_response(200,global_library_cluster(ns,limit=limit));return
             if path=="/api/starter-status":self.json_response(200,publicize(starter_claim_status()));return
             m=re.fullmatch(rf"/api/import-tasks/({TASKISH})",path,re.I)
             if m:self.json_response(200,publicize(TASKS.get(m.group(1).upper())));return
