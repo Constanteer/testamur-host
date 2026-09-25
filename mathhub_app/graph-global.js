@@ -226,25 +226,21 @@ function globalInspector(node){
   }
   if(graphIsLibraryTheorem(node)){
     const name=String(node.lean_name||node.title||''),detail=graphGlobalState.theoremDetails.get(name),loading=graphGlobalState.theoremLoading.has(name),error=graphGlobalState.theoremErrors.get(name),importing=graphGlobalState.theoremImporting.has(name),registered=Boolean(node.registered||detail?.registered),claimId=node.claim_id||detail?.claim_id||'';
-    if(loading&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-loading"><span></span>Inspecting theorem with Lean…</div>`;
+    if(loading&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-loading"><span></span>Loading theorem source…</div>`;
     if(error&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-error">${esc(error)}</div><button class="btn" data-library-inspect-refresh="${esc(name)}">Retry inspection</button>`;
-    if(!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><p>Selecting a theorem inspects its statement on demand. This does not create a Claim.</p>`;
-    const axioms=(detail.axioms||[]).map(item=>`<code>${esc(item)}</code>`).join(' ');
-    const statementDeps=libraryDependencyList('Statement references',detail.statement_dependencies,node.id);
-    const proofDeps=libraryDependencyList('Proof references',detail.proof_dependencies,node.id);
+    if(!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><p>Selecting a theorem reads its declaration directly from the installed Mathlib sources. This does not run Lean or create a Claim.</p>`;
     const q=encodeURIComponent(name);
     const action=registered&&claimId
       ? `<button class="btn btn-primary" data-claim="${esc(claimId)}">Open Claim</button>`
       : `<button class="btn btn-primary" data-library-import-theorem="${esc(name)}" ${importing?'disabled':''}>${importing?'Importing…':'Import as Claim'}</button>`;
-    return `<div class="global-inspector-kind">Mathlib theorem · read-only${detail.cache_hit?' · cached':''}</div>
+    return `<div class="global-inspector-kind">Mathlib theorem · source index</div>
       <code class="library-theorem-name">${esc(name)}</code>
       <h2>${esc(detail.short_name||node.title||'Theorem')}</h2>
-      <pre class="library-theorem-type">${esc(detail.pretty_type||'Type unavailable')}</pre>
-      ${axioms?`<div class="library-theorem-axioms"><span>Axioms</span>${axioms}</div>`:''}
-      ${statementDeps}${proofDeps}
-      <div class="library-theorem-meta"><span>${Number(detail.statement_dependency_count||0)} statement refs</span><span>${Number(detail.proof_dependency_count||0)} proof refs</span><span>${Number(detail.duration_ms||0)} ms first inspection</span></div>
+      <pre class="library-theorem-type">${esc(detail.source_declaration||detail.pretty_type||'Declaration unavailable')}</pre>
+      <div class="library-theorem-meta"><span>${esc(detail.source_module||'Mathlib')}</span><span>${esc(detail.source_path||'source unavailable')}:${Number(detail.source_line||0)}</span><span>0 Lean calls</span></div>
+      <p>Browsing reads the installed Mathlib source tree only. Lean verification and dependency evidence run only if you import this theorem as a Claim.</p>
       ${error?`<div class="library-theorem-error">${esc(error)}</div>`:''}
-      <div class="graph-inspector-actions">${action}<button class="btn" data-library-inspect-refresh="${esc(name)}">Re-inspect</button><a class="btn" href="./?view=library&q=${q}">Open in Math library</a></div>`;
+      <div class="graph-inspector-actions">${action}<a class="btn" href="./?view=library&q=${q}">Open in Math library</a></div>`;
   }
   const relations=typeof graphRelations==='function'?graphRelations(node.id):{outgoing:[],incoming:[]};
   return `<div class="global-inspector-kind">Claim</div><code>${esc(node.lean_name||'')}</code><h2>${esc(node.title||'Claim')}</h2>${badge(node.status||'open')}<p>${esc(node.area||'')}</p><div class="graph-inspector-actions"><button class="btn btn-primary" data-claim="${esc(node.id)}">Open Claim</button><button class="btn" data-expand-global-claim="${esc(node.id)}">Expand neighbors</button></div>${typeof graphRelationList==='function'?graphRelationList('Depends on',relations.outgoing,'No loaded dependencies yet.')+graphRelationList('Used by',relations.incoming,'No loaded uses yet.'):''}`;
@@ -258,8 +254,8 @@ renderGraph=function renderPersistentGlobalGraph(){
     const failed=scanState==='error'||scanState==='retry_wait';
     const heading=failed?'Mathlib index retrying…':scanState==='scanning'?'Indexing Mathlib once…':'Preparing Mathlib index…';
     const copy=failed
-      ? 'The last one-time Lean scan failed. MathHub is retrying with backoff; no Claims, Proofs or Builds are being created.'
-      : 'Lean is scanning theorem names from the pinned environment into a read-only navigation cache. This happens once per Mathlib environment.';
+      ? 'The installed Mathlib source index could not be built yet. MathHub is retrying with backoff; no Claims, Proofs or Builds are being created.'
+      : 'MathHub is indexing theorem and lemma declarations directly from the installed Mathlib source files. No Lean process is started.';
     return `<main class="global-graph-page"><section class="global-starter-empty">
       <div class="eyebrow">Mathlib library substrate</div><div class="global-starter-spinner" aria-hidden="true"></div>
       <h1>${esc(heading)}</h1>
@@ -267,7 +263,7 @@ renderGraph=function renderPersistentGlobalGraph(){
       <div class="global-starter-worker-state"><strong>State: ${esc(scanState)}</strong><small>${attempts? `attempt ${attempts}` : 'waiting to start'}</small></div>
       ${error?`<details class="global-starter-detail" open><summary>Technical detail</summary><code>${esc(error)}</code></details>`:''}
       <div class="global-starter-actions"><button class="btn btn-primary" data-refresh-library-world>Refresh now</button><a class="btn" href="./?view=library">Open Math library</a></div>
-      <small>After this environment scan, Connections and Math library read SQLite and do not rerun Lean.</small>
+      <small>After this source scan, Connections and Math library read SQLite. Lean runs only when you explicitly import or verify a theorem.</small>
     </section></main>`;
   }
   const selected=graphGlobalNode(state.graphSelected)||graph.nodes?.[0],nonClusters=(graph.nodes||[]).filter(node=>!graphIsCluster(node)).length,focus=!graphGlobalState.libraryMode&&typeof graphProofFocusHtml==='function'?graphProofFocusHtml():'',trail=!graphGlobalState.libraryMode&&typeof graphTrailHtml==='function'?graphTrailHtml():'';
