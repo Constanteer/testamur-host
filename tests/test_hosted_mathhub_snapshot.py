@@ -97,6 +97,8 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
     assert '"setup_step"' in hosted
     assert '"setup_steps"' in hosted
     assert '"mathlib_revision"' in hosted
+    assert '"library"' in hosted
+    assert "/api/library/status" in hosted
     assert '"snapshot"' in hosted
 
 
