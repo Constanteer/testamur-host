@@ -67,6 +67,8 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "_reset_mathlib_checkout" in server
     assert "_transient_git_failure" in server
     assert "start_import_worker()" in mathhub
+    assert "recover_persisted_import_leases" in mathhub
+    assert "lease_age_seconds" in mathhub
     assert "start_library_warmup()" in mathhub
     assert "start_starter_claim_bootstrap()" in mathhub
     assert "/api/starter-status" in mathhub
@@ -94,9 +96,10 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
     assert '"setup_step"' in hosted
     assert '"setup_steps"' in hosted
     assert '"mathlib_revision"' in hosted
+    assert '"starter"' in hosted
     assert '"snapshot"' in hosted
 
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 407439bf0f888ef90c9b3c96ec8e193cac104efa"
+    assert marker == "Constanteer/Mathub main @ 89065fd387d532ebce2d3b400362920eed1ae28e"
