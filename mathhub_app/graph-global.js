@@ -828,7 +828,7 @@ function globalInspector(node){
     if(error&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-error">${esc(error)}</div><button class="btn" data-library-inspect-refresh="${esc(name)}">Retry inspection</button>`;
     if(!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><p>Selecting a theorem reads its declaration and source-reference neighborhood directly from the installed Mathlib index.</p>`;
     const q=encodeURIComponent(name),nodeId=`LIB:${name}`;
-    const action=`<button class="btn btn-primary" data-library-edit-copy="${esc(name)}">Edit a copy</button>${registered&&claimId?`<button class="btn" data-claim="${esc(claimId)}">Open workspace record</button>`:''}`;
+    const action=`<button class="btn btn-primary" data-library-open-dependency-graph="${esc(name)}">Open dependencies</button><button class="btn" data-library-edit-copy="${esc(name)}">Edit a copy</button>${registered&&claimId?`<button class="btn" data-claim="${esc(claimId)}">Open workspace record</button>`:''}`;
     const formula=detail.presentation_latex
       ? `<div class="library-theorem-formula" aria-label="${esc(detail.presentation_text||name)}">\\[${esc(detail.presentation_latex)}\\]</div>`
       : `<div class="library-theorem-formula-fallback">${esc(detail.presentation_text||'No conservative LaTeX rendering for this Lean syntax.')}</div>`;
@@ -924,6 +924,7 @@ bind=function bindPersistentGlobalGraph(){
   document.querySelector('[data-expand-global-claim]')?.addEventListener('click',event=>expandGlobalClaim(event.currentTarget.dataset.expandGlobalClaim));
   document.querySelectorAll('[data-library-theorem-name]').forEach(button=>button.addEventListener('click',()=>selectLibraryTheorem(button.dataset.libraryTheoremName,{anchorId:button.dataset.libraryAnchor||state.graphSelected})));
   document.querySelectorAll('[data-library-dependency-name]').forEach(button=>button.addEventListener('click',()=>void expandLibraryDependencyNode(button.dataset.libraryDependencyName)));
+  document.querySelectorAll('[data-library-open-dependency-graph]').forEach(button=>button.addEventListener('click',()=>void openLibraryDependencyGraph(button.dataset.libraryOpenDependencyGraph)));
   document.querySelectorAll('[data-library-dependency-root]').forEach(button=>button.addEventListener('click',()=>void openLibraryDependencyGraph(button.dataset.libraryDependencyRoot)));
   document.querySelector('[data-library-dependency-expand]')?.addEventListener('click',event=>void expandLibraryDependencyNode(event.currentTarget.dataset.libraryDependencyExpand));
   document.querySelector('[data-library-edit-copy]')?.addEventListener('click',event=>editLibraryTheoremFromGraph(event.currentTarget.dataset.libraryEditCopy));
