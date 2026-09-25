@@ -401,7 +401,7 @@ function globalInspector(node){
   if(!node)return '<div class="global-inspector-empty">Select a module or theorem.</div>';
   if(graphIsCluster(node)){
     const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),library=graphGlobalState.libraryMode&&(node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library'),moduleCluster=node.cluster_source==='mathlib-module',namespace=node.cluster_source==='lean-namespace',kind=library?(moduleCluster?'Mathlib module':'Mathlib namespace'):(namespace?'Lean namespace':'Curated field'),path=node.module_path||node.namespace_path||node.title;
-    const action=expanded?'Focus expanded branch':(moduleCluster?'Expand one level':(library||namespace?'Expand namespace':'Expand field'));
+    const action=expanded?'Focus branch':(moduleCluster?'Expand one level':(library||namespace?'Expand namespace':'Expand field'));
     const countLabel=library?'theorems':'Claims';
     const hidden=Number(node.expansion_hidden_count||0);
     const copy=moduleCluster
