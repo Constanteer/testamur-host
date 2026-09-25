@@ -68,6 +68,8 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "_transient_git_failure" in server
     assert "start_import_worker()" in mathhub
     assert "start_library_warmup()" in mathhub
+    assert "start_starter_claim_bootstrap()" in mathhub
+    assert "/api/starter-status" in mathhub
     app = read(MATHHUB / "app.js")
     library = read(MATHHUB / "library-browser-ui.js")
     server = read(MATHHUB / "server.py")
@@ -78,6 +80,11 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "TASKS.step(task_id)" in mathhub
     assert "bootstrap_mathhub()" not in start
     assert "MathHub immediately" in start
+    graph_global = read(MATHHUB / "graph-global.js")
+    graph_css = read(MATHHUB / "graph-global.css")
+    assert "Preparing starter mathematics" in graph_global
+    assert "scheduleStarterGraphPoll" in graph_global
+    assert ".global-starter-empty" in graph_css
 
 
 def test_healthz_exposes_mathhub_runtime_progress() -> None:
@@ -92,4 +99,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 7647fb94a3675eca2d502d8ca59b0ae4b3b9b9e3"
+    assert marker == "Constanteer/Mathub main @ 407439bf0f888ef90c9b3c96ec8e193cac104efa"
