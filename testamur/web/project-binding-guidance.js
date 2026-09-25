@@ -67,12 +67,7 @@
     queueMicrotask(() => { queued = false; render(); });
   }
 
-  const observer = new MutationObserver(records => {
-    const external = records.some(record => [...record.addedNodes, ...record.removedNodes].some(node =>
-      node instanceof Element && !node.matches('[data-project-binding-guidance]') && !node.closest('[data-project-binding-guidance]')));
-    if (external) queueRender();
-  });
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  addEventListener('testamur:rendered', queueRender);
   addEventListener('popstate', queueRender);
   addEventListener('DOMContentLoaded', queueRender);
 })();
