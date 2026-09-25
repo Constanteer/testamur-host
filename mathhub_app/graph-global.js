@@ -273,6 +273,24 @@ async function importLibraryTheorem(name){
   }
 }
 
+function editLibraryTheoremFromGraph(name){
+  name=String(name||'').trim();if(!name)return;
+  const detail=graphGlobalState.theoremDetails.get(name);
+  if(!detail){void loadLibraryTheoremDetail(name).then(()=>editLibraryTheoremFromGraph(name));return;}
+  state.sourceDraft={
+    title:String(detail.short_name||name).split('.').pop().replace(/_/g,' '),
+    statement:'',
+    imports:String(detail.source_module||'Mathlib'),
+    declaration:String(detail.source_declaration||detail.pretty_type||''),
+    proof:'',
+  };
+  state.sourceIngest={loading:false,error:'',result:null,selected:-1};
+  state.sourceRegister={loading:false,error:'',success:null};
+  state.sourceCheck={running:false,result:null,error:''};
+  state.view='submit';
+  render();
+}
+
 function libraryDependencyList(title,names,anchorId){
   const items=[...new Set((names||[]).map(String))].slice(0,18);
   if(!items.length)return '';
@@ -636,14 +654,12 @@ function globalInspector(node){
     return `<div class="global-inspector-kind">${esc(kind)}</div><h2>${esc(path==='(root)'?'Mathlib':path)}</h2><strong class="global-claim-count">${Number(node.claim_count||0).toLocaleString()} ${countLabel}</strong><p>${esc(copy)}</p>${hidden?`<div class="global-module-limit">Showing a bounded branch · ${hidden.toLocaleString()} more available through deeper modules or search.</div>`:''}<button class="btn btn-primary" data-expand-global-area="${esc(node.id)}">${esc(action)}</button>${enter}`;
   }
   if(graphIsLibraryTheorem(node)){
-    const name=String(node.lean_name||node.title||''),detail=graphGlobalState.theoremDetails.get(name),loading=graphGlobalState.theoremLoading.has(name),error=graphGlobalState.theoremErrors.get(name),importing=graphGlobalState.theoremImporting.has(name),registered=Boolean(node.registered||detail?.registered),claimId=node.claim_id||detail?.claim_id||'';
+    const name=String(node.lean_name||node.title||''),detail=graphGlobalState.theoremDetails.get(name),loading=graphGlobalState.theoremLoading.has(name),error=graphGlobalState.theoremErrors.get(name),registered=Boolean(node.registered||detail?.registered),claimId=node.claim_id||detail?.claim_id||'';
     if(loading&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-loading"><span></span>Loading theorem source…</div>`;
     if(error&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-error">${esc(error)}</div><button class="btn" data-library-inspect-refresh="${esc(name)}">Retry inspection</button>`;
     if(!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><p>Selecting a theorem reads its declaration and source-reference neighborhood directly from the installed Mathlib index.</p>`;
     const q=encodeURIComponent(name),nodeId=`LIB:${name}`;
-    const action=registered&&claimId
-      ? `<button class="btn btn-primary" data-claim="${esc(claimId)}">Open Claim</button>`
-      : `<button class="btn btn-primary" data-library-import-theorem="${esc(name)}" ${importing?'disabled':''}>${importing?'Importing…':'Import as Claim'}</button>`;
+    const action=`<button class="btn btn-primary" data-library-edit-copy="${esc(name)}">Edit a copy</button>${registered&&claimId?`<button class="btn" data-claim="${esc(claimId)}">Open workspace record</button>`:''}`;
     const formula=detail.presentation_latex
       ? `<div class="library-theorem-formula" aria-label="${esc(detail.presentation_text||name)}">\\[${esc(detail.presentation_latex)}\\]</div>`
       : `<div class="library-theorem-formula-fallback">${esc(detail.presentation_text||'No conservative LaTeX rendering for this Lean syntax.')}</div>`;
@@ -656,7 +672,7 @@ function globalInspector(node){
       ${outgoing}${incoming}
       <details class="library-theorem-source"><summary>Lean source</summary><pre class="library-theorem-type">${esc(detail.source_declaration||detail.pretty_type||'Declaration unavailable')}</pre></details>
       <div class="library-theorem-meta"><span>${esc(detail.source_module||'Mathlib')}</span><span>${esc(detail.source_path||'source unavailable')}:${Number(detail.source_line||0)}</span><span>0 Lean calls</span></div>
-      <p>Solid theorem links here are conservative source-statement references. They are browsing evidence, not verified proof dependencies; importing the theorem runs Lean and records the verified evidence separately.</p>
+      <p>This Mathlib theorem is already part of the read-only library. Edit a copy to experiment or derive new Lean source; only user-added source becomes a new workspace record.</p>
       ${error?`<div class="library-theorem-error">${esc(error)}</div>`:''}
       <div class="graph-inspector-actions">${action}<a class="btn" href="./?view=library&q=${q}">Open in Math library</a></div>`;
   }
@@ -723,7 +739,7 @@ bind=function bindPersistentGlobalGraph(){
   document.querySelector('[data-open-library-module]')?.addEventListener('click',event=>openLibraryModule(event.currentTarget.dataset.openLibraryModule));
   document.querySelector('[data-expand-global-claim]')?.addEventListener('click',event=>expandGlobalClaim(event.currentTarget.dataset.expandGlobalClaim));
   document.querySelectorAll('[data-library-theorem-name]').forEach(button=>button.addEventListener('click',()=>selectLibraryTheorem(button.dataset.libraryTheoremName,{anchorId:button.dataset.libraryAnchor||state.graphSelected})));
-  document.querySelector('[data-library-import-theorem]')?.addEventListener('click',event=>importLibraryTheorem(event.currentTarget.dataset.libraryImportTheorem));
+  document.querySelector('[data-library-edit-copy]')?.addEventListener('click',event=>editLibraryTheoremFromGraph(event.currentTarget.dataset.libraryEditCopy));
   document.querySelector('[data-library-inspect-refresh]')?.addEventListener('click',event=>loadLibraryTheoremDetail(event.currentTarget.dataset.libraryInspectRefresh,{refresh:true}));
   const selected=graphGlobalNode(state.graphSelected);
   if(graphIsLibraryTheorem(selected)){
