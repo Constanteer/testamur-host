@@ -16,12 +16,12 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
 
     assert "Explore formal mathematics." in argument
     assert "Browse Mathlib as mathematics." in library
-    assert "Exact Lean record" in library
+    assert "Source location" in library
     assert '<code class="library-lean-name">' not in library
     assert "Fields" in library
     assert "<summary>Lean settings</summary>" in library
     assert "data-library-retry-setup" in library
-    assert "Your MathHub will not stay empty." in library
+    assert "Browse Mathlib before importing anything." in library
     assert "Open Math library" in library
     assert "Show Lean proof" in argument
     assert "How these results connect." in argument
@@ -82,6 +82,10 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "setupStage:d.setup_stage" in app
     assert "library-setup-progress" in library
     assert 'MATHHUB_AUTO_INDEX_NAMESPACES","Nat"' in mathhub
+    namespace_browser = read(MATHHUB / "namespace_browser.py")
+    assert "_scan_mathlib_source_tree" in namespace_browser
+    assert '"index_method": "mathlib-source-files"' in namespace_browser
+    assert '"lean_invocations": 0' in namespace_browser
     assert "TASKS.step(task_id)" in mathhub
     assert "bootstrap_mathhub()" not in start
     assert "MathHub immediately" in start
@@ -92,9 +96,11 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "/api/library/cluster" in graph_global
     assert "Random theorem" in graph_global
     assert "Import as Claim" in graph_global
-    assert "Statement references" in graph_global
-    assert "Proof references" in graph_global
+    assert "source index" in graph_global
+    assert "0 Lean calls" in graph_global
+    assert "Inspecting theorem with Lean" not in graph_global
     assert "Mathlib index retrying" in graph_global
+    assert "/api/lean/inspect" not in library
     assert ".global-starter-empty" in graph_css
     assert ".library-theorem-type" in graph_css
 
@@ -113,4 +119,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 4db85d2c4d574601a4a31156afe73b248a6d253c"
+    assert marker == "Constanteer/Mathub main @ 35c9e7dd6944c278f4fccb0dfdca25307623355a"
