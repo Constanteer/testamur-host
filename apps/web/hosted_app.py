@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -151,6 +152,34 @@ def _clear_cookie(*, secure: bool) -> str:
     return "; ".join(parts)
 
 
+def _mathhub_asset_cache_token() -> str:
+    """Version the actual bundled MathHub assets, not only the upstream snapshot.
+
+    testamur-host can carry local MathHub fixes after MATHHUB_SNAPSHOT was
+    recorded. Using only that marker leaves Safari with a stable ?v= URL across
+    those deploys, so it can execute stale graph code against a new backend.
+    """
+    digest = hashlib.sha256()
+    try:
+        for path in sorted(
+            (
+                *list(_MATHHUB_ROOT.glob("*.js")),
+                *list(_MATHHUB_ROOT.glob("*.css")),
+                _MATHHUB_ROOT / "index.html",
+            ),
+            key=lambda item: item.name,
+        ):
+            if not path.is_file():
+                continue
+            digest.update(path.name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    except OSError:
+        return "current"
+    return digest.hexdigest()[:12]
+
+
 def _mathhub_static(relative_path: str) -> dict[str, Any]:
     raw = unquote(relative_path or "").lstrip("/")
     if not raw:
@@ -177,13 +206,7 @@ def _mathhub_static(relative_path: str) -> dict[str, Any]:
         # Older deployments cached MathHub JS/CSS for five minutes. Revalidation
         # headers on a new deployment cannot invalidate a still-fresh browser
         # entry, so version local assets by the recorded MathHub snapshot.
-        snapshot_path = Path(__file__).resolve().parents[2] / "MATHHUB_SNAPSHOT"
-        try:
-            snapshot = snapshot_path.read_text(encoding="utf-8")
-        except OSError:
-            snapshot = ""
-        match = re.search(r"\b[0-9a-f]{40}\b", snapshot, re.IGNORECASE)
-        cache_token = match.group(0)[:12] if match else "current"
+        cache_token = _mathhub_asset_cache_token()
         html = body.decode("utf-8")
         html = re.sub(
             r'((?:src|href)="\./[^"]+\.(?:js|css))"',
