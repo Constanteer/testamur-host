@@ -500,6 +500,25 @@ def direct_dependency_source(imports: list[str], name: str) -> str:
     )
 
 
+def direct_dependency_batch_source(imports: list[str], names: list[str]) -> str:
+    import_lines = "\n".join(f"import {module}" for module in imports)
+    commands = "\n".join(f"#mathhub_direct_deps {name}" for name in names)
+    return f"{import_lines}\n\n{LEAN_DIRECT_DEP_COMMAND}\n{commands}\n"
+
+
+def direct_dependency_payload(output: str, name: str) -> str:
+    text = str(output or "")
+    begin = f"MATHHUB_DIRECT_BEGIN:{name}"
+    end = f"MATHHUB_DIRECT_END:{name}"
+    start = text.find(begin)
+    if start < 0:
+        return ""
+    stop = text.find(end, start + len(begin))
+    if stop < 0:
+        return text[start + len(begin):]
+    return text[start + len(begin):stop]
+
+
 def invoke_lean(source: str, *, timeout_seconds: int) -> dict[str, Any]:
     status = runtime_status()
     if not status["ready"]:
@@ -755,6 +774,56 @@ def inspect_direct_dependencies(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def inspect_direct_dependencies_batch(payload: dict[str, Any]) -> dict[str, Any]:
+    imports = validate_imports(payload.get("imports"))
+    raw_names = payload.get("declaration_names") or payload.get("names") or []
+    if not isinstance(raw_names, list):
+        raise ValueError("declaration_names must be a list")
+    names = unique([str(name or "").strip() for name in raw_names])
+    if not names:
+        raise ValueError("at least one declaration name is required")
+    if len(names) > 24:
+        raise ValueError("direct dependency batch is limited to 24 declarations")
+    for name in names:
+        if not LEAN_NAME_RE.fullmatch(name):
+            raise ValueError(f"invalid declaration name: {name}")
+
+    source = direct_dependency_batch_source(imports, names)
+    run = invoke_lean(source, timeout_seconds=min(INDEX_TIMEOUT_SECONDS, 30))
+    if run.get("engine_error"):
+        return {"error": run["engine_error"], **run}
+    output = run.get("output", "")
+    items = []
+    for name in names:
+        block = direct_dependency_payload(output, name)
+        if not block:
+            items.append({"ok": False, "declaration_name": name, "error": "dependency block missing"})
+            continue
+        statement = parse_marker(block, "MATHHUB_STATEMENT_REF:")
+        proof = parse_marker(block, "MATHHUB_PROOF_REF:")
+        direct = unique([*statement, *proof])
+        items.append({
+            "ok": True,
+            "declaration_name": name,
+            "statement_dependencies": statement,
+            "proof_dependencies": proof,
+            "direct_dependencies": direct,
+            "dependencies": direct,
+            "pretty_type": parse_pretty_type(block),
+        })
+    return {
+        "ok": bool(run.get("ok")),
+        "items": items,
+        "imports": imports,
+        "lean_invocations": 1,
+        "duration_ms": int(run.get("duration_ms") or 0),
+        "inspection_mode": "lean-direct-batch",
+        "fast_path": True,
+        "source_hash": hashlib.sha256(source.encode()).hexdigest(),
+        "output": output if not run.get("ok") else "",
+    }
+
+
 def build_registered_proof(proof_id: str) -> dict[str, Any]:
     proof = REGISTRY.get_proof(proof_id)
     result = audit(
@@ -854,6 +923,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/lean/direct-dependencies":
                 self.json_response(200, inspect_direct_dependencies(payload))
+                return
+            if path == "/api/lean/direct-dependencies-batch":
+                self.json_response(200, inspect_direct_dependencies_batch(payload))
                 return
             self.json_response(404, {"error": "unknown API endpoint"})
         except (ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
