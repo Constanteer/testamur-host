@@ -131,19 +131,22 @@ renderGraph=function renderPersistentGlobalGraph(){
   const graph=argumentState.graph;
   if(!graphGlobalState.loaded||!graph)return `<main class="global-graph-page"><div class="global-graph-loading"><div class="eyebrow">Global argument graph</div><h1>Opening the mathematical universe…</h1><p>Small sparse registries open as literal Claim graphs. Larger registries keep every Claim represented through curated fields or Lean-namespace clusters.</p><button class="btn btn-primary" data-load-global-world>Open global graph</button></div></main>`;
   if(graphGlobalState.claimCount===0){
-    const starter=graphGlobalState.starterStatus||{},task=starter.task||{},status=String(task.status||''),lastError=String(task.last_error||starter.error||''),imported=Number(task.imported||0),failed=Number(task.failed||0),processed=Number(task.processed_claims||0),scheduled=Number(task.scheduled_claims||0);
-    const heading=status==='paused'?'Starter import paused':status==='completed'?'Starter import finished without Claims':'Preparing starter mathematics…';
+    const starter=graphGlobalState.starterStatus||{},task=starter.task||{},status=String(task.status||''),lastError=String(task.last_error||starter.error||''),imported=Number(task.imported||0),failed=Number(task.failed||0),processed=Number(task.processed_claims||0),scheduled=Number(task.scheduled_claims||0),leased=Boolean(task.leased),leaseAge=Number(starter.lease_age_seconds||0);
+    const heading=status==='paused'?'Starter import paused':status==='completed'?'Starter import finished without Claims':leased?'Processing the first Mathlib batch…':'Preparing starter mathematics…';
     const copy=status==='paused'
       ? 'Mathlib is ready, but the starter import paused. MathHub will retry recoverable work automatically.'
       : status==='completed'
         ? 'The starter task completed without populating the registry. Its task detail is shown below instead of an empty graph.'
-        : 'Mathlib is ready. MathHub is importing a small deterministic starter set so Connections has real Claims to display.';
+        : leased
+          ? 'The import worker owns this task and is currently running a Lean batch. Progress counters update when that batch commits.'
+          : 'Mathlib is ready. MathHub is importing a small deterministic starter set so Connections has real Claims to display.';
     return `<main class="global-graph-page"><section class="global-starter-empty">
       <div class="eyebrow">Global argument graph</div><div class="global-starter-spinner" aria-hidden="true"></div>
       <h1>${esc(heading)}</h1><p>${esc(copy)}</p>
       <div class="global-starter-stats">
         <span><strong>${processed}</strong> processed</span><span><strong>${scheduled}</strong> scheduled</span><span><strong>${imported}</strong> imported</span><span><strong>${failed}</strong> failed</span>
       </div>
+      <div class="global-starter-worker-state"><span class="runtime-dot ${leased?'working':''}"></span><strong>${leased?'Worker active':'Waiting for worker'}</strong>${leased?`<small>lease age ${leaseAge}s</small>`:''}</div>
       ${lastError?`<details class="global-starter-detail"><summary>Technical detail</summary><code>${esc(lastError)}</code></details>`:''}
       <div class="global-starter-actions"><button class="btn btn-primary" data-refresh-starter-world>Refresh now</button><a class="btn" href="./?view=library">Open Math library</a></div>
       <small>Connections will appear automatically as soon as the first starter Claims are recorded.</small>
