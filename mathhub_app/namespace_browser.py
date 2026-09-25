@@ -1096,6 +1096,170 @@ def library_theorem_detail(name: str, *, refresh: bool = False) -> dict[str, Any
     }
 
 
+
+def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dict[str, Any]:
+    """Inspect one Lean declaration and return its direct dependency neighborhood.
+
+    This is intentionally separate from the source/module browser. The first
+    request may invoke Lean; subsequent requests are cached by environment hash.
+    Edges mean actual declaration dependencies, never module containment.
+    """
+    name = str(name or "").strip()
+    if not name or not core.LEAN_NAME_RE.fullmatch(name):
+        raise ValueError("name must be a Lean identifier")
+
+    runtime = core.runtime_status()
+    environment_hash = str(runtime.get("environment_hash") or "")
+    if not runtime.get("ready") or not environment_hash:
+        return {
+            "ok": False,
+            "ready": False,
+            "error": str(runtime.get("message") or "Lean environment unavailable"),
+        }
+
+    if not refresh:
+        cached = _cached_library_theorem_detail(environment_hash, name)
+        if cached and cached.get("dependency_graph_version") == "lean-direct-v1":
+            return cached
+
+    inspected = core.inspect_declaration(
+        {"imports": ["Mathlib"], "declaration_name": name}
+    )
+    if not inspected.get("ok"):
+        return {
+            "ok": False,
+            "ready": True,
+            "declaration_name": name,
+            "error": str(
+                inspected.get("error")
+                or inspected.get("engine_error")
+                or inspected.get("output")
+                or "Lean dependency inspection failed"
+            ),
+            "duration_ms": int(inspected.get("duration_ms") or 0),
+        }
+
+    statement = [
+        str(dep)
+        for dep in inspected.get("statement_dependencies") or []
+        if str(dep) and str(dep) != name
+    ]
+    proof = [
+        str(dep)
+        for dep in inspected.get("proof_dependencies") or []
+        if str(dep) and str(dep) != name
+    ]
+    direct = list(dict.fromkeys([*statement, *proof]))
+    transitive = [
+        str(dep)
+        for dep in inspected.get("transitive_dependencies") or []
+        if str(dep) and str(dep) != name
+    ]
+    axioms = [
+        str(dep)
+        for dep in inspected.get("axioms") or []
+        if str(dep) and str(dep) != name
+    ]
+
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        indexed = conn.execute(
+            """SELECT lean_name,namespace,short_name,source_module,source_path,source_line
+               FROM library_global_theorems
+               WHERE environment_hash=? AND lean_name=?""",
+            (environment_hash, name),
+        ).fetchone()
+
+    roles: dict[str, list[str]] = {}
+    for dep in statement:
+        roles.setdefault(dep, []).append("statement")
+    for dep in proof:
+        roles.setdefault(dep, []).append("proof")
+
+    nodes: list[dict[str, Any]] = [
+        {
+            "id": f"LIB:{name}",
+            "kind": "library-declaration",
+            "lean_name": name,
+            "title": str(indexed["short_name"]) if indexed is not None else name.rsplit(".", 1)[-1],
+            "namespace_path": str(indexed["namespace"]) if indexed is not None else (name.rsplit(".", 1)[0] if "." in name else ""),
+            "source_module": str(indexed["source_module"]) if indexed is not None else "",
+            "source_path": str(indexed["source_path"]) if indexed is not None else "",
+            "source_line": int(indexed["source_line"] or 0) if indexed is not None else 0,
+            "dependency_root": True,
+            "dependency_depth": 0,
+        }
+    ]
+    for dep in direct:
+        nodes.append(
+            {
+                "id": f"LIB:{dep}",
+                "kind": "library-declaration",
+                "lean_name": dep,
+                "title": dep.rsplit(".", 1)[-1],
+                "namespace_path": dep.rsplit(".", 1)[0] if "." in dep else "",
+                "dependency_roles": roles.get(dep, []),
+                "dependency_depth": 1,
+                "is_axiom": dep in axioms,
+            }
+        )
+
+    edges = [
+        {
+            "from": f"LIB:{name}",
+            "to": f"LIB:{dep}",
+            "evidence_kind": "lean-dependency",
+            "dependency_roles": roles.get(dep, []),
+            "proof_count": 0,
+            "proof_ids": [],
+        }
+        for dep in direct
+    ]
+
+    result = {
+        "ok": True,
+        "ready": True,
+        "cache_hit": False,
+        "dependency_graph_version": "lean-direct-v1",
+        "inspection_mode": "lean-dependency",
+        "lean_invocations": 1,
+        "environment_hash": environment_hash,
+        "declaration_name": name,
+        "pretty_type": str(inspected.get("pretty_type") or ""),
+        "statement_dependencies": statement,
+        "proof_dependencies": proof,
+        "direct_dependencies": direct,
+        "direct_dependency_count": len(direct),
+        "transitive_dependencies": transitive,
+        "transitive_dependency_count": len(transitive),
+        "axioms": axioms,
+        "nodes": nodes,
+        "edges": edges,
+        "duration_ms": int(inspected.get("duration_ms") or 0),
+        "verification_note": (
+            "Edges are read from Lean declaration/proof constants in the pinned environment. "
+            "Arrow direction is dependent -> dependency."
+        ),
+    }
+    now = utc_now()
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        conn.execute(
+            """INSERT OR REPLACE INTO library_theorem_details(
+                   environment_hash,lean_name,detail_json,inspected_at
+               ) VALUES(?,?,?,?)""",
+            (
+                environment_hash,
+                name,
+                json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+                now,
+            ),
+        )
+    result["inspected_at"] = now
+    return result
+
+
+
 def random_library_theorem() -> dict[str, Any]:
     status = global_library_status()
     environment_hash = str(status.get("environment_hash") or "")
