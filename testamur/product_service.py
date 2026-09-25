@@ -255,8 +255,10 @@ class TestamurProductService:
     def dashboard(self, *, limit: int = 30) -> dict[str, Any]:
         """Project the canonical stores into a product-home activity surface.
 
-        This is intentionally a read projection. It does not create new durable
-        object kinds or infer trust, truth, ownership, or invalidity.
+        Dashboard reads are intentionally batched through one SQLite connection.
+        All canonical stores share the same database, so opening a connection for
+        every watch/project lookup only adds WAL/volume contention without adding
+        semantic isolation.
         """
         bounded = max(1, min(int(limit), 100))
 
@@ -271,8 +273,6 @@ class TestamurProductService:
                 "ORDER BY recorded_at DESC, snapshot_id DESC LIMIT ?",
                 (bounded * 2,),
             ).fetchall()
-
-        with self.records.connect() as conn:
             record_rows = conn.execute(
                 "SELECT record_json FROM testamur_records "
                 "ORDER BY created_at DESC, record_id DESC LIMIT ?",
@@ -283,17 +283,72 @@ class TestamurProductService:
                 "ORDER BY recorded_at DESC, revision_id DESC LIMIT ?",
                 (bounded,),
             ).fetchall()
-
-        with self.watches.connect() as conn:
-            watch_rows = conn.execute(
-                "SELECT record_json FROM testamur_watches "
-                "ORDER BY created_at DESC, watch_id DESC LIMIT ?",
-                (bounded,),
-            ).fetchall()
             alert_rows = conn.execute(
                 "SELECT record_json FROM testamur_alerts "
                 "ORDER BY recorded_at DESC, alert_id DESC LIMIT ?",
                 (bounded,),
+            ).fetchall()
+            project_rows = conn.execute(
+                """
+                SELECT p.project_id, p.record_json, p.updated_at,
+                       COUNT(pm.watch_id) AS watch_count
+                FROM testamur_projects AS p
+                LEFT JOIN testamur_project_monitors AS pm
+                  ON pm.project_id = p.project_id
+                GROUP BY p.project_id
+                ORDER BY p.updated_at DESC, p.created_at DESC
+                LIMIT ?
+                """,
+                (bounded,),
+            ).fetchall()
+            watch_rows = conn.execute(
+                """
+                WITH recent_watches AS (
+                    SELECT watch_id
+                    FROM testamur_watches
+                    ORDER BY created_at DESC, watch_id DESC
+                    LIMIT ?
+                ),
+                recent_projects AS (
+                    SELECT project_id
+                    FROM testamur_projects
+                    ORDER BY updated_at DESC, created_at DESC
+                    LIMIT ?
+                ),
+                candidate_watches AS (
+                    SELECT watch_id FROM recent_watches
+                    UNION
+                    SELECT pm.watch_id
+                    FROM testamur_project_monitors AS pm
+                    JOIN recent_projects AS rp
+                      ON rp.project_id = pm.project_id
+                )
+                SELECT
+                    w.record_json AS watch_json,
+                    w.created_at AS watch_created_at,
+                    pm.project_id AS project_id,
+                    (
+                        SELECT wr.record_json
+                        FROM testamur_watch_revisions AS wr
+                        WHERE wr.watch_id = w.watch_id
+                        ORDER BY wr.ordinal DESC
+                        LIMIT 1
+                    ) AS revision_json,
+                    (
+                        SELECT we.record_json
+                        FROM testamur_watch_evaluations AS we
+                        WHERE we.watch_id = w.watch_id
+                        ORDER BY we.recorded_at DESC, we.evaluation_id DESC
+                        LIMIT 1
+                    ) AS evaluation_json
+                FROM candidate_watches AS cw
+                JOIN testamur_watches AS w
+                  ON w.watch_id = cw.watch_id
+                LEFT JOIN testamur_project_monitors AS pm
+                  ON pm.watch_id = w.watch_id
+                ORDER BY w.created_at DESC, w.watch_id DESC
+                """,
+                (bounded, bounded),
             ).fetchall()
 
         snapshots = [json.loads(str(row["record_json"])) for row in snapshot_rows]
@@ -301,36 +356,45 @@ class TestamurProductService:
         revisions = [json.loads(str(row["record_json"])) for row in revision_rows]
         alerts = [json.loads(str(row["record_json"])) for row in alert_rows]
 
-        watches: list[dict[str, Any]] = []
+        all_watches: list[dict[str, Any]] = []
         watches_by_id: dict[str, dict[str, Any]] = {}
+        project_watch_ids: dict[str, list[str]] = {}
         for row in watch_rows:
-            watch = json.loads(str(row["record_json"]))
+            watch = json.loads(str(row["watch_json"]))
             watch_id = str(watch.get("watch_id") or "")
-            try:
-                revision = self.watches.latest_watch_revision(watch_id)
-                evaluation = self.watches.latest_evaluation(watch_id)
-            except KeyError:
-                revision = None
-                evaluation = None
+            revision = (
+                None
+                if row["revision_json"] is None
+                else json.loads(str(row["revision_json"]))
+            )
+            evaluation = (
+                None
+                if row["evaluation_json"] is None
+                else json.loads(str(row["evaluation_json"]))
+            )
+            project_id = None if row["project_id"] is None else str(row["project_id"])
             enriched = {
                 **watch,
-                "project_id": self.projects.project_id_for_watch(watch_id),
+                "project_id": project_id,
                 "label": None if revision is None else revision.get("label"),
                 "alert_on": [] if revision is None else list(revision.get("alert_on") or []),
                 "interval_seconds": None if revision is None else revision.get("interval_seconds"),
                 "latest_state": None if evaluation is None else evaluation.get("operational_state"),
                 "last_evaluated_at": None if evaluation is None else evaluation.get("recorded_at"),
             }
-            watches.append(enriched)
+            all_watches.append(enriched)
             watches_by_id[watch_id] = enriched
+            if project_id is not None:
+                project_watch_ids.setdefault(project_id, []).append(watch_id)
 
         projects: list[dict[str, Any]] = []
-        for project in self.projects.list_projects()[:bounded]:
-            links = self.projects.monitors_for_project(str(project["project_id"]))
+        for row in project_rows:
+            project = json.loads(str(row["record_json"]))
+            project_id = str(row["project_id"])
             monitor_values = [
-                watches_by_id[link["watch_id"]]
-                for link in links
-                if link["watch_id"] in watches_by_id
+                watches_by_id[watch_id]
+                for watch_id in project_watch_ids.get(project_id, [])
+                if watch_id in watches_by_id
             ]
             activity_times = [
                 str(item.get("last_evaluated_at") or item.get("created_at") or "")
@@ -346,11 +410,15 @@ class TestamurProductService:
             projects.append(
                 {
                     **project,
-                    "ref": project["project_id"],
-                    "watch_count": len(links),
-                    "monitor_count": len(links),
+                    "ref": project_id,
+                    "watch_count": int(row["watch_count"] or 0),
+                    "monitor_count": int(row["watch_count"] or 0),
                     "status": status,
-                    "last_activity_at": max(activity_times) if activity_times else project.get("updated_at"),
+                    "last_activity_at": (
+                        max(activity_times)
+                        if activity_times
+                        else str(row["updated_at"] or project.get("updated_at") or "")
+                    ),
                 }
             )
 
@@ -358,6 +426,7 @@ class TestamurProductService:
         for row in source_rows:
             source = json.loads(str(row["record_json"]))
             source_names[str(source["source_id"])] = str(source.get("initial_locator") or source["source_id"])
+
         activity: list[dict[str, Any]] = []
         for snapshot in snapshots:
             source_id = str(snapshot.get("source_id") or "")
@@ -385,6 +454,7 @@ class TestamurProductService:
                     "watch_id": alert.get("watch_id"),
                 }
             )
+
         revision_by_record: dict[str, dict[str, Any]] = {}
         for revision in revisions:
             record_id = str(revision.get("record_id") or "")
@@ -414,12 +484,13 @@ class TestamurProductService:
             "schema": "testamur.product.dashboard.v1",
             "projects": projects,
             "feed": activity[:bounded],
-            "watches": watches,
+            "watches": all_watches[:bounded],
             "alerts": alerts,
             "records": records,
             "status": self.status(),
             "semantics": {
                 "read_projection_only": True,
+                "batched_sqlite_projection": True,
                 "projects_are_containers": True,
                 "project_entries_are_tracked_sources": False,
                 "monitors_link_projects_to_sources": True,
