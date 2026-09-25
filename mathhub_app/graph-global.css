@@ -72,3 +72,10 @@
 .global-graph-page .graph-trail,.global-graph-page .graph-proof-focus-bar{margin-top:8px}
 @media(max-width:900px){.global-graph-page{padding:18px}.global-graph-top{align-items:flex-start;flex-direction:column}.global-graph-actions{justify-content:flex-start}.global-graph-stage{height:calc(100vh - 290px);min-height:520px}.global-graph-inspector{width:280px}}
 @media(max-width:680px){.global-graph-stage{height:68vh;min-height:470px}.global-graph-inspector{left:10px;right:10px;top:auto;bottom:10px;width:auto;max-height:44%;padding:12px}.global-graph-top h1{font-size:28px}.global-world-meta{gap:6px 10px}.global-graph-page .graph-search-box{margin-top:8px}}
+
+.dependency-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:10px 0 12px}
+.dependency-summary-grid>div{display:grid;gap:2px;padding:8px 9px;border:1px solid var(--line);border-radius:7px;background:var(--soft)}
+.dependency-summary-grid strong{font:650 14px/1 var(--sans);color:var(--ink)}
+.dependency-summary-grid span{font:8px/1.2 var(--sans);text-transform:uppercase;letter-spacing:.055em;color:var(--muted)}
+.dependency-role{display:inline-block;margin-left:6px;color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.04em}
+.dependency-closure-list{max-height:220px;overflow:auto;padding-top:8px}
