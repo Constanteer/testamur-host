@@ -216,10 +216,15 @@ function nav() {
   </header>`;
 }
 
+function notifyUiRendered() {
+  queueMicrotask(() => window.dispatchEvent(new CustomEvent('testamur:rendered')));
+}
+
 function shell(content, wide = false) {
   root.innerHTML = `${nav()}<main class="shell ${wide ? 'shell-wide' : ''}">${content}</main>
     <footer class="site-footer"><span>Testamur</span><span>Provenance, change, reliance and monitoring.</span></footer>`;
   bindNavigation();
+  notifyUiRendered();
 }
 
 function authShell(content) {
@@ -442,6 +447,7 @@ async function homePage() {
     </section>`;
 
     bindNavigation();
+    notifyUiRendered();
     document.querySelector('[data-refresh]')?.addEventListener('click', async () => {
       await dashboard(true);
       homePage();
