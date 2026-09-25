@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import threading
 import time
@@ -22,7 +23,7 @@ from urllib.parse import unquote, urlsplit
 
 from testamur.monitor_provider_manifest import load_monitor_provider_registry
 from testamur.monitor_scheduler import MonitorScheduler
-from testamur.product_extensions import MonitorTargetProvider
+from testamur.product_extensions import MonitorTargetProvider, ProductExtensions
 from testamur.product_service import TestamurProductService
 from testamur.web_app import (
     WEB_ROOT,
@@ -919,6 +920,35 @@ class HostedTestamurServer(ThreadingHTTPServer):
         self.monitor_scheduler.stop()
         super().server_close()
 
+    def dashboard_service_for_workspace(
+        self, *, user_id: str, workspace_id: str | None
+    ) -> TestamurProductService | None:
+        """Build a read-only dashboard facade without initializing every store.
+
+        The dashboard projection now reads SQLite directly. Reconstructing the
+        complete integrated product service on the first page view needlessly
+        initializes every schema/extension and can be expensive on a persistent
+        network volume. Existing workspaces can skip that cold-start entirely.
+        """
+        workspace = self.account_store.resolve_workspace(
+            user_id=user_id, workspace_id=workspace_id
+        )
+        if workspace["kind"] == "personal":
+            database = self.workspace_root / user_id / "testamur.sqlite3"
+        else:
+            database = (
+                self.workspace_root
+                / "organizations"
+                / workspace["workspace_id"]
+                / "testamur.sqlite3"
+            )
+        if not database.is_file():
+            return None
+        service = object.__new__(TestamurProductService)
+        service.database_path = database
+        service.extensions = ProductExtensions.empty()
+        return service
+
     def product_service_for_user(self, user_id: str) -> TestamurProductService:
         with self._services_lock:
             existing = self._services.get(user_id)
@@ -1214,10 +1244,25 @@ class HostedTestamurWebHandler(TestamurWebHandler):
             if user is None:
                 self._send(_error("authentication_required", "Sign in to use hosted Testamur.", status=401))
                 return
+            workspace_id = _workspace_id(self.headers.get("Cookie"))
+            if path == "/v1/dashboard":
+                try:
+                    dashboard_service = self.hosted_server.dashboard_service_for_workspace(
+                        user_id=user["user_id"],
+                        workspace_id=workspace_id,
+                    )
+                    if dashboard_service is not None:
+                        self._send(dispatch_api(dashboard_service, self.path))
+                        return
+                except (AccountError, sqlite3.Error):
+                    # Fall back to the full service path. This covers a newly
+                    # created or partially migrated workspace without weakening
+                    # normal product initialization semantics.
+                    pass
             try:
                 service = self.hosted_server.product_service_for_workspace(
                     user_id=user["user_id"],
-                    workspace_id=_workspace_id(self.headers.get("Cookie")),
+                    workspace_id=workspace_id,
                 )
             except AccountError:
                 service = self.hosted_server.product_service_for_user(user["user_id"])
