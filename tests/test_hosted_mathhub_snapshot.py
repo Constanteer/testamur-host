@@ -21,7 +21,7 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
     assert "Fields" in library
     assert "<summary>Lean settings</summary>" in library
     assert "data-library-retry-setup" in library
-    assert "Browse Mathlib before importing anything." in library
+    assert "Mathlib is already available." in library
     assert "Open Math library" in library
     assert "Show Lean proof" in argument
     assert "How these results connect." in argument
@@ -36,7 +36,7 @@ def test_hosted_mathhub_snapshot_is_math_first() -> None:
     source_css = read(MATHHUB / "source-ingest-ui.css")
     source_backend = read(MATHHUB / "source_ingest.py")
     index = read(MATHHUB / "index.html")
-    assert "Import a file or link" in source_ui
+    assert "Add Lean" in source_ui
     assert "Browse the math library" in source_ui
     assert "source-ingest-ui.js" in index
     assert "source-ingest-ui.css" in index
@@ -74,6 +74,7 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "/api/library/cluster" in mathhub
     assert "/api/library/module" in mathhub
     assert "/api/library/theorem" in mathhub
+    assert "/api/library/dependencies" in mathhub
     assert "/api/library/random" in mathhub
     assert 'MATHHUB_AUTO_STARTER_CLAIMS","0"' in mathhub
     app = read(MATHHUB / "app.js")
@@ -111,12 +112,16 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "return graphBudgetBaseExpandGlobalArea(clusterId)" in graph_budgets
     assert "Focus branch" in graph_global
     assert "Random theorem" in graph_global
-    assert "Import as Claim" in graph_global
+    assert "Open dependencies" in graph_global
     assert "source index" in graph_global
+    assert "Lean dependency graph" in graph_global
+    assert "Every arrow means “depends on”" in graph_global
     assert "0 Lean calls" in graph_global
     assert "Inspecting theorem with Lean" not in graph_global
     assert "Mathlib index retrying" in graph_global
     assert "/api/lean/inspect" not in library
+    assert "data-library-open-dependencies" in library
+    assert "Add to MathHub (" not in library
     assert ".global-starter-empty" in graph_css
     assert ".library-theorem-type" in graph_css
 
