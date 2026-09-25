@@ -544,8 +544,9 @@ loadGraph=async function persistentGlobalLoad(root=''){
   if(!graphGlobalState.loaded)await loadGlobalWorld();
   if(!root)return;
   const node=graphGlobalNode(root);
-  if(graphGlobalState.dependencyMode&&graphIsLibraryTheorem(node)){
-    await expandLibraryDependencyNode(dependencyNodeName(node));
+  if(graphIsLibraryTheorem(node)){
+    if(graphGlobalState.dependencyMode)await expandLibraryDependencyNode(dependencyNodeName(node));
+    else await openLibraryDependencyGraph(dependencyNodeName(node));
     return;
   }
   if(graphIsCluster(node||root))await expandGlobalArea(root);else await expandGlobalClaim(root);
