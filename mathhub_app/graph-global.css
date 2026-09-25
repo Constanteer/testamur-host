@@ -79,3 +79,29 @@
 .dependency-summary-grid span{font:8px/1.2 var(--sans);text-transform:uppercase;letter-spacing:.055em;color:var(--muted)}
 .dependency-role{display:inline-block;margin-left:6px;color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.04em}
 .dependency-closure-list{max-height:220px;overflow:auto;padding-top:8px}
+
+/* Dependency view is theorem-first: mathematical presentation above, graph below. */
+.dependency-focus-card{max-width:1180px;margin:0 auto 22px;padding:26px 30px 24px;border:1px solid var(--line);border-radius:12px;background:var(--canvas);box-shadow:0 12px 36px rgba(31,35,40,.06)}
+.dependency-focus-head{display:flex;align-items:flex-start;justify-content:space-between;gap:22px}
+.dependency-focus-head h1{margin:4px 0 5px;font:650 clamp(28px,4vw,44px)/1.06 var(--sans);letter-spacing:-.035em}
+.dependency-focus-head code{font:10px/1.4 var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.dependency-focus-badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.dependency-focus-badges span{padding:5px 8px;border:1px solid var(--line);border-radius:999px;background:var(--soft);color:var(--muted);font:9px/1.2 var(--sans)}
+.dependency-focus-formula{display:flex;align-items:center;justify-content:center;min-height:150px;margin:26px 0 18px;padding:24px 34px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow-x:auto;text-align:center}
+.dependency-focus-formula mjx-container{margin:0!important;font-size:clamp(120%,2.2vw,180%)!important}
+.dependency-focus-text{max-width:980px;margin:26px auto 18px;padding:28px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);text-align:center;font:500 clamp(18px,2vw,26px)/1.55 var(--serif);color:var(--ink)}
+.dependency-focus-lean{max-width:100%;margin:24px 0 18px;padding:20px 22px;border:1px solid var(--line);border-radius:8px;background:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.65 var(--mono);color:var(--ink)}
+.dependency-focus-loading{display:flex;align-items:center;justify-content:center;gap:9px;min-height:132px;margin:24px 0;color:var(--muted);font:11px/1.5 var(--sans)}
+.dependency-focus-loading span{width:15px;height:15px;border:1.5px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:globalStarterSpin 1s linear infinite}
+.dependency-focus-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--muted);font:9px/1.45 var(--sans)}
+.dependency-graph-page .global-graph-top{max-width:1180px;margin-left:auto;margin-right:auto}
+.dependency-graph-page .global-world-meta{max-width:1180px;margin-left:auto;margin-right:auto}
+.dependency-graph-page .global-graph-stage{max-width:1180px;margin-left:auto;margin-right:auto;height:min(720px,64vh);min-height:520px}
+@media(max-width:760px){
+  .dependency-focus-card{padding:20px 16px}
+  .dependency-focus-head{flex-direction:column}
+  .dependency-focus-badges{justify-content:flex-start}
+  .dependency-focus-formula{min-height:110px;padding:18px 10px}
+  .dependency-focus-formula mjx-container{font-size:120%!important}
+  .dependency-focus-foot{align-items:flex-start;flex-direction:column}
+}
