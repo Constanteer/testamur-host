@@ -1,6 +1,6 @@
-/* Deterministic Lean-library browser. No AI classification: namespace discovery
-   comes from the pinned Lean Environment and only kernel theorem constants are
-   offered as Claim import candidates. Namespace theorem names are cached by
+/* Deterministic Lean-library browser. Mathlib is a read-only substrate that is
+   already present in MathHub; browsing it is not an import operation. "Add Lean"
+   is reserved for user-provided source. Namespace theorem names are cached by
    environment/import set, so later searches do not relaunch Lean. */
 const libraryBrowserState={
   open:false,loading:false,searching:false,importing:false,namespace:'Nat',imports:'Mathlib',search:'',
@@ -38,10 +38,42 @@ function libraryInspectionHtml(name){
 }
 
 function libraryRow(item){
-  const name=item.declaration_name,status=libraryBrowserState.importStatus.get(name),selected=libraryBrowserState.selected.has(name),registered=item.registered||status?.ok,claimId=status?.claim_id||item.claim_id||'';
+  const name=item.declaration_name,status=libraryBrowserState.importStatus.get(name),registered=item.registered||status?.ok,claimId=status?.claim_id||item.claim_id||'';
   const friendly=humanizeLeanName(item.short_name||name);
-  return `<div class="library-row ${registered?'registered':''}"><label class="library-select"><input type="checkbox" data-library-select="${esc(name)}" ${selected?'checked':''} ${registered||libraryBrowserState.importing?'disabled':''}/></label><div class="library-row-main"><div class="library-friendly-name"><strong>${esc(friendly)}</strong>${registered?'<span class="library-registered">in MathHub</span>':''}${status?.error?'<span class="library-import-failed">needs attention</span>':''}</div><span class="library-row-kind">Mathlib theorem</span>${status?.error?`<div class="library-row-error">${esc(status.error)}</div>`:''}${libraryInspectionHtml(name)}</div><div class="library-row-actions"><button class="btn" data-library-inspect="${esc(name)}" ${libraryBrowserState.importing?'disabled':''}>Details</button>${registered&&claimId?`<button class="btn" data-library-open-claim="${esc(claimId)}">Open</button>`:''}</div></div>`;
+  return `<div class="library-row ${registered?'registered':''}"><div class="library-row-main"><div class="library-friendly-name"><strong>${esc(friendly)}</strong>${registered?'<span class="library-registered">workspace record</span>':''}</div><span class="library-row-kind">Mathlib theorem · already available</span>${libraryInspectionHtml(name)}</div><div class="library-row-actions"><button class="btn" data-library-inspect="${esc(name)}">Details</button><button class="btn btn-primary" data-library-edit-copy="${esc(name)}">Edit a copy</button>${registered&&claimId?`<button class="btn" data-library-open-claim="${esc(claimId)}">Open record</button>`:''}</div></div>`;
 }
+
+async function editLibraryTheoremCopy(name){
+  name=String(name||'').trim();if(!name)return;
+  let detail=libraryBrowserState.inspections.get(name);
+  if(!detail||detail.loading||detail.error){
+    try{
+      detail=await apiJson(`/api/library/theorem?name=${encodeURIComponent(name)}`);
+      if(!detail?.ok)throw new Error(detail?.error||'Mathlib source detail unavailable');
+      libraryBrowserState.inspections.set(name,detail);
+    }catch(error){
+      libraryBrowserState.inspections.set(name,{error:error.message||String(error)});
+      renderLibraryBrowser();
+      return;
+    }
+  }
+  state.sourceDraft=state.sourceDraft||{title:'',statement:'',imports:'Mathlib',declaration:'',proof:''};
+  state.sourceDraft={
+    title:humanizeLeanName(detail.short_name||name),
+    statement:'',
+    imports:String(detail.source_module||'Mathlib'),
+    declaration:String(detail.source_declaration||detail.pretty_type||''),
+    proof:'',
+  };
+  state.sourceIngest=state.sourceIngest||{loading:false,error:'',result:null,selected:-1};
+  state.sourceIngest={loading:false,error:'',result:null,selected:-1};
+  state.sourceRegister={loading:false,error:'',success:null};
+  state.sourceCheck={running:false,result:null,error:''};
+  libraryBrowserState.open=false;
+  state.view='submit';
+  render();
+}
+
 
 function libraryIndexSummary(result){
   const complete=result.index_complete?'complete index':`first ${Number(result.indexed_theorems||0).toLocaleString()} indexed`;
@@ -50,22 +82,22 @@ function libraryIndexSummary(result){
 }
 
 function libraryBrowserHtml(){
-  const result=libraryBrowserState.result,available=librarySelectedAvailable(),count=result?.total_theorems||0;
+  const result=libraryBrowserState.result,count=result?.total_theorems||0;
   const topic=libraryTopicForNamespace(libraryBrowserState.namespace);
   const runtimeReady=Boolean(state?.runtime?.ready);
   const setupStep=Number(state?.runtime?.setupStep||0),setupSteps=Number(state?.runtime?.setupSteps||0);
   const setupProgress=setupSteps>0?Math.max(0,Math.min(100,Math.round((setupStep/setupSteps)*100))):0;
   const setup=!runtimeReady?`<div class="library-setup-card"><span class="runtime-dot ${state?.runtime?.setupRunning?'working':state?.runtime?.checked?'bad':''}"></span><div class="library-setup-content"><div class="library-setup-title"><strong>${esc(state?.runtime?.label||'Preparing the math library…')}</strong>${state?.runtime?.setupRunning&&setupSteps?`<small>Step ${setupStep} of ${setupSteps}</small>`:''}</div><span>${state?.runtime?.setupError?'The pinned Lean/Mathlib environment did not finish preparing. Retry is safe; existing Claims are not changed.':state?.runtime?.setupRunning?(state?.runtime?.setupStage||'MathHub is preparing its pinned Mathlib environment automatically.'):'The library is preparing in the background.'}</span>${state?.runtime?.setupRunning&&setupSteps?`<div class="library-setup-progress" role="progressbar" aria-label="Math library preparation" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${setupProgress}"><i style="width:${setupProgress}%"></i></div>`:''}${state?.runtime?.setupError?`<div class="library-setup-actions"><button class="btn" type="button" data-library-retry-setup>Retry setup</button><details class="library-setup-detail"><summary>Technical detail</summary><code>${esc(state.runtime.setupError)}</code></details></div>`:''}</div></div>`:'';
-  const progress=libraryBrowserState.importing?`<div class="library-progress"><strong>${libraryBrowserState.importedCount}/${libraryBrowserState.importTotal}</strong><span>selected statements queued; dependencies are followed automatically</span></div>`:((libraryBrowserState.lastLeanInvocations||libraryBrowserState.lastAutoDependencies)?`<div class="library-progress"><strong>${libraryBrowserState.lastAutoDependencies}</strong><span>related theorem dependencies added automatically${libraryBrowserState.lastClosureTruncated?' · current safety limit reached':''}</span></div>`:'');
+  const progress='';
   const resultCount=result?.query?`${Number(result.matched_theorems||0).toLocaleString()} matches`:`${Number(count).toLocaleString()} theorems`;
   const search=result?`<form class="library-search" id="library-search-form"><label><span>Search ${esc(topic?.label||'this area')}</span><input id="library-search" value="${esc(libraryBrowserState.search)}" placeholder="prime numbers, continuity, matrices…" autocomplete="off"/></label><button class="btn btn-primary" type="submit" ${libraryBrowserState.searching||libraryBrowserState.importing?'disabled':''}>${libraryBrowserState.searching?'Searching…':'Search'}</button>${libraryBrowserState.search?'<button class="btn" type="button" data-library-search-clear>Clear</button>':''}</form>`:'';
-  return `<main class="shell page library-page"><section class="library-hero"><div><div class="eyebrow">Math library</div><h1>Browse Mathlib as mathematics.</h1><p>Pick a field, search ordinary theorem names, and add real Lean-backed statements to your MathHub. Exact identifiers and dependency evidence stay available without taking over the interface.</p></div><div class="library-hero-stat"><strong>${claims.length.toLocaleString()}</strong><span>Claims currently in your MathHub</span></div></section>
+  return `<main class="shell page library-page"><section class="library-hero"><div><div class="eyebrow">Math library</div><h1>Browse Mathlib as mathematics.</h1><p>Mathlib is already here: browse it, inspect exact Lean, or edit a copy. “Add Lean” is only for source you bring yourself.</p></div><div class="library-hero-stat"><strong>${Number(result?.indexed_theorems||count||0).toLocaleString()}</strong><span>Mathlib theorems in this index</span></div></section>
   <div class="library-workspace"><aside class="library-topic-rail"><div class="library-section-label">Fields</div>${LIBRARY_TOPICS.map(item=>`<button class="library-topic ${item.namespace===libraryBrowserState.namespace?'selected':''}" data-library-topic="${esc(item.namespace)}"><strong>${esc(item.label)}</strong><span>${esc(item.description)}</span></button>`).join('')}<div class="library-rail-note">These are deterministic views over the pinned Lean environment—not AI-generated categories.</div></aside>
   <section class="library-main">
   ${setup}
   <header class="library-current-head"><div><span>Current field</span><h2>${esc(topic?.label||'Custom Lean area')}</h2><p>${esc(topic?.description||'Advanced namespace selection')}</p></div><form class="library-query friendly" id="library-query-form"><button class="btn btn-primary" type="submit" ${libraryBrowserState.loading||libraryBrowserState.importing||!runtimeReady?'disabled':''}>${libraryBrowserState.loading?'Loading…':'Load theorems'}</button><details class="library-advanced"><summary>Lean settings</summary><div class="library-advanced-grid"><label><span>Lean namespace</span><input id="library-namespace" value="${esc(libraryBrowserState.namespace)}" placeholder="Topology.Algebra" autocomplete="off"/></label><label><span>Imports</span><textarea id="library-imports" rows="2">${esc(libraryBrowserState.imports)}</textarea></label></div><div class="library-advanced-actions"><button class="btn" type="button" data-library-import-activity>Background imports</button></div></details></form></header>
   ${libraryBrowserState.error?`<div class="library-error">${esc(libraryBrowserState.error)}</div>`:''}
-  ${result?`<div class="library-result-head"><div><strong>${resultCount}</strong><span> · ${esc(topic?.label||result.namespace)}</span></div><small>${result.cache_hit?'local index':'pinned Lean scan'}${result.duration_ms?` · ${result.duration_ms} ms`:''}</small></div>${search}<div class="library-selection-bar"><div><strong>${available.length}</strong><span> selected</span></div><div class="library-selection-actions"><button class="btn" data-library-select-visible ${libraryBrowserState.importing?'disabled':''}>Select visible</button><button class="btn" data-library-clear ${libraryBrowserState.importing?'disabled':''}>Clear</button><button class="btn btn-primary" data-library-import ${!available.length||libraryBrowserState.importing?'disabled':''}>${libraryBrowserState.importing?'Adding…':`Add to MathHub (${available.length})`}</button></div></div>${progress}<div class="library-list">${(result.items||[]).map(libraryRow).join('')||'<div class="quiet-empty">No theorems match this search.</div>'}</div>${!result.index_complete?'<div class="library-footnote">This namespace is large, so MathHub indexed a bounded slice. Search or choose a narrower namespace for exhaustive results.</div>':result.truncated?'<div class="library-footnote">More results exist. Narrow the search to load the theorem you want.</div>':''}`:`<div class="library-empty"><strong>${runtimeReady?'Choose a field to load its theorems.':'The library will become browsable when Lean setup finishes.'}</strong><span>${runtimeReady?'No import is performed until you select statements.':'Your registry stays available while the pinned environment is repaired.'}</span></div>`}
+  ${result?`<div class="library-result-head"><div><strong>${resultCount}</strong><span> · ${esc(topic?.label||result.namespace)}</span></div><small>${result.cache_hit?'local index':'pinned Lean scan'}${result.duration_ms?` · ${result.duration_ms} ms`:''}</small></div>${search}<div class="library-readonly-note"><strong>Already in the library.</strong><span>Opening or editing a Mathlib theorem does not “add” it. Edit a copy to experiment; use Add Lean for your own source.</span></div>${progress}<div class="library-list">${(result.items||[]).map(libraryRow).join('')||'<div class="quiet-empty">No theorems match this search.</div>'}</div>${!result.index_complete?'<div class="library-footnote">This namespace is large, so MathHub indexed a bounded slice. Search or choose a narrower namespace for exhaustive results.</div>':result.truncated?'<div class="library-footnote">More results exist. Narrow the search to load the theorem you want.</div>':''}`:`<div class="library-empty"><strong>${runtimeReady?'Choose a field to load its theorems.':'The library will become browsable when Lean setup finishes.'}</strong><span>${runtimeReady?'Mathlib is read-only here. Open a theorem or edit a copy; Add Lean is for your own source.':'Your registry stays available while the pinned environment is repaired.'}</span></div>`}
   </section></div></main>`;
 }
 
@@ -155,12 +187,9 @@ function bindLibraryBrowserOverlay(host){
   host.querySelector('[data-library-search-clear]')?.addEventListener('click',()=>searchLibraryNamespace(''));
   host.querySelector('[data-library-retry-setup]')?.addEventListener('click',async()=>{const button=host.querySelector('[data-library-retry-setup]');if(button){button.disabled=true;button.textContent='Retrying…';}try{await apiJson('/api/runtime/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}catch(error){libraryBrowserState.error=error.message||String(error);}finally{if(typeof checkRuntime==='function')await checkRuntime();renderLibraryBrowser();}});
   host.querySelector('[data-library-import-activity]')?.addEventListener('click',()=>{if(typeof openImportTasks==='function')openImportTasks();});
-  host.querySelectorAll('[data-library-select]').forEach(input=>input.addEventListener('change',event=>{const name=event.currentTarget.dataset.librarySelect;if(event.currentTarget.checked)libraryBrowserState.selected.add(name);else libraryBrowserState.selected.delete(name);renderLibraryBrowser();}));
   host.querySelectorAll('[data-library-inspect]').forEach(button=>button.addEventListener('click',()=>inspectLibraryDeclaration(button.dataset.libraryInspect)));
+  host.querySelectorAll('[data-library-edit-copy]').forEach(button=>button.addEventListener('click',()=>void editLibraryTheoremCopy(button.dataset.libraryEditCopy)));
   host.querySelectorAll('[data-library-open-claim]').forEach(button=>button.addEventListener('click',()=>openLibraryClaim(button.dataset.libraryOpenClaim)));
-  host.querySelector('[data-library-select-visible]')?.addEventListener('click',()=>{for(const item of libraryBrowserState.result?.items||[])if(!item.registered)libraryBrowserState.selected.add(item.declaration_name);renderLibraryBrowser();});
-  host.querySelector('[data-library-clear]')?.addEventListener('click',()=>{libraryBrowserState.selected.clear();renderLibraryBrowser();});
-  host.querySelector('[data-library-import]')?.addEventListener('click',()=>importLibrarySelection());
 }
 
 function openLibraryBrowser(){
@@ -186,7 +215,7 @@ function mountLibraryEmptyStart(){
   const layout=document.querySelector('.registry-layout');if(!layout)return;
   const section=document.createElement('section');section.className='mathhub-empty-start';
   const starterNote=state.runtime?.ready?'The installed Mathlib sources are available to browse immediately.':'The Mathlib source index will appear as soon as the pinned environment finishes preparing.';
-  section.innerHTML=`<div class="mathhub-empty-copy"><div class="eyebrow">Starting your library</div><h2>Browse Mathlib before importing anything.</h2><p>${esc(starterNote)} You can also open the Math library immediately, choose a field, and add the exact statements you care about. Imported means recorded in MathHub; Lean verification remains a separate build result.</p><div class="mathhub-empty-actions"><button class="btn btn-primary mathhub-empty-primary" data-empty-browse>Open Math library</button><button class="btn" data-empty-add>Add your own statement</button></div></div><div class="mathhub-empty-example"><span>Browse a field</span><button data-empty-topic="Nat">Numbers & arithmetic</button><button data-empty-topic="LinearAlgebra">Linear algebra</button><button data-empty-topic="Topology">Topology</button><button data-empty-topic="Probability">Probability</button></div>`;
+  section.innerHTML=`<div class="mathhub-empty-copy"><div class="eyebrow">Starting your library</div><h2>Mathlib is already available.</h2><p>${esc(starterNote)} Browse existing mathematics directly. Use Add Lean only when you want to upload, fetch, paste, or write new Lean source of your own.</p><div class="mathhub-empty-actions"><button class="btn btn-primary mathhub-empty-primary" data-empty-browse>Open Math library</button><button class="btn" data-empty-add>Add Lean source</button></div></div><div class="mathhub-empty-example"><span>Browse a field</span><button data-empty-topic="Nat">Numbers & arithmetic</button><button data-empty-topic="LinearAlgebra">Linear algebra</button><button data-empty-topic="Topology">Topology</button><button data-empty-topic="Probability">Probability</button></div>`;
   layout.replaceWith(section);
   section.querySelector('[data-empty-browse]')?.addEventListener('click',openLibraryBrowser);
   section.querySelector('[data-empty-add]')?.addEventListener('click',()=>{state.view='submit';render();});
