@@ -27,6 +27,27 @@ MAX_INGESTION_PLAN_ROOTS = MAX_NAMESPACE_INDEX_ITEMS
 _NAMESPACE_SCAN_LOCKS_GUARD = threading.Lock()
 _NAMESPACE_SCAN_LOCKS: dict[tuple[str, str, str], threading.Lock] = {}
 
+_GLOBAL_LIBRARY_STATE_LOCK = threading.Lock()
+_GLOBAL_LIBRARY_STATE: dict[str, Any] = {
+    "state": "idle",
+    "attempts": 0,
+    "environment_hash": None,
+    "started_at": None,
+    "finished_at": None,
+    "last_error": None,
+    "last_duration_ms": None,
+}
+
+
+def _set_global_library_state(**updates: Any) -> None:
+    with _GLOBAL_LIBRARY_STATE_LOCK:
+        _GLOBAL_LIBRARY_STATE.update(updates)
+
+
+def _global_library_state() -> dict[str, Any]:
+    with _GLOBAL_LIBRARY_STATE_LOCK:
+        return dict(_GLOBAL_LIBRARY_STATE)
+
 
 def _namespace_scan_lock(environment_hash: str, imports_hash: str, namespace: str) -> threading.Lock:
     key = (environment_hash, imports_hash, namespace)
@@ -40,13 +61,6 @@ def _namespace_scan_lock(environment_hash: str, imports_hash: str, namespace: st
 LEAN_GLOBAL_LIBRARY_COMMAND = r'''
 open Lean Elab Command
 
-private def mathhubLibraryProofConstants (info : ConstantInfo) : Array Name :=
-  match info with
-  | .thmInfo v => v.value.getUsedConstants
-  | .defnInfo v => v.value.getUsedConstants
-  | .opaqueInfo v => v.value.getUsedConstants
-  | _ => #[]
-
 elab "#mathhub_scan_library" : command => do
   let env ← getEnv
   let mut theoremNames : Array Name := #[]
@@ -58,25 +72,10 @@ elab "#mathhub_scan_library" : command => do
   let sortedNames := theoremNames.qsort Name.quickLt
   logInfo m!"MATHHUB_LIBRARY_COUNT:{sortedNames.size}"
   let mut emitted := 0
-  let mut emittedEdges := 0
   for name in sortedNames do
     if emitted < __MATHHUB_GLOBAL_THEOREM_LIMIT__ then
-      match env.find? name with
-      | some info =>
-          logInfo m!"MATHHUB_LIBRARY_ITEM:{name}"
-          emitted := emitted + 1
-          let mut refs := info.type.getUsedConstants
-          for dep in mathhubLibraryProofConstants info do
-            if !refs.contains dep then refs := refs.push dep
-          for dep in refs do
-            if emittedEdges < __MATHHUB_GLOBAL_EDGE_LIMIT__ && dep != name && !dep.isInternal then
-              match env.find? dep with
-              | some (.thmInfo _) =>
-                  logInfo m!"MATHHUB_LIBRARY_EDGE:{name}|||{dep}"
-                  emittedEdges := emittedEdges + 1
-              | _ => pure ()
-      | none => pure ()
-  logInfo m!"MATHHUB_LIBRARY_EDGE_COUNT:{emittedEdges}"
+      logInfo m!"MATHHUB_LIBRARY_ITEM:{name}"
+      emitted := emitted + 1
 '''
 
 LEAN_NAMESPACE_COMMAND = r'''
@@ -117,28 +116,18 @@ def imports_fingerprint(imports: list[str]) -> str:
 
 def global_library_source(imports: list[str]) -> str:
     import_lines = "\n".join(f"import {module}" for module in imports)
-    command = (
-        LEAN_GLOBAL_LIBRARY_COMMAND
-        .replace("__MATHHUB_GLOBAL_THEOREM_LIMIT__", str(MAX_GLOBAL_LIBRARY_THEOREMS))
-        .replace("__MATHHUB_GLOBAL_EDGE_LIMIT__", str(MAX_GLOBAL_LIBRARY_EDGES))
+    command = LEAN_GLOBAL_LIBRARY_COMMAND.replace(
+        "__MATHHUB_GLOBAL_THEOREM_LIMIT__",
+        str(MAX_GLOBAL_LIBRARY_THEOREMS),
     )
     return f"{import_lines}\n\n{command}\n#mathhub_scan_library\n"
 
 
 def parse_global_library(output: str) -> tuple[list[str], list[tuple[str, str]], int]:
     names = sorted(set(core.parse_marker(output, "MATHHUB_LIBRARY_ITEM:")))
-    edge_matches = re.findall(r"MATHHUB_LIBRARY_EDGE:([^\s|]+)\|\|\|([^\s]+)", output or "")
-    edges: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for source, target in edge_matches:
-        pair = (source.strip(), target.strip())
-        if pair[0] and pair[1] and pair[0] != pair[1] and pair not in seen:
-            seen.add(pair)
-            edges.append(pair)
     count_match = re.search(r"MATHHUB_LIBRARY_COUNT:([0-9]+)", output or "")
     total = int(count_match.group(1)) if count_match else len(names)
-    return names, edges, total
-
+    return names, [], total
 
 def _ensure_global_cache_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
@@ -189,46 +178,92 @@ def _global_scan_record(environment_hash: str) -> dict[str, Any] | None:
 def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
     environment = core.runtime_status()
     if not environment.get("ready"):
-        return {"ok": False, "ready": False, "error": str(environment.get("message") or "Lean environment unavailable")}
+        error = str(environment.get("message") or "Lean environment unavailable")
+        _set_global_library_state(state="idle", last_error=error)
+        return {"ok": False, "ready": False, "error": error}
     environment_hash = str(environment.get("environment_hash") or "")
     if not environment_hash:
-        return {"ok": False, "ready": False, "error": "pinned Lean environment has no environment hash"}
+        error = "pinned Lean environment has no environment hash"
+        _set_global_library_state(state="error", last_error=error)
+        return {"ok": False, "ready": False, "error": error}
+
     imports = ["Mathlib"]
     imports_hash = imports_fingerprint(imports)
     existing = None if refresh else _global_scan_record(environment_hash)
     if existing is not None:
+        _set_global_library_state(
+            state="ready",
+            environment_hash=environment_hash,
+            finished_at=existing.get("scanned_at"),
+            last_error=None,
+            last_duration_ms=int(existing.get("duration_ms") or 0),
+        )
         return {"ok": True, "ready": True, "cache_hit": True, **existing}
 
     lock = _namespace_scan_lock(environment_hash, imports_hash, "__GLOBAL__")
     with lock:
         existing = None if refresh else _global_scan_record(environment_hash)
         if existing is not None:
+            _set_global_library_state(
+                state="ready",
+                environment_hash=environment_hash,
+                finished_at=existing.get("scanned_at"),
+                last_error=None,
+                last_duration_ms=int(existing.get("duration_ms") or 0),
+            )
             return {"ok": True, "ready": True, "cache_hit": True, **existing}
+
+        state = _global_library_state()
+        _set_global_library_state(
+            state="scanning",
+            attempts=int(state.get("attempts") or 0) + 1,
+            environment_hash=environment_hash,
+            started_at=utc_now(),
+            finished_at=None,
+            last_error=None,
+        )
         run = core.invoke_lean(
             global_library_source(imports),
-            timeout_seconds=max(core.INDEX_TIMEOUT_SECONDS, 300),
+            timeout_seconds=max(core.INDEX_TIMEOUT_SECONDS, 180),
         )
         if not run.get("ok"):
+            error = str(
+                run.get("engine_error")
+                or run.get("output")
+                or "Lean library scan failed"
+            )[-4000:]
+            _set_global_library_state(
+                state="error",
+                finished_at=utc_now(),
+                last_error=error,
+                last_duration_ms=int(run.get("duration_ms") or 0),
+            )
             return {
                 "ok": False,
                 "ready": False,
                 "cache_hit": False,
-                "error": str(run.get("engine_error") or run.get("output") or "Lean library scan failed")[-4000:],
+                "error": error,
                 "duration_ms": int(run.get("duration_ms") or 0),
             }
-        names, edges, total = parse_global_library(str(run.get("output") or ""))
+
+        names, _edges, total = parse_global_library(str(run.get("output") or ""))
         names = names[:MAX_GLOBAL_LIBRARY_THEOREMS]
-        name_set = set(names)
-        edges = [(a, b) for a, b in edges if a in name_set and b in name_set][:MAX_GLOBAL_LIBRARY_EDGES]
         now = utc_now()
         with core.FORMAL.connect() as conn:
             _ensure_global_cache_schema(conn)
-            conn.execute("DELETE FROM library_global_theorems WHERE environment_hash=?", (environment_hash,))
-            conn.execute("DELETE FROM library_global_edges WHERE environment_hash=?", (environment_hash,))
+            conn.execute(
+                "DELETE FROM library_global_theorems WHERE environment_hash=?",
+                (environment_hash,),
+            )
+            conn.execute(
+                "DELETE FROM library_global_edges WHERE environment_hash=?",
+                (environment_hash,),
+            )
             if names:
                 conn.executemany(
-                    """INSERT INTO library_global_theorems(environment_hash,lean_name,namespace,short_name)
-                       VALUES(?,?,?,?)""",
+                    """INSERT INTO library_global_theorems(
+                           environment_hash,lean_name,namespace,short_name
+                       ) VALUES(?,?,?,?)""",
                     [
                         (
                             environment_hash,
@@ -238,12 +273,6 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
                         )
                         for name in names
                     ],
-                )
-            if edges:
-                conn.executemany(
-                    """INSERT OR IGNORE INTO library_global_edges(environment_hash,source_name,target_name)
-                       VALUES(?,?,?)""",
-                    [(environment_hash, a, b) for a, b in edges],
                 )
             conn.execute(
                 """INSERT INTO library_global_scans(
@@ -263,12 +292,20 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
                     imports_hash,
                     total,
                     len(names),
-                    len(edges),
+                    0,
                     1 if total <= len(names) else 0,
                     int(run.get("duration_ms") or 0),
                     now,
                 ),
             )
+
+        _set_global_library_state(
+            state="ready",
+            environment_hash=environment_hash,
+            finished_at=now,
+            last_error=None,
+            last_duration_ms=int(run.get("duration_ms") or 0),
+        )
         return {
             "ok": True,
             "ready": True,
@@ -277,25 +314,34 @@ def ensure_global_library_scan(*, refresh: bool = False) -> dict[str, Any]:
             "imports_hash": imports_hash,
             "total_theorems": total,
             "indexed_theorems": len(names),
-            "indexed_edges": len(edges),
+            "indexed_edges": 0,
             "complete": total <= len(names),
             "duration_ms": int(run.get("duration_ms") or 0),
             "scanned_at": now,
         }
 
-
 def global_library_status() -> dict[str, Any]:
     environment = core.runtime_status()
     environment_hash = str(environment.get("environment_hash") or "")
     record = _global_scan_record(environment_hash) if environment_hash else None
+    lifecycle = _global_library_state()
+    if record is not None:
+        lifecycle = {
+            **lifecycle,
+            "state": "ready",
+            "environment_hash": environment_hash,
+            "finished_at": record.get("scanned_at"),
+            "last_error": None,
+            "last_duration_ms": int(record.get("duration_ms") or 0),
+        }
     return {
         "ok": True,
         "runtime_ready": bool(environment.get("ready")),
         "environment_hash": environment_hash,
         "indexed": record is not None,
         "scan": record,
+        **lifecycle,
     }
-
 
 def _top_namespace(name: str) -> str:
     return name.split(".", 1)[0] if "." in name else "(root)"
