@@ -32,7 +32,7 @@ topbar=function(){
       '<button class="'+(state.view==="graph"?"active":"")+'" data-view="graph">Connections</button>'+
     '</nav><div class="top-spacer"></div>'+
     '<div class="runtime-pill" title="Lean and Mathlib status"><span class="runtime-dot '+mhRuntimeTone()+'"></span><span>'+esc(mhRuntimeCopy())+'</span></div>'+
-    '<button class="btn btn-primary btn-small" data-view="submit">Import</button>'+
+    '<button class="btn btn-primary btn-small" data-view="submit">Add Lean</button>'+
   '</div></header>';
 };
 
@@ -55,7 +55,7 @@ renderRegistry=function(){
       '<span class="mathhub-owned-area">'+esc(c.area||"Mathematics")+'</span>'+
       '<strong>'+esc(c.title)+'</strong><p>'+esc(c.statement||"")+'</p></div>'+
       '<div class="mathhub-owned-meta">'+badge(c.status)+'<span>→</span></div></button>';
-  }).join(""):'<div class="mathhub-owned-empty"><strong>Nothing here yet.</strong><span>Browse Mathlib or import a Lean file to start.</span></div>';
+  }).join(""):'<div class="mathhub-owned-empty"><strong>Nothing here yet.</strong><span>Browse Mathlib, or add your own Lean source to create a workspace record.</span></div>';
   var runtimeText=state.runtime.ready?
     "The pinned environment is ready. Searches, imports and proof builds use this exact Lean/Mathlib environment.":
     (state.runtime.setupError?
@@ -69,14 +69,14 @@ renderRegistry=function(){
       '<div class="eyebrow">Formal mathematics, made navigable</div>'+
       '<h1>A working map of mathematics you can inspect.</h1>'+
       '<p>Start from Mathlib, bring a Lean file, or paste a public source link. MathHub keeps the exact declarations, proofs and dependencies underneath without making you begin with them.</p>'+
-      '<div class="mathhub-home-actions"><button class="btn btn-primary mathhub-hero-button" data-library-browser>Browse the math library</button><button class="btn mathhub-hero-button" data-view="submit">Import a file or link</button></div>'+
+      '<div class="mathhub-home-actions"><button class="btn btn-primary mathhub-hero-button" data-library-browser>Browse the math library</button><button class="btn mathhub-hero-button" data-view="submit">Add Lean</button></div>'+
     '</div><aside class="mathhub-home-runtime">'+
       '<div><div class="mathhub-runtime-line"><span class="runtime-dot '+mhRuntimeTone()+'"></span><strong>'+esc(mhRuntimeCopy())+'</strong></div><p>'+esc(runtimeText)+'</p>'+setupProgress+'</div>'+
       '<div class="mathhub-runtime-facts"><span><strong>'+owned.length+'</strong> statements</span><span><strong>'+verified+'</strong> verified builds</span></div>'+
     '</aside></section>'+
     '<section class="mathhub-start-grid">'+
       '<button class="mathhub-start-card primary" data-library-browser><span class="mathhub-start-index">01</span><strong>Find mathematics</strong><p>Browse ordinary subjects and search Mathlib without knowing a namespace first.</p><span class="mathhub-start-link">Open library →</span></button>'+
-      '<button class="mathhub-start-card" data-view="submit"><span class="mathhub-start-index">02</span><strong>Bring your own source</strong><p>Drop a <code>.lean</code> file or paste a GitHub/raw URL. MathHub extracts declarations for you.</p><span class="mathhub-start-link">Import source →</span></button>'+
+      '<button class="mathhub-start-card" data-view="submit"><span class="mathhub-start-index">02</span><strong>Add Lean</strong><p>Drop a <code>.lean</code> file, paste a GitHub/raw URL, or write a declaration. This is the path for new user-provided formal source.</p><span class="mathhub-start-link">Add source →</span></button>'+
       '<button class="mathhub-start-card" data-view="graph"><span class="mathhub-start-index">03</span><strong>Follow connections</strong><p>See which statements a proof actually depends on and move through the graph.</p><span class="mathhub-start-link">Open connections →</span></button>'+
     '</section>'+
     '<section class="mathhub-owned"><div class="mathhub-owned-head"><div><div class="eyebrow">Your MathHub</div><h2>Collected statements</h2></div>'+
@@ -106,13 +106,13 @@ function mhIngestResult(){
 renderSubmit=function(){
   var d=state.sourceDraft,reg=state.sourceRegister;
   return '<main class="shell page mathhub-import-page">'+
-    '<section class="mathhub-import-head"><div><div class="eyebrow">Bring mathematics in</div><h1>Import source, then choose what belongs in MathHub.</h1><p>No copy-paste ceremony. Upload a Lean file or paste a public URL; MathHub extracts candidate declarations and lets you review the formal object before it is registered.</p></div><button class="btn" data-library-browser>Or browse Mathlib</button></section>'+
+    '<section class="mathhub-import-head"><div><div class="eyebrow">Add Lean</div><h1>Add new Lean source to your MathHub.</h1><p>Upload a <code>.lean</code> file, fetch a public source URL, or write one manually. Existing Mathlib theorems are already in the library and do not need to be added.</p></div><button class="btn" data-library-browser>Browse existing Mathlib</button></section>'+
     '<div class="mathhub-ingest-layout"><section class="mathhub-ingest-panel"><div class="mathhub-ingest-choice">'+
       '<label class="mathhub-dropzone" for="mathhub-source-file"><input id="mathhub-source-file" type="file" accept=".lean,text/plain"/><span class="mathhub-drop-icon">↑</span><strong>Drop or choose a .lean file</strong><span>UTF-8 · up to about 450 KB</span></label>'+
       '<div class="mathhub-ingest-or"><span>or</span></div>'+
       '<form id="mathhub-source-url-form" class="mathhub-url-form"><label><span>Public source URL</span><div><input id="mathhub-source-url" type="url" placeholder="https://github.com/…/blob/…/File.lean" required/><button class="btn btn-primary" type="submit">Fetch</button></div></label><small>GitHub blob links are converted automatically. Private/local network URLs are rejected.</small></form>'+
     '</div></section><section class="mathhub-ingest-preview">'+mhIngestResult()+'</section></div>'+
-    '<section class="mathhub-register-review"><div class="mathhub-review-head"><div><div class="eyebrow">Review</div><h2>'+(state.sourceIngest.result?"Register the selected declaration":"Write a statement manually")+'</h2><p>Human-facing fields stay first. Exact Lean stays available underneath and remains the object MathHub verifies.</p></div></div>'+
+    '<section class="mathhub-register-review"><div class="mathhub-review-head"><div><div class="eyebrow">Review new source</div><h2>'+(state.sourceIngest.result?"Review the selected declaration":"Write Lean manually")+'</h2><p>This draft is editable before it is added. Exact Lean remains the object MathHub verifies and records.</p></div></div>'+
       '<form id="source-claim-form" class="mathhub-review-form"><div class="mathhub-human-fields">'+
         '<label><span>Title</span><input id="draft-title" required value="'+esc(d.title)+'" placeholder="A readable theorem title"/></label>'+
         '<label><span>What does it say?</span><textarea id="draft-human" required placeholder="Describe the mathematical statement in ordinary language.">'+esc(d.statement)+'</textarea></label>'+
@@ -120,12 +120,12 @@ renderSubmit=function(){
         '<label><span>Imports</span><textarea id="draft-imports">'+esc(d.imports||"Mathlib")+'</textarea></label>'+
         '<label><span>Declaration</span><textarea id="draft-decl" required>'+esc(d.declaration)+'</textarea></label>'+
         '<label><span>Proof</span><textarea id="draft-proof" class="proof-draft" placeholder="by&#10;  ...">'+esc(d.proof)+'</textarea></label>'+
-      '</div></details><div class="mathhub-review-actions"><button class="btn" type="button" id="source-draft-test" '+(state.runtime.ready&&!state.sourceCheck.running?"":"disabled")+'>'+(state.sourceCheck.running?"Checking…":"Check with Lean")+'</button><button class="btn btn-primary" type="submit" '+(reg.loading?"disabled":"")+'>'+(reg.loading?"Registering…":"Register in MathHub")+'</button></div>'+
+      '</div></details><div class="mathhub-review-actions"><button class="btn" type="button" id="source-draft-test" '+(state.runtime.ready&&!state.sourceCheck.running?"":"disabled")+'>'+(state.sourceCheck.running?"Checking…":"Check with Lean")+'</button><button class="btn btn-primary" type="submit" '+(reg.loading?"disabled":"")+'>'+(reg.loading?"Adding…":"Add to MathHub")+'</button></div>'+
       '<div id="draft-result" class="draft-result">'+
         (state.sourceCheck.error?'<div class="callout bad"><strong>Lean check failed.</strong><br>'+esc(state.sourceCheck.error)+'</div>':"")+
         (state.sourceCheck.result?'<div class="callout '+(state.sourceCheck.result.ok&&!state.sourceCheck.result.contains_sorry?"":"warn")+'"><strong>'+(state.sourceCheck.result.ok&&!state.sourceCheck.result.contains_sorry?"Lean check passed":"Not verified yet")+'</strong><br>'+(state.sourceCheck.result.contains_sorry?"The proof still contains sorry.":"The current formalization was checked in the pinned environment.")+'</div>':"")+
         (reg.error?'<div class="callout bad">'+esc(reg.error)+'</div>':"")+
-        (reg.success?'<div class="callout"><strong>Registered.</strong><br>'+esc(reg.success)+'</div>':"")+
+        (reg.success?'<div class="callout"><strong>Added.</strong><br>'+esc(reg.success)+'</div>':"")+
       '</div></form>'+
     '</section></main>';
 };
