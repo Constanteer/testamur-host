@@ -423,7 +423,10 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
   argumentState.graph={
     ...graph,
     edges:(graph.edges||[]).filter(edge=>edge.evidence_kind!=='module-contains'),
-    nodes:(graph.nodes||[]).map(node=>graphIsCluster(node)?{...node,title:'',lean_name:''}:node),
+    // Persistent Mathlib nodes are drawn below with their own glyph language.
+    // Let the base renderer draw only relation arrows; otherwise its generic
+    // hollow-circle + selected-halo nodes leak through and create bullseyes.
+    nodes:[],
   };
   graphGlobalBaseDraw(canvas);argumentState.graph=original;
 
@@ -438,6 +441,29 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
     const a=graphCanvasState.positions.get(edge.from),b=graphCanvasState.positions.get(edge.to);if(!a||!b)continue;
     const from=graphScreenPoint(a),to=graphScreenPoint(b);
     ctx.beginPath();ctx.moveTo(from.x,from.y);ctx.lineTo(to.x,to.y);ctx.stroke();
+  }
+
+  // Theorems/Claims use compact diamonds instead of generic circles. A selected
+  // theorem is slightly larger and darker, never wrapped in a target-like halo.
+  const ordinaryNodes=(graph.nodes||[]).filter(node=>!graphIsCluster(node));
+  const dense=ordinaryNodes.length>72,showLabels=!dense&&graphCanvasState.view.scale>.72;
+  for(const node of ordinaryNodes){
+    const world=graphCanvasState.positions.get(node.id);if(!world)continue;
+    const p=graphScreenPoint(world),isSelected=node.id===selected,isHover=node.id===hover;
+    const size=isSelected?6.5:(isHover?5.5:4.2);
+    ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.PI/4);
+    ctx.beginPath();ctx.rect(-size/2,-size/2,size,size);
+    if(node.status==='verified'){ctx.fillStyle=palette.accent;ctx.fill();}
+    else{
+      ctx.fillStyle=isSelected?palette.ink:(isHover?'rgba(69,78,86,.86)':'rgba(111,121,129,.62)');
+      ctx.fill();
+    }
+    ctx.restore();
+    if(showLabels||isSelected||isHover){
+      const title=String(node.title||node.lean_name||'Theorem'),max=isSelected||isHover?42:26,label=title.length>max?title.slice(0,max-1)+'…':title;
+      ctx.font=`${isSelected?'600 ':'400 '}11px ui-serif,Georgia,serif`;ctx.textAlign='center';ctx.textBaseline='top';ctx.fillStyle=palette.ink;
+      ctx.fillText(label,p.x,p.y+8);
+    }
   }
 
   for(const node of graph.nodes||[]){
