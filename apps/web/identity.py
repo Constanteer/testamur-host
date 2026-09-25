@@ -703,6 +703,7 @@ class AccountStore:
                     "UPDATE email_verification_tokens SET invalidated_at = ? WHERE token_hash = ?",
                     (now, token_hash),
                 )
+                connection.commit()
                 raise AccountError("verification_token_expired", "This verification link has expired.", 400)
             user_id = record["user_id"]
             connection.execute(
@@ -768,6 +769,7 @@ class AccountStore:
                     "UPDATE email_verification_tokens SET invalidated_at = ? WHERE token_hash = ?",
                     (now, token_hash),
                 )
+                connection.commit()
                 raise AccountError(
                     "verification_code_expired",
                     "This verification code has expired. Request a new email.",
@@ -786,6 +788,7 @@ class AccountStore:
                     "UPDATE email_verification_tokens SET invalidated_at = ? WHERE token_hash = ?",
                     (now, token_hash),
                 )
+                connection.commit()
                 raise AccountError(
                     "verification_code_locked",
                     "Too many incorrect attempts. Request a new verification email.",
@@ -804,6 +807,7 @@ class AccountStore:
                     """,
                     (new_attempts, invalidate_at, token_hash),
                 )
+                connection.commit()
                 if new_attempts >= _EMAIL_CODE_MAX_ATTEMPTS:
                     raise AccountError(
                         "verification_code_locked",
