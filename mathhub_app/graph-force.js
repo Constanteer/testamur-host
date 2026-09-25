@@ -52,6 +52,16 @@ function runGraphForce(frames=90){
 }
 
 const graphForceBaseMerge=mergeWorldChunk;
-mergeWorldChunk=function forceAwareMerge(chunk,options={}){const result=graphForceBaseMerge(chunk,options);runGraphForce(100);return result;};
+mergeWorldChunk=function forceAwareMerge(chunk,options={}){
+  const result=graphForceBaseMerge(chunk,options);
+  // Mathlib source-module browsing has a meaningful hierarchy. Force simulation
+  // destroys that structure and turns parent/child branches into a random cloud.
+  if(!graphGlobalState.libraryMode)runGraphForce(100);
+  return result;
+};
 const graphForceBaseWorld=loadGlobalWorld;
-loadGlobalWorld=async function forceAwareWorld(options={}){const result=await graphForceBaseWorld(options);runGraphForce(130);return result;};
+loadGlobalWorld=async function forceAwareWorld(options={}){
+  const result=await graphForceBaseWorld(options);
+  if(!graphGlobalState.libraryMode)runGraphForce(130);
+  return result;
+};
