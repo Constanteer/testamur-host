@@ -68,8 +68,10 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "_transient_git_failure" in server
     assert "start_import_worker()" in mathhub
     assert "start_library_warmup()" in mathhub
-    assert "start_starter_claim_bootstrap()" in mathhub
-    assert "/api/starter-status" in mathhub
+    assert "ensure_global_library_scan" in mathhub
+    assert "/api/library/world" in mathhub
+    assert "/api/library/cluster" in mathhub
+    assert 'MATHHUB_AUTO_STARTER_CLAIMS","0"' in mathhub
     app = read(MATHHUB / "app.js")
     library = read(MATHHUB / "library-browser-ui.js")
     server = read(MATHHUB / "server.py")
@@ -82,8 +84,9 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "MathHub immediately" in start
     graph_global = read(MATHHUB / "graph-global.js")
     graph_css = read(MATHHUB / "graph-global.css")
-    assert "Preparing starter mathematics" in graph_global
-    assert "scheduleStarterGraphPoll" in graph_global
+    assert "Mathlib, directly from the pinned environment." in graph_global
+    assert "/api/library/world" in graph_global
+    assert "/api/library/cluster" in graph_global
     assert ".global-starter-empty" in graph_css
 
 
@@ -99,4 +102,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 407439bf0f888ef90c9b3c96ec8e193cac104efa"
+    assert marker == "Constanteer/Mathub main @ 98891e3803b8e2cc87635725fc0a1553ea46da37"
