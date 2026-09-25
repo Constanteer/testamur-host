@@ -10,7 +10,7 @@ const graphGlobalState={
   libraryContextPrunedCount:0,
   dependencyMode:false,dependencyRoot:'',dependencyDetails:new Map(),dependencyLoading:new Set(),dependencyExpanded:new Set(),dependencyBulkLoading:false,dependencyPrefetching:false,dependencyPrefetchedCount:0,dependencyEdgeFilter:'all',
   needsInitialFit:true,pendingFocusIds:[],
-  theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),theoremImporting:new Set(),
+  theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),
 };
 let graphLibraryPollTimer=null;
 
@@ -445,29 +445,6 @@ async function randomLibraryTheorem(){
   }catch(error){
     graphGlobalState.libraryStatus={...(graphGlobalState.libraryStatus||{}),error:error?.message||String(error)};
     render();
-  }
-}
-
-async function importLibraryTheorem(name){
-  name=String(name||'').trim();if(!name||graphGlobalState.theoremImporting.has(name))return;
-  graphGlobalState.theoremImporting.add(name);render();
-  try{
-    const result=await apiJson('/api/claims/import',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({declaration_name:name,imports:['Mathlib']}),
-    });
-    const id=`LIB:${name}`,node=graphGlobalState.nodes.get(id);
-    if(node){
-      node.registered=true;
-      node.claim_id=result.claim_id||result.public_id||node.claim_id||null;
-      graphGlobalState.nodes.set(id,node);
-    }
-    const detail=graphGlobalState.theoremDetails.get(name);
-    if(detail)graphGlobalState.theoremDetails.set(name,{...detail,registered:true,claim_id:result.claim_id||result.public_id||null});
-  }catch(error){
-    graphGlobalState.theoremErrors.set(name,error?.message||String(error));
-  }finally{
-    graphGlobalState.theoremImporting.delete(name);render();
   }
 }
 
@@ -943,7 +920,7 @@ function globalInspector(node){
     const copy=moduleCluster
       ? 'Double-click expands this module in place. Older ancestor levels are progressively compacted so this branch can grow without leaving the whole path open.'
       : library
-        ? 'Read-only theorems from the installed Mathlib source index. Expand freely; nothing becomes a Claim until you explicitly import it.'
+        ? 'Read-only theorems from the installed Mathlib source index. Expand freely; browsing never creates a Claim. Materialize only when you explicitly need a durable workspace record.'
         : (namespace?'This deterministic fallback comes from the Lean declaration namespace.':'This curated mathematical field groups durable MathHub Claims.');
     const enter=moduleCluster&&path!=='(root)'?`<button class="btn" data-open-library-module="${esc(path)}" ${graphGlobalState.openingModulePath===path?'disabled':''}>${graphGlobalState.openingModulePath===path?'Entering…':'Enter module'}</button>`:'';
     return `<div class="global-inspector-kind">${esc(kind)}</div><h2>${esc(path==='(root)'?'Mathlib':path)}</h2><strong class="global-claim-count">${Number(node.claim_count||0).toLocaleString()} ${countLabel}</strong><p>${esc(copy)}</p>${hidden?`<div class="global-module-limit">Showing a bounded branch · ${hidden.toLocaleString()} more available through deeper modules or search.</div>`:''}<button class="btn btn-primary" data-expand-global-area="${esc(node.id)}">${esc(action)}</button>${enter}`;
@@ -993,7 +970,7 @@ renderGraph=function renderPersistentGlobalGraph(){
       <div class="global-starter-worker-state"><strong>State: ${esc(scanState)}</strong><small>${attempts? `attempt ${attempts}` : 'waiting to start'}</small></div>
       ${error?`<details class="global-starter-detail" open><summary>Technical detail</summary><code>${esc(error)}</code></details>`:''}
       <div class="global-starter-actions"><button class="btn btn-primary" data-refresh-library-world>Refresh now</button><a class="btn" href="./?view=library">Open Math library</a></div>
-      <small>After this source scan, Connections and Math library read SQLite. Lean runs only when you explicitly import or verify a theorem.</small>
+      <small>After this source scan, Connections and Math library read SQLite. Lean runs only for dependency inspection or formal verification; ordinary browsing stays on the source index.</small>
     </section></main>`;
   }
   const selected=graphGlobalNode(state.graphSelected)||graph.nodes?.[0],nonClusters=(graph.nodes||[]).filter(node=>!graphIsCluster(node)).length,focus=!graphGlobalState.libraryMode&&typeof graphProofFocusHtml==='function'?graphProofFocusHtml():'',trail=!graphGlobalState.libraryMode&&typeof graphTrailHtml==='function'?graphTrailHtml():'';
