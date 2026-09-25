@@ -72,6 +72,7 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "/api/library/world" in mathhub
     assert "last_error" in mathhub
     assert "/api/library/cluster" in mathhub
+    assert "/api/library/module" in mathhub
     assert "/api/library/theorem" in mathhub
     assert "/api/library/random" in mathhub
     assert 'MATHHUB_AUTO_STARTER_CLAIMS","0"' in mathhub
@@ -91,9 +92,13 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "MathHub immediately" in start
     graph_global = read(MATHHUB / "graph-global.js")
     graph_css = read(MATHHUB / "graph-global.css")
-    assert "Mathlib, directly from the pinned environment." in graph_global
+    assert "Explore Mathlib by module." in graph_global
     assert "/api/library/world" in graph_global
     assert "/api/library/cluster" in graph_global
+    assert "/api/library/module?path=" in graph_global
+    assert "top-level modules" in graph_global
+    assert "Mathlib module" in graph_global
+    assert "mathhub-global-world-v3" in graph_global
     assert "Random theorem" in graph_global
     assert "Import as Claim" in graph_global
     assert "source index" in graph_global
@@ -119,4 +124,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ 35c9e7dd6944c278f4fccb0dfdca25307623355a"
+    assert marker == "Constanteer/Mathub main @ 52cc777174b57819dbec028f71e82b959c6163e2"
