@@ -194,11 +194,7 @@
     });
   }
 
-  const observer = new MutationObserver((records) => {
-    if (onlyGuideMutations(records)) return;
-    queueRender();
-  });
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  addEventListener('testamur:rendered', queueRender);
   addEventListener('popstate', queueRender);
   addEventListener('DOMContentLoaded', queueRender);
 })();
