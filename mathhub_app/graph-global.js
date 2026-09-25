@@ -8,7 +8,7 @@ const graphGlobalState={
   libraryMode:false,libraryIndexed:false,libraryStatus:null,libraryTheoremCount:0,
   libraryModulePath:'',libraryModuleHiddenCount:0,libraryModuleError:'',openingModulePath:'',
   libraryContextPrunedCount:0,
-  dependencyMode:false,dependencyRoot:'',dependencyDetails:new Map(),dependencyLoading:new Set(),dependencyExpanded:new Set(),
+  dependencyMode:false,dependencyRoot:'',dependencyDetails:new Map(),dependencyLoading:new Set(),dependencyExpanded:new Set(),dependencyBulkLoading:false,
   needsInitialFit:true,pendingFocusIds:[],
   theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),theoremImporting:new Set(),
 };
@@ -123,6 +123,26 @@ async function expandLibraryDependencyNode(name,{refresh=false}={}){
   }
 }
 
+async function expandDependencyFrontier(){
+  if(!graphGlobalState.dependencyMode||graphGlobalState.dependencyBulkLoading)return;
+  const visible=graphGlobalGraph().nodes.filter(node=>graphIsLibraryTheorem(node));
+  const frontier=visible
+    .map(node=>dependencyNodeName(node))
+    .filter(name=>name&&name!==graphGlobalState.dependencyRoot&&!graphGlobalState.dependencyExpanded.has(name))
+    .slice(0,12);
+  if(!frontier.length)return;
+  graphGlobalState.dependencyBulkLoading=true;render();
+  try{
+    // Keep Lean pressure bounded. The dependency cache makes revisits cheap.
+    for(let i=0;i<frontier.length;i+=2){
+      await Promise.all(frontier.slice(i,i+2).map(name=>expandLibraryDependencyNode(name)));
+    }
+  }finally{
+    graphGlobalState.dependencyBulkLoading=false;render();
+    requestAnimationFrame(()=>fitGlobalGraphNodes(graphGlobalGraph().nodes.map(node=>node.id),{maxScale:.95,padding:92}));
+  }
+}
+
 async function openLibraryDependencyGraph(name){
   name=String(name||'').trim();if(!name)return;
   if(typeof libraryBrowserState!=='undefined')libraryBrowserState.open=false;
@@ -130,7 +150,7 @@ async function openLibraryDependencyGraph(name){
   graphGlobalState.loaded=true;graphGlobalState.loading=false;
   graphGlobalState.libraryMode=true;graphGlobalState.libraryIndexed=true;
   graphGlobalState.dependencyMode=true;graphGlobalState.dependencyRoot=name;
-  graphGlobalState.dependencyDetails.clear();graphGlobalState.dependencyLoading.clear();graphGlobalState.dependencyExpanded.clear();
+  graphGlobalState.dependencyDetails.clear();graphGlobalState.dependencyLoading.clear();graphGlobalState.dependencyExpanded.clear();graphGlobalState.dependencyBulkLoading=false;
   graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();
   graphGlobalState.libraryModulePath='';graphGlobalState.libraryModuleHiddenCount=0;graphGlobalState.libraryContextPrunedCount=0;
   const rootId=`LIB:${name}`;
@@ -405,6 +425,7 @@ function scheduleLibraryGraphPoll(){
 
 async function loadGlobalWorld({reset=false}={}){
   if(graphGlobalState.loading)return;
+  graphGlobalState.dependencyMode=false;graphGlobalState.dependencyRoot='';graphGlobalState.dependencyBulkLoading=false;
   if(graphGlobalState.loaded&&!reset){argumentState.graph=graphGlobalGraph();render();return;}
   graphGlobalState.loading=true;
   try{
@@ -437,6 +458,7 @@ function parentLibraryModulePath(path){
 async function openLibraryModule(modulePath){
   modulePath=String(modulePath||'').trim();
   if(!modulePath||graphGlobalState.loading)return;
+  graphGlobalState.dependencyMode=false;graphGlobalState.dependencyRoot='';graphGlobalState.dependencyBulkLoading=false;
   graphGlobalState.loading=true;
   graphGlobalState.openingModulePath=modulePath;
   graphGlobalState.libraryModuleError='';
@@ -884,7 +906,7 @@ renderGraph=function renderPersistentGlobalGraph(){
       ? `${Number(graphGlobalState.libraryTheoremCount||0).toLocaleString()} Mathlib theorems indexed`
       : `${Number(graphGlobalState.claimCount).toLocaleString()} Claims represented`;
   const actions=dependency
-    ? `<a class="btn" href="./?view=library">Math library</a><button class="btn" data-back-library-modules>Module browser</button><button class="btn" data-reset-global-world>Reset dependency graph</button>`
+    ? `<button class="btn btn-primary" data-expand-dependency-frontier ${graphGlobalState.dependencyBulkLoading?'disabled':''}>${graphGlobalState.dependencyBulkLoading?'Expanding…':'Expand next level'}</button><a class="btn" href="./?view=library">Math library</a><button class="btn" data-back-library-modules>Module browser</button><button class="btn" data-reset-global-world>Reset dependency graph</button>`
     : graphGlobalState.libraryMode
       ? `${graphGlobalState.libraryModulePath?'<button class="btn" data-library-module-back>Back</button>':''}<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button><button class="btn" data-reset-global-world>Reset world</button>`
       : `<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button><button class="btn" data-reset-global-world>Reset world</button>`;
@@ -915,6 +937,7 @@ bind=function bindPersistentGlobalGraph(){
   }
   document.querySelector('[data-reset-global-world]')?.addEventListener('click',()=>graphGlobalState.dependencyMode?openLibraryDependencyGraph(graphGlobalState.dependencyRoot):loadGlobalWorld({reset:true}));
   document.querySelector('[data-back-library-modules]')?.addEventListener('click',()=>{graphGlobalState.dependencyMode=false;graphGlobalState.dependencyRoot='';loadGlobalWorld({reset:true});});
+  document.querySelector('[data-expand-dependency-frontier]')?.addEventListener('click',()=>void expandDependencyFrontier());
   document.querySelector('[data-library-module-root]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
   document.querySelector('[data-library-module-back]')?.addEventListener('click',()=>openLibraryModuleParent());
   document.querySelectorAll('[data-library-module-path]').forEach(button=>button.addEventListener('click',()=>openLibraryModule(button.dataset.libraryModulePath)));
