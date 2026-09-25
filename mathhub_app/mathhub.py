@@ -23,6 +23,7 @@ from import_tasks import ImportTaskStore
 from namespace_browser import (
     ensure_global_library_scan,
     global_library_cluster,
+    global_library_module,
     global_library_status,
     global_library_world,
     library_theorem_detail,
@@ -509,6 +510,9 @@ class Handler(core.Handler):
             if path=="/api/library/cluster":
                 q=parse_qs(p.query);ns=str((q.get("namespace") or [""])[0]);limit=iparam(q,"limit",100)
                 self.json_response(200,global_library_cluster(ns,limit=limit));return
+            if path=="/api/library/module":
+                q=parse_qs(p.query);module=str((q.get("path") or [""])[0]);limit=iparam(q,"limit",36)
+                self.json_response(200,global_library_module(module,limit=limit));return
             if path=="/api/library/theorem":
                 q=parse_qs(p.query);name=str((q.get("name") or [""])[0]);refresh=first(q,"refresh","0") in {"1","true","yes"}
                 self.json_response(200,publicize(library_theorem_detail(name,refresh=refresh)));return

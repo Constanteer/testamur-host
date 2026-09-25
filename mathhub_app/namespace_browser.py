@@ -514,44 +514,195 @@ def _top_namespace(name: str) -> str:
     return name.split(".", 1)[0] if "." in name else "(root)"
 
 
+def _module_path_from_source(source_module: str) -> str:
+    module = str(source_module or "").strip()
+    if module == "Mathlib":
+        return ""
+    return module.removeprefix("Mathlib.")
+
+
 def global_library_world() -> dict[str, Any]:
+    """Return a small first layer grouped by Mathlib source modules.
+
+    Lean namespaces are excellent identifiers but poor first-screen navigation:
+    current Mathlib has thousands of top-level namespace roots. Source modules
+    provide a much smaller, human-recognizable hierarchy such as Algebra,
+    Analysis, Topology and NumberTheory.
+    """
     status = global_library_status()
     environment_hash = str(status.get("environment_hash") or "")
     if not status.get("indexed") or not environment_hash:
         return {"ok": True, "indexed": False, "nodes": [], "edges": [], "theorem_count": 0, "cluster_count": 0}
+
     with core.FORMAL.connect() as conn:
         _ensure_global_cache_schema(conn)
         rows = conn.execute(
-            """SELECT lean_name FROM library_global_theorems
-               WHERE environment_hash=? ORDER BY lean_name""",
+            """SELECT source_module FROM library_global_theorems
+               WHERE environment_hash=?""",
             (environment_hash,),
         ).fetchall()
+
     counts: dict[str, int] = {}
+    root_count = 0
     for row in rows:
-        key = _top_namespace(str(row["lean_name"]))
-        counts[key] = counts.get(key, 0) + 1
+        module_path = _module_path_from_source(str(row["source_module"] or ""))
+        if not module_path:
+            root_count += 1
+            continue
+        root = module_path.split(".", 1)[0]
+        counts[root] = counts.get(root, 0) + 1
+
     nodes = [
         {
-            "id": f"LIBNS:{namespace}",
+            "id": f"LIBMOD:{module}",
             "kind": "cluster",
-            "cluster_source": "mathlib-library",
-            "cluster_key": f"libns:{namespace}",
-            "namespace_path": namespace,
-            "title": namespace,
+            "cluster_source": "mathlib-module",
+            "cluster_key": f"libmod:{module}",
+            "module_path": module,
+            "namespace_path": module,
+            "title": module,
             "claim_count": count,
             "library_count": count,
         }
-        for namespace, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        for module, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
+    if root_count:
+        nodes.append(
+            {
+                "id": "LIBMOD:(root)",
+                "kind": "cluster",
+                "cluster_source": "mathlib-module",
+                "cluster_key": "libmod:(root)",
+                "module_path": "(root)",
+                "namespace_path": "(root)",
+                "title": "(root)",
+                "claim_count": root_count,
+                "library_count": root_count,
+            }
+        )
+
     return {
         "ok": True,
         "indexed": True,
         "library_mode": True,
+        "hierarchy": "module",
         "nodes": nodes,
         "edges": [],
-        "theorem_count": sum(counts.values()),
+        "theorem_count": len(rows),
         "claim_count": 0,
         "cluster_count": len(nodes),
+    }
+
+
+def global_library_module(module_path: str, *, limit: int = 36) -> dict[str, Any]:
+    """Expand one Mathlib source-module node by one level.
+
+    The response is intentionally bounded so the canvas never turns the entire
+    library into an unreadable hairball. Every hidden theorem remains available
+    through search and Random theorem.
+    """
+    status = global_library_status()
+    environment_hash = str(status.get("environment_hash") or "")
+    if not status.get("indexed") or not environment_hash:
+        return {"ok": True, "indexed": False, "nodes": [], "edges": []}
+
+    module_path = str(module_path or "").strip()
+    prefix = "" if module_path == "(root)" else module_path
+    full_prefix = "Mathlib" if not prefix else f"Mathlib.{prefix}"
+    limit = max(8, min(int(limit), 48))
+
+    with core.FORMAL.connect() as conn:
+        _ensure_global_cache_schema(conn)
+        if prefix:
+            rows = conn.execute(
+                """SELECT lean_name,namespace,short_name,source_module
+                   FROM library_global_theorems
+                   WHERE environment_hash=?
+                     AND (source_module=? OR source_module LIKE ?)
+                   ORDER BY source_module,lean_name""",
+                (environment_hash, full_prefix, f"{full_prefix}.%"),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT lean_name,namespace,short_name,source_module
+                   FROM library_global_theorems
+                   WHERE environment_hash=? AND source_module='Mathlib'
+                   ORDER BY lean_name""",
+                (environment_hash,),
+            ).fetchall()
+
+    child_counts: dict[str, int] = {}
+    direct: list[str] = []
+    for row in rows:
+        source_module = str(row["source_module"] or "")
+        source_path = _module_path_from_source(source_module)
+        if prefix:
+            if source_path == prefix:
+                direct.append(str(row["lean_name"]))
+                continue
+            rest = source_path[len(prefix) + 1 :] if source_path.startswith(prefix + ".") else source_path
+        else:
+            rest = source_path
+        if "." in rest:
+            child = rest.split(".", 1)[0]
+            child_path = f"{prefix}.{child}" if prefix else child
+            child_counts[child_path] = child_counts.get(child_path, 0) + 1
+        elif rest:
+            child_path = f"{prefix}.{rest}" if prefix else rest
+            child_counts[child_path] = child_counts.get(child_path, 0) + 1
+        else:
+            direct.append(str(row["lean_name"]))
+
+    ordered_children = sorted(child_counts.items(), key=lambda item: (-item[1], item[0]))
+    child_slice = ordered_children[:limit]
+    nodes: list[dict[str, Any]] = [
+        {
+            "id": f"LIBMOD:{child}",
+            "kind": "cluster",
+            "cluster_source": "mathlib-module",
+            "cluster_key": f"libmod:{child}",
+            "module_path": child,
+            "namespace_path": child,
+            "title": child.split(".")[-1],
+            "claim_count": count,
+            "library_count": count,
+            "parent_cluster_id": f"LIBMOD:{module_path}",
+        }
+        for child, count in child_slice
+    ]
+
+    remaining = max(0, limit - len(nodes))
+    theorem_names = direct[:remaining]
+    registered = _registered_names(theorem_names, environment_hash)
+    nodes.extend(
+        {
+            "id": f"LIB:{name}",
+            "kind": "library-theorem",
+            "lean_name": name,
+            "title": name.rsplit(".", 1)[-1],
+            "namespace_path": name.rsplit(".", 1)[0] if "." in name else "",
+            "parent_cluster_id": f"LIBMOD:{module_path}",
+            "status": "library",
+            "registered": name in registered,
+            "claim_id": registered.get(name),
+        }
+        for name in theorem_names
+    )
+
+    total_children = len(ordered_children)
+    total_direct = len(direct)
+    return {
+        "ok": True,
+        "indexed": True,
+        "library_mode": True,
+        "hierarchy": "module",
+        "module_path": module_path,
+        "nodes": nodes,
+        "edges": [],
+        "child_module_count": total_children,
+        "direct_theorem_count": total_direct,
+        "shown_count": len(nodes),
+        "hidden_count": max(0, total_children + total_direct - len(nodes)),
     }
 
 

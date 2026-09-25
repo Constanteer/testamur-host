@@ -5,20 +5,21 @@
 const graphGlobalState={
   loaded:false,loading:false,nodes:new Map(),edges:new Map(),
   expandedAreas:new Set(),expandedClaims:new Set(),claimCount:0,clusterCount:0,
-  libraryMode:false,libraryIndexed:false,libraryStatus:null,
+  libraryMode:false,libraryIndexed:false,libraryStatus:null,libraryTheoremCount:0,
   theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),theoremImporting:new Set(),
 };
 let graphLibraryPollTimer=null;
 
 function graphGlobalEdgeKey(edge){return `${edge.evidence_kind||'uses'}:${edge.from}:${edge.to}`;}
 function graphGlobalGraph(){return {
-  mode:'world',persistent:true,session_id:'mathhub-global-world-v2',root:null,depth:argumentState.depth||1,
+  mode:'world',persistent:true,session_id:'mathhub-global-world-v3',root:null,depth:argumentState.depth||1,
   nodes:[...graphGlobalState.nodes.values()],edges:[...graphGlobalState.edges.values()],
   claim_count:graphGlobalState.claimCount,cluster_count:graphGlobalState.clusterCount,
 };}
 function graphIsCluster(nodeOrId){const id=typeof nodeOrId==='string'?nodeOrId:nodeOrId?.id;return String(id||'').startsWith('AREA-')||nodeOrId?.kind==='cluster';}
 function graphGlobalNode(id){return graphGlobalState.nodes.get(id)||null;}
 function graphClusterKey(node){
+  if(node?.cluster_source==='mathlib-module')return `libmod:${node?.module_path||node?.title||''}`;
   if(node?.cluster_source==='mathlib-library')return `libns:${node?.namespace_path||node?.title||''}`;
   return node?.cluster_key||((node?.cluster_source==='curated-area')?`area:${node.title||''}`:`ns:${node?.namespace_path||node?.title||''}`);
 }
@@ -152,7 +153,7 @@ async function loadGlobalWorld({reset=false}={}){
     }
     graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();
     for(const node of world.nodes||[])graphGlobalState.nodes.set(node.id,node);mergeWorldEdges(world.edges||[]);
-    graphGlobalState.clusterCount=Number(world.cluster_count||0);graphGlobalState.loaded=true;
+    graphGlobalState.clusterCount=Number(world.cluster_count||0);graphGlobalState.libraryTheoremCount=Number(world.theorem_count||0);graphGlobalState.loaded=true;
     argumentState.graph=graphGlobalGraph();graphCanvasState.key='';graphCanvasState.positions=new Map();state.graphSelected=(world.nodes||[])[0]?.id||'';
   }finally{graphGlobalState.loading=false;render();}
 }
@@ -162,10 +163,15 @@ async function expandGlobalArea(clusterId){
   const key=graphClusterKey(cluster);if(!key)return;
   graphGlobalState.loading=true;state.graphSelected=clusterId;render();
   try{
-    const chunk=cluster.cluster_source==='mathlib-library'
-      ? await apiJson(`/api/library/cluster?namespace=${encodeURIComponent(cluster.namespace_path||cluster.title||'')}&limit=100`)
-      : await apiJson(`/api/graph/cluster?key=${encodeURIComponent(key)}&limit=100`);
-    mergeWorldChunk(chunk,{anchorId:clusterId,radius:105});graphGlobalState.expandedAreas.add(key);
+    const chunk=cluster.cluster_source==='mathlib-module'
+      ? await apiJson(`/api/library/module?path=${encodeURIComponent(cluster.module_path||cluster.title||'')}&limit=36`)
+      : cluster.cluster_source==='mathlib-library'
+        ? await apiJson(`/api/library/cluster?namespace=${encodeURIComponent(cluster.namespace_path||cluster.title||'')}&limit=36`)
+        : await apiJson(`/api/graph/cluster?key=${encodeURIComponent(key)}&limit=100`);
+    if(Number.isFinite(Number(chunk?.hidden_count))){
+      graphGlobalState.nodes.set(clusterId,{...cluster,expansion_hidden_count:Number(chunk.hidden_count||0),expansion_shown_count:Number(chunk.shown_count||0)});
+    }
+    mergeWorldChunk(chunk,{anchorId:clusterId,radius:145});graphGlobalState.expandedAreas.add(key);
   }finally{graphGlobalState.loading=false;argumentState.graph=graphGlobalGraph();render();}
 }
 
@@ -187,15 +193,51 @@ loadGraph=async function persistentGlobalLoad(root=''){
   if(graphIsCluster(node||root))await expandGlobalArea(root);else await expandGlobalClaim(root);
 };
 
-graphCanvasKey=function globalCanvasKey(graph){return graph?.persistent?'mathhub-global-world-v2':`local:${graph?.root||''}`;};
+graphCanvasKey=function globalCanvasKey(graph){return graph?.persistent?'mathhub-global-world-v3':`local:${graph?.root||''}`;};
 const graphGlobalBaseLayout=buildCanvasLayout;
 buildCanvasLayout=function globalInitialLayout(graph){
   if(!graph?.persistent)return graphGlobalBaseLayout(graph);
   const positions=new Map(),clusters=(graph.nodes||[]).filter(graphIsCluster),claims=(graph.nodes||[]).filter(node=>!graphIsCluster(node));
   const golden=Math.PI*(3-Math.sqrt(5));
   clusters.sort((a,b)=>Number(b.claim_count||0)-Number(a.claim_count||0)||String(a.title).localeCompare(String(b.title)));
-  clusters.forEach((node,index)=>{const radius=index?190*Math.sqrt(index):0,angle=index*golden;positions.set(node.id,{x:Math.cos(angle)*radius,y:Math.sin(angle)*radius});});
-  for(const node of claims){const parent=positions.get(node.parent_cluster_id),i=claims.indexOf(node),angle=i*golden+stableAngle(node.id),anchor=parent||{x:0,y:0};positions.set(node.id,{x:anchor.x+Math.cos(angle)*(95+16*Math.sqrt(i)),y:anchor.y+Math.sin(angle)*(95+16*Math.sqrt(i))});}
+  if(graphGlobalState.libraryMode){
+    const roots=clusters.filter(node=>!node.parent_cluster_id),children=clusters.filter(node=>node.parent_cluster_id);
+    const rings=[
+      {count:8,radius:175},
+      {count:14,radius:315},
+      {count:22,radius:465},
+      {count:32,radius:620},
+    ];
+    let cursor=0;
+    for(const ring of rings){
+      const slice=roots.slice(cursor,cursor+ring.count);if(!slice.length)break;
+      slice.forEach((node,index)=>{
+        const angle=(-Math.PI/2)+(index/Math.max(1,slice.length))*Math.PI*2+(cursor?0.12:0);
+        positions.set(node.id,{x:Math.cos(angle)*ring.radius,y:Math.sin(angle)*ring.radius});
+      });
+      cursor+=slice.length;
+    }
+    roots.slice(cursor).forEach((node,index)=>{
+      const radius=760+90*Math.floor(index/36),angle=(index%36)/36*Math.PI*2;
+      positions.set(node.id,{x:Math.cos(angle)*radius,y:Math.sin(angle)*radius});
+    });
+    const siblingIndex=new Map();
+    for(const node of children){
+      const parent=positions.get(node.parent_cluster_id)||{x:0,y:0};
+      const i=siblingIndex.get(node.parent_cluster_id)||0;siblingIndex.set(node.parent_cluster_id,i+1);
+      const angle=i*golden+stableAngle(node.id)*.12,radius=125+26*Math.sqrt(i);
+      positions.set(node.id,{x:parent.x+Math.cos(angle)*radius,y:parent.y+Math.sin(angle)*radius});
+    }
+  }else{
+    clusters.forEach((node,index)=>{const radius=index?190*Math.sqrt(index):0,angle=index*golden;positions.set(node.id,{x:Math.cos(angle)*radius,y:Math.sin(angle)*radius});});
+  }
+  const claimSiblingIndex=new Map();
+  for(const node of claims){
+    const parent=positions.get(node.parent_cluster_id)||{x:0,y:0};
+    const i=claimSiblingIndex.get(node.parent_cluster_id)||0;claimSiblingIndex.set(node.parent_cluster_id,i+1);
+    const angle=i*golden+stableAngle(node.id),radius=92+18*Math.sqrt(i);
+    positions.set(node.id,{x:parent.x+Math.cos(angle)*radius,y:parent.y+Math.sin(angle)*radius});
+  }
   return positions;
 };
 
@@ -207,22 +249,31 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
   graphGlobalBaseDraw(canvas);argumentState.graph=original;
   const ctx=canvas.getContext('2d'),palette=graphCanvasPalette(canvas),selected=state.graphSelected;
   ctx.save();
-  for(const node of graph.nodes||[]){if(!graphIsCluster(node))continue;const world=graphCanvasState.positions.get(node.id);if(!world)continue;const p=graphScreenPoint(world),r=Math.max(18,Math.min(46,18+Math.sqrt(Number(node.claim_count||1))*2.1))*Math.max(.72,Math.min(1.25,graphCanvasState.view.scale));
-    ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.fillStyle=node.cluster_source==='curated-area'?'rgba(61,91,121,.055)':'rgba(75,105,95,.055)';ctx.fill();ctx.strokeStyle=node.id===selected?palette.ink:(node.cluster_source==='curated-area'?'rgba(61,91,121,.30)':'rgba(75,105,95,.28)');ctx.lineWidth=node.id===selected?2:1.2;ctx.stroke();
-    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=palette.ink;ctx.font=`600 ${node.id===selected?13:11}px ui-serif, Georgia, serif`;ctx.fillText(String(node.title||'Cluster').split('.').slice(-1)[0].slice(0,34),p.x,p.y-2);ctx.font='9px ui-sans-serif,system-ui,sans-serif';ctx.fillStyle=palette.muted;ctx.fillText(`${node.claim_count||0} ${graphGlobalState.libraryMode?'theorems':'claims'}`,p.x,p.y+13);
+  for(const node of graph.nodes||[]){if(!graphIsCluster(node))continue;const world=graphCanvasState.positions.get(node.id);if(!world)continue;
+    const p=graphScreenPoint(world),count=Math.max(1,Number(node.claim_count||1)),baseRadius=graphGlobalState.libraryMode?16+Math.log10(count+1)*5.4:18+Math.sqrt(count)*2.1,r=Math.max(18,Math.min(graphGlobalState.libraryMode?39:46,baseRadius))*Math.max(.76,Math.min(1.18,graphCanvasState.view.scale));
+    const libraryCluster=graphGlobalState.libraryMode&&(node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library');
+    ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.fillStyle=libraryCluster?'rgba(79,96,112,.060)':(node.cluster_source==='curated-area'?'rgba(61,91,121,.055)':'rgba(75,105,95,.055)');ctx.fill();
+    ctx.strokeStyle=node.id===selected?palette.ink:(libraryCluster?'rgba(70,86,102,.34)':(node.cluster_source==='curated-area'?'rgba(61,91,121,.30)':'rgba(75,105,95,.28)'));ctx.lineWidth=node.id===selected?2:1.15;ctx.stroke();
+    if(graphCanvasState.view.scale>.42){
+      ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=palette.ink;ctx.font=`600 ${node.id===selected?12.5:10.5}px ui-sans-serif,system-ui,sans-serif`;ctx.fillText(String(node.title||'Cluster').split('.').slice(-1)[0].slice(0,24),p.x,p.y-3);
+      if(graphCanvasState.view.scale>.58){ctx.font='8.5px ui-sans-serif,system-ui,sans-serif';ctx.fillStyle=palette.muted;ctx.fillText(`${count.toLocaleString()} ${graphGlobalState.libraryMode?'theorems':'claims'}`,p.x,p.y+12);}
+    }
   }
   ctx.restore();
 };
 
 function globalInspector(node){
-  if(!node)return '<div class="global-inspector-empty">Select a namespace, theorem or Claim.</div>';
+  if(!node)return '<div class="global-inspector-empty">Select a module or theorem.</div>';
   if(graphIsCluster(node)){
-    const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),library=node.cluster_source==='mathlib-library',namespace=node.cluster_source==='lean-namespace',kind=library?'Mathlib namespace':(namespace?'Lean namespace':'Curated field'),path=node.namespace_path||node.title,action=expanded?'Expand again':(library||namespace?'Expand namespace':'Expand field');
+    const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),library=graphGlobalState.libraryMode&&(node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library'),moduleCluster=node.cluster_source==='mathlib-module',namespace=node.cluster_source==='lean-namespace',kind=library?(moduleCluster?'Mathlib module':'Mathlib namespace'):(namespace?'Lean namespace':'Curated field'),path=node.module_path||node.namespace_path||node.title,action=expanded?'Expand again':(moduleCluster?'Expand module':(library||namespace?'Expand namespace':'Expand field'));
     const countLabel=library?'theorems':'Claims';
-    const copy=library
-      ? 'Read-only theorems from the pinned Mathlib environment. Expand freely; nothing becomes a Claim until you explicitly import it.'
-      : (namespace?'This deterministic fallback comes from the Lean declaration namespace. Expanding it reveals the next namespace level before theorem detail when available.':'This explicit mathematical area overrides namespace grouping. Expanding it reveals real Claims while the field remains as an anchor.');
-    return `<div class="global-inspector-kind">${esc(kind)}</div><h2>${esc(path)}</h2><strong class="global-claim-count">${Number(node.claim_count||0).toLocaleString()} ${countLabel}</strong><p>${esc(copy)}</p><button class="btn btn-primary" data-expand-global-area="${esc(node.id)}">${esc(action)}</button>`;
+    const hidden=Number(node.expansion_hidden_count||0);
+    const copy=moduleCluster
+      ? 'A source-module branch of the installed Mathlib library. Expand one level at a time; browsing never creates Claims or runs Lean.'
+      : library
+        ? 'Read-only theorems from the installed Mathlib source index. Expand freely; nothing becomes a Claim until you explicitly import it.'
+        : (namespace?'This deterministic fallback comes from the Lean declaration namespace.':'This curated mathematical field groups durable MathHub Claims.');
+    return `<div class="global-inspector-kind">${esc(kind)}</div><h2>${esc(path)}</h2><strong class="global-claim-count">${Number(node.claim_count||0).toLocaleString()} ${countLabel}</strong><p>${esc(copy)}</p>${hidden?`<div class="global-module-limit">Showing a bounded branch · ${hidden.toLocaleString()} more available through deeper modules or search.</div>`:''}<button class="btn btn-primary" data-expand-global-area="${esc(node.id)}">${esc(action)}</button>`;
   }
   if(graphIsLibraryTheorem(node)){
     const name=String(node.lean_name||node.title||''),detail=graphGlobalState.theoremDetails.get(name),loading=graphGlobalState.theoremLoading.has(name),error=graphGlobalState.theoremErrors.get(name),importing=graphGlobalState.theoremImporting.has(name),registered=Boolean(node.registered||detail?.registered),claimId=node.claim_id||detail?.claim_id||'';
@@ -267,14 +318,14 @@ renderGraph=function renderPersistentGlobalGraph(){
     </section></main>`;
   }
   const selected=graphGlobalNode(state.graphSelected)||graph.nodes?.[0],nonClusters=(graph.nodes||[]).filter(node=>!graphIsCluster(node)).length,focus=!graphGlobalState.libraryMode&&typeof graphProofFocusHtml==='function'?graphProofFocusHtml():'',trail=!graphGlobalState.libraryMode&&typeof graphTrailHtml==='function'?graphTrailHtml():'';
-  const title=graphGlobalState.libraryMode?'Mathlib, directly from the pinned environment.':'Mathematics, all in one field of view.';
+  const title=graphGlobalState.libraryMode?'Explore Mathlib by module.':'Mathematics, all in one field of view.';
   const copy=graphGlobalState.libraryMode
-    ? 'This is read-only library substrate, not a set of MathHub Claims. Expand namespaces to browse theorems; import only what you actually want to track.'
+    ? 'Start from a source module, unfold only the branch you care about, then open any theorem. Search and Random theorem remain the fastest way to jump across the library.'
     : 'Curated areas take priority; unclassified formal mathematics organizes itself deterministically by Lean namespace. Double-click clusters to unfold the hierarchy, then Claims to grow Proof neighborhoods.';
   const represented=graphGlobalState.libraryMode
-    ? `${[...graphGlobalState.nodes.values()].filter(node=>graphIsCluster(node)).reduce((sum,node)=>sum+Number(node.library_count||0),0).toLocaleString()} Mathlib theorems indexed`
+    ? `${Number(graphGlobalState.libraryTheoremCount||0).toLocaleString()} Mathlib theorems indexed`
     : `${Number(graphGlobalState.claimCount).toLocaleString()} Claims represented`;
-  return `<main class="global-graph-page"><div class="global-graph-top"><div><div class="eyebrow">${graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${graphGlobalState.libraryMode?'<button class="btn" data-random-library-theorem>Random theorem</button>':`<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button>`}<button class="btn" data-reset-global-world>Reset world</button></div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} root namespaces${graphGlobalState.libraryMode?'':' / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} unfolded</span><span>${graphGlobalState.expandedAreas.size} clusters expanded</span>${graphGlobalState.loading?'<strong>growing graph…</strong>':''}</div><div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to unfold</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
+  return `<main class="global-graph-page"><div class="global-graph-top"><div><div class="eyebrow">${graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${graphGlobalState.libraryMode?'<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button>':`<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button>`}<button class="btn" data-reset-global-world>Reset world</button></div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} ${graphGlobalState.libraryMode?'top-level modules':'root namespaces / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} unfolded</span><span>${graphGlobalState.expandedAreas.size} clusters expanded</span>${graphGlobalState.loading?'<strong>growing graph…</strong>':''}</div><div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to unfold</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
 };
 
 const graphGlobalBaseBind=bind;
