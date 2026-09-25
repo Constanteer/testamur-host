@@ -66,7 +66,7 @@ The production start command is already defined by the Docker image:
 /app/deploy/start.sh
 ```
 
-Use `https://testamur.org` as the public custom domain. No second Zeabur service or public MathHub domain is required.
+Use `https://app.testamur.org` as the hosted-service custom domain. The public marketing/learning surface stays on `https://testamur.org` and is deployed from `testamur-site`. No second public MathHub domain is required.
 
 ## Hosted email verification
 
@@ -77,7 +77,7 @@ Production delivery uses an explicitly selected mail backend. Resend is currentl
 ```text
 TESTAMUR_MAIL_BACKEND=resend
 RESEND_API_KEY=...
-TESTAMUR_PUBLIC_ORIGIN=https://testamur.org
+TESTAMUR_PUBLIC_ORIGIN=https://app.testamur.org
 TESTAMUR_MAIL_FROM=Testamur <accounts@testamur.org>
 ```
 
