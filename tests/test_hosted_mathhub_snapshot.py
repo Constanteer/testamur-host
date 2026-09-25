@@ -75,6 +75,7 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "/api/library/module" in mathhub
     assert "/api/library/theorem" in mathhub
     assert "/api/library/dependencies" in mathhub
+    assert "/api/library/dependencies/batch" in mathhub
     assert "/api/library/random" in mathhub
     assert 'MATHHUB_AUTO_STARTER_CLAIMS","0"' in mathhub
     app = read(MATHHUB / "app.js")
@@ -89,6 +90,7 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "library_declaration_dependencies" in namespace_browser
     assert '"dependency_graph_version": "lean-direct-fast-v2"' in namespace_browser
     assert "inspect_direct_dependencies" in namespace_browser
+    assert "inspect_direct_dependencies_batch" in namespace_browser
     assert "_scan_mathlib_source_tree" in namespace_browser
     assert '"index_method": "mathlib-source-files"' in namespace_browser
     assert '"lean_invocations": 0' in namespace_browser
@@ -128,7 +130,8 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "Expand next level" in graph_global
     assert "data-library-open-dependency-graph" in graph_global
     assert "dependencyFocusCard" in graph_global
-    assert "reading direct Lean dependencies" in graph_global
+    assert "caching the next step" in graph_global
+    assert "prefetchDependencyLookahead" in graph_global
     assert "Add to MathHub (" not in library
     assert ".global-starter-empty" in graph_css
     assert ".library-theorem-type" in graph_css
