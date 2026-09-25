@@ -53,25 +53,46 @@ const cadenceLabel = seconds => ({
 }[Number(seconds)] || 'manual');
 
 
-async function api(path, query = {}) {
+async function api(path, query = {}, options = {}) {
   const url = new URL(path, location.origin);
   for (const [key, value] of Object.entries(query)) {
     if (value === undefined || value === null || value === '') continue;
     if (Array.isArray(value)) value.forEach(item => url.searchParams.append(key, item));
     else url.searchParams.set(key, value);
   }
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
-  let body;
-  try { body = await response.json(); }
-  catch (_) { throw new Error(`HTTP ${response.status} without JSON`); }
-  if (!body.ok) {
-    const error = new Error(body.error?.message || `HTTP ${response.status}`);
-    error.code = body.error?.code || 'testamur_error';
-    error.status = response.status;
-    error.details = body.error?.details;
+
+  const timeoutMs = Number(options.timeoutMs ?? 30000);
+  const controller = new AbortController();
+  const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    let body;
+    try { body = await response.json(); }
+    catch (_) { throw new Error(`HTTP ${response.status} without JSON`); }
+    if (!body.ok) {
+      const error = new Error(body.error?.message || `HTTP ${response.status}`);
+      error.code = body.error?.code || 'testamur_error';
+      error.status = response.status;
+      error.details = body.error?.details;
+      throw error;
+    }
+    return body;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error(`Request timed out after ${Math.max(1, Math.round(timeoutMs / 1000))}s`);
+      timeoutError.code = 'request_timeout';
+      throw timeoutError;
+    }
     throw error;
+  } finally {
+    if (timeout !== null) clearTimeout(timeout);
   }
-  return body;
 }
 
 async function apiWrite(path, payload) {
@@ -95,7 +116,7 @@ async function apiWrite(path, payload) {
 
 async function dashboard(force = false) {
   if (force) cache.dashboard = null;
-  if (!cache.dashboard) cache.dashboard = await api('/v1/dashboard', { limit: 100 });
+  if (!cache.dashboard) cache.dashboard = await api('/v1/dashboard', { limit: 100 }, { timeoutMs: 10000 });
   return cache.dashboard;
 }
 
