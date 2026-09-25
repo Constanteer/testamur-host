@@ -142,7 +142,8 @@ async function openLibraryDependencyGraph(name){
   const result=await expandLibraryDependencyNode(name);
   // Source/presentation data is optional: precise dependency browsing also works
   // for defs, axioms and other constants that are not theorem-index entries.
-  void loadLibraryTheoremDetail(name).catch?.(()=>{});
+  const rootNode=graphGlobalNode(rootId);
+  if(rootNode?.source_module)void loadLibraryTheoremDetail(name);
   if(result)requestAnimationFrame(()=>fitGlobalGraphNodes([...graphGlobalState.nodes.keys()],{maxScale:1.0,padding:84}));
 }
 
@@ -664,7 +665,7 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
   const original=argumentState.graph;
   argumentState.graph={
     ...graph,
-    edges:(graph.edges||[]).filter(edge=>edge.evidence_kind!=='module-contains'),
+    edges:(graph.edges||[]).filter(edge=>edge.evidence_kind!=='module-contains'&&(!graphGlobalState.dependencyMode||edge.evidence_kind!=='lean-dependency')),
     // Persistent Mathlib nodes are drawn below with their own glyph language.
     // Let the base renderer draw only relation arrows; otherwise its generic
     // hollow-circle + selected-halo nodes leak through and create bullseyes.
@@ -674,6 +675,15 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
 
   const ctx=canvas.getContext('2d'),palette=graphCanvasPalette(canvas),selected=state.graphSelected,hover=graphCanvasState.hoverId;
   ctx.save();
+
+  if(graphGlobalState.dependencyMode){
+    const dependencyPalette={...palette,line:'rgba(58,68,77,.58)'};
+    for(const edge of graph.edges||[]){
+      if(edge.evidence_kind!=='lean-dependency')continue;
+      const a=graphCanvasState.positions.get(edge.from),b=graphCanvasState.positions.get(edge.to);if(!a||!b)continue;
+      drawArrow(ctx,graphScreenPoint(a),graphScreenPoint(b),9,dependencyPalette,1.35);
+    }
+  }
 
   // Module containment: thin, non-directional, lower visual priority.
   ctx.strokeStyle='rgba(91,100,108,.20)';
@@ -775,8 +785,8 @@ function dependencyInspector(node){
       ? `<pre class="library-theorem-type">${esc(meta.pretty_type)}</pre>`
       : '';
   const roleText=roles.length?`<span class="dependency-role">${esc(roles.join(' + '))} dependency</span>`:'';
-  const axiomHtml=axioms.length?`<section class="library-theorem-deps"><h3>Axioms reached</h3><div class="library-theorem-dep-list">${axioms.map(item=>`<button type="button" data-library-dependency-name="${esc(item)}"><code>${esc(item)}</code></button>`).join('')}</div></section>`:'';
-  const closurePreview=closure.length?`<details class="library-theorem-source"><summary>Transitive closure · ${closure.length.toLocaleString()} declarations</summary><div class="library-theorem-dep-list dependency-closure-list">${closure.slice(0,120).map(item=>`<button type="button" data-library-dependency-name="${esc(item)}"><code>${esc(item)}</code></button>`).join('')}${closure.length>120?`<span class="quiet-empty">+${(closure.length-120).toLocaleString()} more</span>`:''}</div></details>`:'';
+  const axiomHtml=axioms.length?`<section class="library-theorem-deps"><h3>Axioms reached</h3><div class="library-theorem-dep-list">${axioms.map(item=>`<button type="button" data-library-dependency-root="${esc(item)}"><code>${esc(item)}</code></button>`).join('')}</div></section>`:'';
+  const closurePreview=closure.length?`<details class="library-theorem-source"><summary>Transitive closure · ${closure.length.toLocaleString()} declarations</summary><div class="library-theorem-dep-list dependency-closure-list">${closure.slice(0,120).map(item=>`<button type="button" data-library-dependency-root="${esc(item)}" title="Open this declaration as a dependency root"><code>${esc(item)}</code></button>`).join('')}${closure.length>120?`<span class="quiet-empty">+${(closure.length-120).toLocaleString()} more</span>`:''}</div></details>`:'';
   return `<div class="global-inspector-kind">${node.dependency_root?'Dependency root':'Lean dependency'} ${roleText}</div>
     <code class="library-theorem-name">${esc(name)}</code>
     <h2>${esc(node.title||name.split('.').pop()||name)}</h2>
@@ -914,13 +924,14 @@ bind=function bindPersistentGlobalGraph(){
   document.querySelector('[data-expand-global-claim]')?.addEventListener('click',event=>expandGlobalClaim(event.currentTarget.dataset.expandGlobalClaim));
   document.querySelectorAll('[data-library-theorem-name]').forEach(button=>button.addEventListener('click',()=>selectLibraryTheorem(button.dataset.libraryTheoremName,{anchorId:button.dataset.libraryAnchor||state.graphSelected})));
   document.querySelectorAll('[data-library-dependency-name]').forEach(button=>button.addEventListener('click',()=>void expandLibraryDependencyNode(button.dataset.libraryDependencyName)));
+  document.querySelectorAll('[data-library-dependency-root]').forEach(button=>button.addEventListener('click',()=>void openLibraryDependencyGraph(button.dataset.libraryDependencyRoot)));
   document.querySelector('[data-library-dependency-expand]')?.addEventListener('click',event=>void expandLibraryDependencyNode(event.currentTarget.dataset.libraryDependencyExpand));
   document.querySelector('[data-library-edit-copy]')?.addEventListener('click',event=>editLibraryTheoremFromGraph(event.currentTarget.dataset.libraryEditCopy));
   document.querySelector('[data-library-inspect-refresh]')?.addEventListener('click',event=>loadLibraryTheoremDetail(event.currentTarget.dataset.libraryInspectRefresh,{refresh:true}));
   const selected=graphGlobalNode(state.graphSelected);
   if(graphIsLibraryTheorem(selected)){
     const name=String(selected.lean_name||selected.title||'');
-    const shouldLoadSource=!graphGlobalState.dependencyMode||Boolean(selected.source_module)||Boolean(selected.dependency_root);
+    const shouldLoadSource=!graphGlobalState.dependencyMode||Boolean(selected.source_module);
     if(shouldLoadSource&&name&&!graphGlobalState.theoremDetails.has(name)&&!graphGlobalState.theoremLoading.has(name)&&!graphGlobalState.theoremErrors.has(name))void loadLibraryTheoremDetail(name);
   }
   const inspector=document.querySelector('.global-graph-inspector');
