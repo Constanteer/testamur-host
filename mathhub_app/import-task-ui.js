@@ -82,7 +82,7 @@ function taskTitle(task){const roots=task.roots||[];return roots.length===1?root
 
 function taskListHtml(){
   if(importTaskState.loading&&!importTaskState.tasks.length)return '<div class="task-empty">Loading import tasks…</div>';
-  if(!importTaskState.tasks.length)return '<div class="task-empty"><strong>No import tasks yet.</strong><span>Create one from Import library or an unmapped theorem.</span></div>';
+  if(!importTaskState.tasks.length)return '<div class="task-empty"><strong>No materialization tasks yet.</strong><span>These appear only when you explicitly materialize existing Lean declarations into durable workspace records.</span></div>';
   return importTaskState.tasks.map(task=>`<button class="task-list-item ${task.task_id===importTaskState.selected?'selected':''}" data-task-select="${esc(task.task_id)}"><div class="task-list-title"><code>${esc(taskTitle(task))}</code><span class="task-status ${esc(task.status||'')}">${esc(taskStatusLabel(task))}</span></div><small>${esc(taskProgressText(task))}</small></button>`).join('');
 }
 
