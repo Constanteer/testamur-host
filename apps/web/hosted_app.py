@@ -62,14 +62,32 @@ _PUBLIC_ASSETS = {
 
 
 def _core_web_cache_token() -> str:
-    snapshot_path = Path(__file__).resolve().parents[2] / "CORE_SNAPSHOT"
-    try:
-        snapshot = snapshot_path.read_text(encoding="utf-8")
-    except OSError:
-        snapshot = ""
-    match = re.search(r"\b[0-9a-f]{40}\b", snapshot, re.IGNORECASE)
-    return match.group(0)[:12] if match else "current"
+    """Version the actual bundled core Web assets.
 
+    CORE_SNAPSHOT identifies the synced canonical core revision, but testamur-host
+    can carry local Web fixes after that snapshot is recorded. Hash the bytes we
+    actually serve so every JS/CSS change gets a distinct URL and Safari/CDN
+    cannot keep executing a stale dashboard bundle after a host-only deploy.
+    """
+    digest = hashlib.sha256()
+    try:
+        for path in sorted(
+            (
+                *list(WEB_ROOT.glob("*.js")),
+                *list(WEB_ROOT.glob("*.css")),
+                WEB_ROOT / "index.html",
+            ),
+            key=lambda item: item.name,
+        ):
+            if not path.is_file():
+                continue
+            digest.update(path.name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    except OSError:
+        return "current"
+    return digest.hexdigest()[:12]
 
 def _versioned_web_response(response: dict[str, Any]) -> dict[str, Any]:
     """Version local Web assets so a deploy cannot pair a new API with stale JS."""
