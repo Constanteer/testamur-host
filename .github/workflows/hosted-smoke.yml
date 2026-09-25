@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+defaults:
+  run:
+    shell: 'bash --noprofile --norc -eo pipefail "{0}"'
+
 jobs:
   compile-hosted:
     runs-on: self-hosted
