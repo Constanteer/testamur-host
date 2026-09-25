@@ -101,6 +101,10 @@ def test_hosted_mathhub_runtime_owns_automatic_setup_and_imports() -> None:
     assert "mathhub-global-world-v3" in graph_global
     assert "fitGlobalGraphNodes" in graph_global
     assert "focusGlobalBranch" in graph_global
+    assert "libraryBreadcrumbHtml" in graph_global
+    assert "openLibraryModule" in graph_global
+    assert "data-library-module-back" in graph_global
+    assert "Module open failed" in graph_global
     assert "Focus branch" in graph_global
     assert "Random theorem" in graph_global
     assert "Import as Claim" in graph_global
@@ -127,4 +131,4 @@ def test_healthz_exposes_mathhub_runtime_progress() -> None:
 
 def test_hosted_mathhub_snapshot_marker_tracks_canonical_merge() -> None:
     marker = read(ROOT / "MATHHUB_SNAPSHOT").strip()
-    assert marker == "Constanteer/Mathub main @ b67f8963ce8bf02fdc083c1a1b394de7519592b4"
+    assert marker == "Constanteer/Mathub main @ 32875849de32c39adb700866f4c1fb93e1ddb925"
