@@ -56,6 +56,7 @@ const graphNavigationBaseDraw=drawGraphCanvas;
 drawGraphCanvas=function drawMathematicalClusters(canvas){
   graphNavigationBaseDraw(canvas);
   if(!canvas||!graphCanvasState.clusters?.length)return;
+  if(typeof graphGlobalState!=='undefined'&&graphGlobalState.libraryMode)return;
   const ctx=canvas.getContext('2d'),palette=graphCanvasPalette(canvas),scale=graphCanvasState.view.scale;
   ctx.save();ctx.textAlign='center';ctx.textBaseline='middle';
   for(const cluster of graphCanvasState.clusters){
