@@ -480,7 +480,7 @@ async function openLibraryModuleParent(){
 }
 
 function libraryBreadcrumbHtml(){
-  if(!graphGlobalState.libraryMode)return '';
+  if(!graphGlobalState.libraryMode||graphGlobalState.dependencyMode)return '';
   const path=String(graphGlobalState.libraryModulePath||'');
   const parts=path.split('.').filter(Boolean);
   const crumbs=[`<button type="button" data-library-module-root>Mathlib</button>`];
@@ -750,8 +750,50 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
   ctx.restore();
 };
 
+function dependencyRelationRoles(nodeId){
+  const roles=new Set();
+  for(const edge of graphGlobalState.edges.values()){
+    if(edge.evidence_kind==='lean-dependency'&&edge.to===nodeId){
+      for(const role of edge.dependency_roles||[])roles.add(role);
+    }
+  }
+  return [...roles];
+}
+
+function dependencyInspector(node){
+  const name=dependencyNodeName(node),meta=graphGlobalState.dependencyDetails.get(name),loading=graphGlobalState.dependencyLoading.has(name),expanded=graphGlobalState.dependencyExpanded.has(name),roles=dependencyRelationRoles(node.id);
+  const source=graphGlobalState.theoremDetails.get(name);
+  const error=graphGlobalState.theoremErrors.get(name);
+  const direct=Number(meta?.direct_dependency_count||dependencyChildren(node.id).length);
+  const transitive=Number(meta?.transitive_dependency_count||0);
+  const axioms=(meta?.axioms||[]).map(String);
+  const closure=(meta?.transitive_dependencies||[]).map(String);
+  const formula=source?.presentation_latex
+    ? `<div class="library-theorem-formula" aria-label="${esc(source.presentation_text||name)}">\\[${esc(source.presentation_latex)}\\]</div>`
+    : meta?.pretty_type
+      ? `<pre class="library-theorem-type">${esc(meta.pretty_type)}</pre>`
+      : '';
+  const roleText=roles.length?`<span class="dependency-role">${esc(roles.join(' + '))} dependency</span>`:'';
+  const axiomHtml=axioms.length?`<section class="library-theorem-deps"><h3>Axioms reached</h3><div class="library-theorem-dep-list">${axioms.map(item=>`<button type="button" data-library-dependency-name="${esc(item)}"><code>${esc(item)}</code></button>`).join('')}</div></section>`:'';
+  const closurePreview=closure.length?`<details class="library-theorem-source"><summary>Transitive closure · ${closure.length.toLocaleString()} declarations</summary><div class="library-theorem-dep-list dependency-closure-list">${closure.slice(0,120).map(item=>`<button type="button" data-library-dependency-name="${esc(item)}"><code>${esc(item)}</code></button>`).join('')}${closure.length>120?`<span class="quiet-empty">+${(closure.length-120).toLocaleString()} more</span>`:''}</div></details>`:'';
+  return `<div class="global-inspector-kind">${node.dependency_root?'Dependency root':'Lean dependency'} ${roleText}</div>
+    <code class="library-theorem-name">${esc(name)}</code>
+    <h2>${esc(node.title||name.split('.').pop()||name)}</h2>
+    ${formula}
+    <div class="dependency-summary-grid"><div><strong>${direct.toLocaleString()}</strong><span>direct</span></div><div><strong>${transitive.toLocaleString()}</strong><span>transitive</span></div><div><strong>${axioms.length.toLocaleString()}</strong><span>axioms</span></div></div>
+    <p>Arrows point from this declaration to declarations it actually depends on in Lean. Module ownership is not part of this view.</p>
+    ${axiomHtml}${closurePreview}
+    ${error?`<div class="library-theorem-error">${esc(error)}</div>`:''}
+    <div class="graph-inspector-actions">
+      <button class="btn btn-primary" data-library-dependency-expand="${esc(name)}" ${loading?'disabled':''}>${loading?'Inspecting…':expanded?'Refocus dependencies':'Expand dependencies'}</button>
+      ${source?`<button class="btn" data-library-edit-copy="${esc(name)}">Edit a copy</button>`:''}
+      ${node.source_module?`<a class="btn" href="./?view=library&q=${encodeURIComponent(name)}">Open in Math library</a>`:''}
+    </div>`;
+}
+
 function globalInspector(node){
   if(!node)return '<div class="global-inspector-empty">Select a module or theorem.</div>';
+  if(graphGlobalState.dependencyMode&&graphIsLibraryTheorem(node))return dependencyInspector(node);
   if(node.context_summary){
     const count=(node.context_hidden_ids||[]).length;
     return `<div class="global-inspector-kind">Compacted context</div><h2>${esc(node.title||'Older siblings')}</h2><p>${count.toLocaleString()} sibling item${count===1?'':'s'} from this older level are folded into one context node. They are still in memory; nothing was discarded.</p><button class="btn btn-primary" data-expand-global-area="${esc(node.id)}">Show this level</button>`;
@@ -818,14 +860,28 @@ renderGraph=function renderPersistentGlobalGraph(){
     </section></main>`;
   }
   const selected=graphGlobalNode(state.graphSelected)||graph.nodes?.[0],nonClusters=(graph.nodes||[]).filter(node=>!graphIsCluster(node)).length,focus=!graphGlobalState.libraryMode&&typeof graphProofFocusHtml==='function'?graphProofFocusHtml():'',trail=!graphGlobalState.libraryMode&&typeof graphTrailHtml==='function'?graphTrailHtml():'';
-  const title=graphGlobalState.libraryMode?'Explore Mathlib by module.':'Mathematics, all in one field of view.';
-  const copy=graphGlobalState.libraryMode
-    ? 'Double-click a module to expand one level in place. As you go deeper, older levels are compacted automatically so the active branch stays readable. Module lines show containment; theorem lines show conservative source-statement references.'
-    : 'Curated areas take priority; unclassified formal mathematics organizes itself deterministically by Lean namespace. Double-click clusters to unfold the hierarchy, then Claims to grow Proof neighborhoods.';
-  const represented=graphGlobalState.libraryMode
-    ? `${Number(graphGlobalState.libraryTheoremCount||0).toLocaleString()} Mathlib theorems indexed`
-    : `${Number(graphGlobalState.claimCount).toLocaleString()} Claims represented`;
-  return `<main class="global-graph-page">${libraryBreadcrumbHtml()}<div class="global-graph-top"><div><div class="eyebrow">${graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${graphGlobalState.libraryMode?`${graphGlobalState.libraryModulePath?'<button class="btn" data-library-module-back>Back</button>':''}<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button>`:`<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button>`}<button class="btn" data-reset-global-world>Reset world</button></div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} ${graphGlobalState.libraryMode?(graphGlobalState.libraryModulePath?'child modules':'modules visible'):'root namespaces / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} visible</span>${graphGlobalState.libraryMode&&graphGlobalState.libraryContextPrunedCount? `<span>${graphGlobalState.libraryContextPrunedCount.toLocaleString()} older-context nodes compacted</span>` : graphGlobalState.libraryMode&&graphGlobalState.libraryModuleHiddenCount? `<span>${graphGlobalState.libraryModuleHiddenCount.toLocaleString()} more in this branch</span>` : `<span>${graphGlobalState.expandedAreas.size} clusters expanded</span>`}${graphGlobalState.loading?'<strong>loading…</strong>':''}</div>${graphGlobalState.libraryModuleError?`<div class="global-module-error"><strong>Module open failed</strong><code>${esc(graphGlobalState.libraryModuleError)}</code></div>`:''}<div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to expand · module → child = hierarchy · theorem → theorem = source reference</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
+  const dependency=graphGlobalState.dependencyMode,rootMeta=dependency?graphGlobalState.dependencyDetails.get(graphGlobalState.dependencyRoot):null;
+  const title=dependency?`${graphGlobalState.dependencyRoot.split('.').pop()} dependencies.`:(graphGlobalState.libraryMode?'Explore Mathlib by module.':'Mathematics, all in one field of view.');
+  const copy=dependency
+    ? 'This is a dependency graph, not a module tree. Every arrow means “depends on”. Double-click any declaration—Choice included—to reveal what it depends on next.'
+    : graphGlobalState.libraryMode
+      ? 'Double-click a module to expand one level in place. As you go deeper, older levels are compacted automatically so the active branch stays readable. Module lines show containment; theorem lines show conservative source-statement references.'
+      : 'Curated areas take priority; unclassified formal mathematics organizes itself deterministically by Lean namespace. Double-click clusters to unfold the hierarchy, then Claims to grow Proof neighborhoods.';
+  const represented=dependency
+    ? `${nonClusters.toLocaleString()} declarations visible · ${(graph.edges||[]).filter(edge=>edge.evidence_kind==='lean-dependency').length.toLocaleString()} dependency edges`
+    : graphGlobalState.libraryMode
+      ? `${Number(graphGlobalState.libraryTheoremCount||0).toLocaleString()} Mathlib theorems indexed`
+      : `${Number(graphGlobalState.claimCount).toLocaleString()} Claims represented`;
+  const actions=dependency
+    ? `<a class="btn" href="./?view=library">Math library</a><button class="btn" data-back-library-modules>Module browser</button><button class="btn" data-reset-global-world>Reset dependency graph</button>`
+    : graphGlobalState.libraryMode
+      ? `${graphGlobalState.libraryModulePath?'<button class="btn" data-library-module-back>Back</button>':''}<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button><button class="btn" data-reset-global-world>Reset world</button>`
+      : `<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button><button class="btn" data-reset-global-world>Reset world</button>`;
+  const meta=dependency
+    ? `<div class="global-world-meta"><span>${represented}</span><span>${Number(rootMeta?.direct_dependency_count||0).toLocaleString()} direct</span><span>${Number(rootMeta?.transitive_dependency_count||0).toLocaleString()} transitive</span><span>${Number((rootMeta?.axioms||[]).length).toLocaleString()} axioms reached</span>${graphGlobalState.dependencyLoading.size?'<strong>inspecting Lean…</strong>':''}</div>`
+    : `<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} ${graphGlobalState.libraryMode?(graphGlobalState.libraryModulePath?'child modules':'modules visible'):'root namespaces / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} visible</span>${graphGlobalState.libraryMode&&graphGlobalState.libraryContextPrunedCount? `<span>${graphGlobalState.libraryContextPrunedCount.toLocaleString()} older-context nodes compacted</span>` : graphGlobalState.libraryMode&&graphGlobalState.libraryModuleHiddenCount? `<span>${graphGlobalState.libraryModuleHiddenCount.toLocaleString()} more in this branch</span>` : `<span>${graphGlobalState.expandedAreas.size} clusters expanded</span>`}${graphGlobalState.loading?'<strong>loading…</strong>':''}</div>`;
+  const hint=dependency?'drag · zoom · click to inspect · double-click to expand dependencies · arrow = depends on':'drag · zoom · click to inspect · double-click to expand · module → child = hierarchy · theorem → theorem = source reference';
+  return `<main class="global-graph-page">${libraryBreadcrumbHtml()}<div class="global-graph-top"><div><div class="eyebrow">${dependency?'Lean dependency graph':graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${actions}</div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}${meta}${graphGlobalState.libraryModuleError?`<div class="global-module-error"><strong>Module open failed</strong><code>${esc(graphGlobalState.libraryModuleError)}</code></div>`:''}<div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="${dependency?'Lean dependency graph':'Global mathematical graph'}"></canvas><div class="global-graph-hint">${esc(hint)}</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
 };
 
 const graphGlobalBaseBind=bind;
@@ -846,7 +902,8 @@ bind=function bindPersistentGlobalGraph(){
       fitGlobalGraphNodes(fitIds,{maxScale:1.0,padding:76});
     });
   }
-  document.querySelector('[data-reset-global-world]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
+  document.querySelector('[data-reset-global-world]')?.addEventListener('click',()=>graphGlobalState.dependencyMode?openLibraryDependencyGraph(graphGlobalState.dependencyRoot):loadGlobalWorld({reset:true}));
+  document.querySelector('[data-back-library-modules]')?.addEventListener('click',()=>{graphGlobalState.dependencyMode=false;graphGlobalState.dependencyRoot='';loadGlobalWorld({reset:true});});
   document.querySelector('[data-library-module-root]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
   document.querySelector('[data-library-module-back]')?.addEventListener('click',()=>openLibraryModuleParent());
   document.querySelectorAll('[data-library-module-path]').forEach(button=>button.addEventListener('click',()=>openLibraryModule(button.dataset.libraryModulePath)));
@@ -855,12 +912,15 @@ bind=function bindPersistentGlobalGraph(){
   document.querySelector('[data-open-library-module]')?.addEventListener('click',event=>openLibraryModule(event.currentTarget.dataset.openLibraryModule));
   document.querySelector('[data-expand-global-claim]')?.addEventListener('click',event=>expandGlobalClaim(event.currentTarget.dataset.expandGlobalClaim));
   document.querySelectorAll('[data-library-theorem-name]').forEach(button=>button.addEventListener('click',()=>selectLibraryTheorem(button.dataset.libraryTheoremName,{anchorId:button.dataset.libraryAnchor||state.graphSelected})));
+  document.querySelectorAll('[data-library-dependency-name]').forEach(button=>button.addEventListener('click',()=>void expandLibraryDependencyNode(button.dataset.libraryDependencyName)));
+  document.querySelector('[data-library-dependency-expand]')?.addEventListener('click',event=>void expandLibraryDependencyNode(event.currentTarget.dataset.libraryDependencyExpand));
   document.querySelector('[data-library-edit-copy]')?.addEventListener('click',event=>editLibraryTheoremFromGraph(event.currentTarget.dataset.libraryEditCopy));
   document.querySelector('[data-library-inspect-refresh]')?.addEventListener('click',event=>loadLibraryTheoremDetail(event.currentTarget.dataset.libraryInspectRefresh,{refresh:true}));
   const selected=graphGlobalNode(state.graphSelected);
   if(graphIsLibraryTheorem(selected)){
     const name=String(selected.lean_name||selected.title||'');
-    if(name&&!graphGlobalState.theoremDetails.has(name)&&!graphGlobalState.theoremLoading.has(name)&&!graphGlobalState.theoremErrors.has(name))void loadLibraryTheoremDetail(name);
+    const shouldLoadSource=!graphGlobalState.dependencyMode||Boolean(selected.source_module)||Boolean(selected.dependency_root);
+    if(shouldLoadSource&&name&&!graphGlobalState.theoremDetails.has(name)&&!graphGlobalState.theoremLoading.has(name)&&!graphGlobalState.theoremErrors.has(name))void loadLibraryTheoremDetail(name);
   }
   const inspector=document.querySelector('.global-graph-inspector');
   if(inspector&&window.MathJax?.typesetPromise)window.MathJax.typesetPromise([inspector]).catch(()=>{});
