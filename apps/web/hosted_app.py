@@ -9,6 +9,7 @@ import shutil
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
 from http import HTTPStatus
@@ -772,6 +773,9 @@ class HostedTestamurServer(ThreadingHTTPServer):
         self.mail_last_attempt_ok: bool | None = None
         self.mail_last_error_code: str | None = None
         self.mail_last_error_hint: str | None = None
+        self.account_last_error_at: int | None = None
+        self.account_last_error_type: str | None = None
+        self.account_last_error_hint: str | None = None
         self.monitor_target_providers = dict(monitor_target_providers or {})
         self.monitor_target_provider_specs = {
             str(name): dict(spec)
@@ -812,6 +816,22 @@ class HostedTestamurServer(ThreadingHTTPServer):
         self.mail_last_error_code = code
         self.mail_last_error_hint = hint
         print(f'[testamur] verification email delivery failed: {message}', file=sys.stderr, flush=True)
+    def record_account_failure(self, error: Exception) -> None:
+        self.account_last_error_at = int(time.time())
+        self.account_last_error_type = type(error).__name__
+        self.account_last_error_hint = "An unexpected hosted account error occurred. Check Zeabur logs for the traceback."
+        print(
+            "[testamur] unexpected account operation failure:\n"
+            + "".join(traceback.format_exception(type(error), error, error.__traceback__)),
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def clear_account_failure(self) -> None:
+        self.account_last_error_at = None
+        self.account_last_error_type = None
+        self.account_last_error_hint = None
+
     def active_product_services(self) -> list[TestamurProductService]:
         with self._services_lock:
             return list(self._services.values())
@@ -1017,6 +1037,11 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                     "accounts_db_exists": accounts_db.is_file(),
                     "accounts_db_size_bytes": accounts_db_size,
                 },
+                "account_operations": {
+                    "last_error_at": self.hosted_server.account_last_error_at,
+                    "last_error_type": self.hosted_server.account_last_error_type,
+                    "last_error_hint": self.hosted_server.account_last_error_hint,
+                },
                 "email_delivery": {
                     "provider": "resend" if self.hosted_server.mailer is not None else None,
                     "configured": self.hosted_server.mailer is not None,
@@ -1130,8 +1155,8 @@ class HostedTestamurWebHandler(TestamurWebHandler):
 
         path = urlsplit(self.path).path.rstrip("/") or "/"
         if path.startswith("/v1/account/"):
-            self._send(
-                dispatch_account_write(
+            try:
+                response = dispatch_account_write(
                     self.hosted_server.account_store,
                     self.path,
                     payload,
@@ -1142,7 +1167,15 @@ class HostedTestamurWebHandler(TestamurWebHandler):
                     mailer=self.hosted_server.mailer,
                     mail_delivery_reporter=self.hosted_server.record_mail_delivery,
                 )
-            )
+                self.hosted_server.clear_account_failure()
+            except Exception as exc:
+                self.hosted_server.record_account_failure(exc)
+                response = _error(
+                    "account_operation_failed",
+                    "Hosted account operation failed unexpectedly. Please retry.",
+                    status=500,
+                )
+            self._send(response)
             return
 
         user = self._current_user()
