@@ -8,7 +8,7 @@ const graphGlobalState={
   libraryMode:false,libraryIndexed:false,libraryStatus:null,libraryTheoremCount:0,
   libraryModulePath:'',libraryModuleHiddenCount:0,libraryModuleError:'',openingModulePath:'',
   libraryContextPrunedCount:0,
-  dependencyMode:false,dependencyRoot:'',dependencyDetails:new Map(),dependencyLoading:new Set(),dependencyExpanded:new Set(),dependencyBulkLoading:false,dependencyPrefetching:false,dependencyPrefetchedCount:0,
+  dependencyMode:false,dependencyRoot:'',dependencyDetails:new Map(),dependencyLoading:new Set(),dependencyExpanded:new Set(),dependencyBulkLoading:false,dependencyPrefetching:false,dependencyPrefetchedCount:0,dependencyEdgeFilter:'all',
   needsInitialFit:true,pendingFocusIds:[],
   theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),theoremImporting:new Set(),
 };
@@ -60,6 +60,13 @@ function dependencyChildren(nodeId){
   return [...graphGlobalState.edges.values()]
     .filter(edge=>edge.evidence_kind==='lean-dependency'&&edge.from===nodeId)
     .map(edge=>edge.to);
+}
+
+function dependencyEdgeVisible(edge){
+  if(edge?.evidence_kind!=='lean-dependency')return false;
+  const filter=graphGlobalState.dependencyEdgeFilter||'all';
+  if(filter==='all')return true;
+  return (edge.dependency_roles||[]).includes(filter);
 }
 
 function placeDependencyChildren(anchorId,childIds){
@@ -221,7 +228,7 @@ async function openLibraryDependencyGraph(name){
   graphGlobalState.loaded=true;graphGlobalState.loading=false;
   graphGlobalState.libraryMode=true;graphGlobalState.libraryIndexed=true;
   graphGlobalState.dependencyMode=true;graphGlobalState.dependencyRoot=name;
-  graphGlobalState.dependencyDetails.clear();graphGlobalState.dependencyLoading.clear();graphGlobalState.dependencyExpanded.clear();graphGlobalState.dependencyBulkLoading=false;graphGlobalState.dependencyPrefetching=false;graphGlobalState.dependencyPrefetchedCount=0;
+  graphGlobalState.dependencyDetails.clear();graphGlobalState.dependencyLoading.clear();graphGlobalState.dependencyExpanded.clear();graphGlobalState.dependencyBulkLoading=false;graphGlobalState.dependencyPrefetching=false;graphGlobalState.dependencyPrefetchedCount=0;graphGlobalState.dependencyEdgeFilter='all';
   graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();
   graphGlobalState.libraryModulePath='';graphGlobalState.libraryModuleHiddenCount=0;graphGlobalState.libraryContextPrunedCount=0;
   const rootId=`LIB:${name}`;
@@ -780,7 +787,7 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
   if(graphGlobalState.dependencyMode){
     const dependencyPalette={...palette,line:'rgba(58,68,77,.58)'};
     for(const edge of graph.edges||[]){
-      if(edge.evidence_kind!=='lean-dependency')continue;
+      if(!dependencyEdgeVisible(edge))continue;
       const a=graphCanvasState.positions.get(edge.from),b=graphCanvasState.positions.get(edge.to);if(!a||!b)continue;
       drawArrow(ctx,graphScreenPoint(a),graphScreenPoint(b),9,dependencyPalette,1.35);
     }
@@ -1003,7 +1010,7 @@ renderGraph=function renderPersistentGlobalGraph(){
       ? `${Number(graphGlobalState.libraryTheoremCount||0).toLocaleString()} Mathlib theorems indexed`
       : `${Number(graphGlobalState.claimCount).toLocaleString()} Claims represented`;
   const actions=dependency
-    ? `<button class="btn btn-primary" data-expand-dependency-frontier ${graphGlobalState.dependencyBulkLoading?'disabled':''}>${graphGlobalState.dependencyBulkLoading?'Expanding…':'Expand next level'}</button><a class="btn" href="./?view=library">Math library</a><button class="btn" data-back-library-modules>Module browser</button><button class="btn" data-reset-global-world>Reset dependency graph</button>`
+    ? `<button class="btn btn-primary" data-expand-dependency-frontier ${graphGlobalState.dependencyBulkLoading?'disabled':''}>${graphGlobalState.dependencyBulkLoading?'Expanding…':'Expand next level'}</button><button class="filter ${graphGlobalState.dependencyEdgeFilter==='all'?'active':''}" data-dependency-filter="all">All deps</button><button class="filter ${graphGlobalState.dependencyEdgeFilter==='proof'?'active':''}" data-dependency-filter="proof">Proof</button><button class="filter ${graphGlobalState.dependencyEdgeFilter==='statement'?'active':''}" data-dependency-filter="statement">Statement</button><a class="btn" href="./?view=library">Math library</a><button class="btn" data-back-library-modules>Module browser</button><button class="btn" data-reset-global-world>Reset dependency graph</button>`
     : graphGlobalState.libraryMode
       ? `${graphGlobalState.libraryModulePath?'<button class="btn" data-library-module-back>Back</button>':''}<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button><button class="btn" data-reset-global-world>Reset world</button>`
       : `<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button><button class="btn" data-reset-global-world>Reset world</button>`;
@@ -1035,6 +1042,10 @@ bind=function bindPersistentGlobalGraph(){
   document.querySelector('[data-reset-global-world]')?.addEventListener('click',()=>graphGlobalState.dependencyMode?openLibraryDependencyGraph(graphGlobalState.dependencyRoot):loadGlobalWorld({reset:true}));
   document.querySelector('[data-back-library-modules]')?.addEventListener('click',()=>{graphGlobalState.dependencyMode=false;graphGlobalState.dependencyRoot='';loadGlobalWorld({reset:true});});
   document.querySelector('[data-expand-dependency-frontier]')?.addEventListener('click',()=>void expandDependencyFrontier());
+  document.querySelectorAll('[data-dependency-filter]').forEach(button=>button.addEventListener('click',()=>{
+    graphGlobalState.dependencyEdgeFilter=button.dataset.dependencyFilter||'all';
+    render();
+  }));
   document.querySelector('[data-library-module-root]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
   document.querySelector('[data-library-module-back]')?.addEventListener('click',()=>openLibraryModuleParent());
   document.querySelectorAll('[data-library-module-path]').forEach(button=>button.addEventListener('click',()=>openLibraryModule(button.dataset.libraryModulePath)));
