@@ -8,6 +8,7 @@ const graphGlobalState={
   libraryMode:false,libraryIndexed:false,libraryStatus:null,libraryTheoremCount:0,
   libraryModulePath:'',libraryModuleHiddenCount:0,libraryModuleError:'',openingModulePath:'',
   libraryContextPrunedCount:0,
+  dependencyMode:false,dependencyRoot:'',dependencyDetails:new Map(),dependencyLoading:new Set(),dependencyExpanded:new Set(),
   needsInitialFit:true,pendingFocusIds:[],
   theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),theoremImporting:new Set(),
 };
@@ -48,6 +49,101 @@ function mergeWorldChunk(chunk,{anchorId='',radius=125}={}){
   graphGlobalState.clusterCount=[...graphGlobalState.nodes.values()].filter(graphIsCluster).length;
   argumentState.graph=graphGlobalGraph();
   return newcomers;
+}
+
+function dependencyNodeName(nodeOrId){
+  const node=typeof nodeOrId==='string'?graphGlobalNode(nodeOrId):nodeOrId;
+  return String(node?.lean_name||node?.title||'').trim();
+}
+
+function dependencyChildren(nodeId){
+  return [...graphGlobalState.edges.values()]
+    .filter(edge=>edge.evidence_kind==='lean-dependency'&&edge.from===nodeId)
+    .map(edge=>edge.to);
+}
+
+function placeDependencyChildren(anchorId,childIds){
+  const anchor=graphCanvasState.positions.get(anchorId)||{x:0,y:0};
+  const fresh=childIds.filter(id=>!graphCanvasState.positions.has(id));
+  const spacing=Math.max(34,Math.min(58,520/Math.max(1,fresh.length)));
+  fresh.forEach((id,index)=>{
+    const offset=(index-(fresh.length-1)/2)*spacing;
+    graphCanvasState.positions.set(id,{x:anchor.x+190,y:anchor.y+offset});
+  });
+}
+
+function mergeLibraryDependencyResult(result,{anchorName=''}={}){
+  const anchorId=`LIB:${anchorName||result?.declaration_name||''}`;
+  const anchor=graphGlobalNode(anchorId);
+  const parentDepth=Number(anchor?.dependency_depth||0);
+  const newcomers=[];
+  for(const raw of result?.nodes||[]){
+    const isAnchor=raw.id===anchorId;
+    const old=graphGlobalState.nodes.get(raw.id);
+    const node={
+      ...old,...raw,
+      kind:'library-declaration',
+      dependency_root:raw.id===`LIB:${graphGlobalState.dependencyRoot}`,
+      dependency_depth:isAnchor?parentDepth:Math.min(Number(old?.dependency_depth??Infinity),parentDepth+1),
+    };
+    if(!Number.isFinite(node.dependency_depth))node.dependency_depth=parentDepth+1;
+    if(!old)newcomers.push(node);
+    graphGlobalState.nodes.set(node.id,node);
+  }
+  mergeWorldEdges(result?.edges||[]);
+  graphGlobalState.dependencyDetails.set(String(result?.declaration_name||anchorName),result);
+  graphGlobalState.dependencyExpanded.add(String(result?.declaration_name||anchorName));
+  const children=dependencyChildren(anchorId);
+  placeDependencyChildren(anchorId,children);
+  argumentState.graph=graphGlobalGraph();
+  return newcomers;
+}
+
+async function expandLibraryDependencyNode(name,{refresh=false}={}){
+  name=String(name||'').trim();if(!name||graphGlobalState.dependencyLoading.has(name))return null;
+  if(graphGlobalState.dependencyExpanded.has(name)&&!refresh){
+    const id=`LIB:${name}`;render();requestAnimationFrame(()=>fitGlobalGraphNodes([id,...dependencyChildren(id)],{maxScale:1.1,padding:88}));return graphGlobalState.dependencyDetails.get(name)||null;
+  }
+  graphGlobalState.dependencyLoading.add(name);state.graphSelected=`LIB:${name}`;render();
+  try{
+    const suffix=refresh?'&refresh=1':'';
+    const result=await apiJson(`/api/library/dependencies?name=${encodeURIComponent(name)}${suffix}`);
+    if(!result?.ok)throw new Error(result?.error||'Dependency inspection failed');
+    mergeLibraryDependencyResult(result,{anchorName:name});
+    return result;
+  }catch(error){
+    graphGlobalState.theoremErrors.set(name,error?.message||String(error));
+    return null;
+  }finally{
+    graphGlobalState.dependencyLoading.delete(name);render();
+    requestAnimationFrame(()=>{
+      const id=`LIB:${name}`;
+      fitGlobalGraphNodes([id,...dependencyChildren(id)],{maxScale:1.1,padding:88});
+    });
+  }
+}
+
+async function openLibraryDependencyGraph(name){
+  name=String(name||'').trim();if(!name)return;
+  if(typeof libraryBrowserState!=='undefined')libraryBrowserState.open=false;
+  state.view='graph';
+  graphGlobalState.loaded=true;graphGlobalState.loading=false;
+  graphGlobalState.libraryMode=true;graphGlobalState.libraryIndexed=true;
+  graphGlobalState.dependencyMode=true;graphGlobalState.dependencyRoot=name;
+  graphGlobalState.dependencyDetails.clear();graphGlobalState.dependencyLoading.clear();graphGlobalState.dependencyExpanded.clear();
+  graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();
+  graphGlobalState.libraryModulePath='';graphGlobalState.libraryModuleHiddenCount=0;graphGlobalState.libraryContextPrunedCount=0;
+  const rootId=`LIB:${name}`;
+  graphGlobalState.nodes.set(rootId,{id:rootId,kind:'library-declaration',lean_name:name,title:name.split('.').pop()||name,namespace_path:name.includes('.')?name.split('.').slice(0,-1).join('.'):'',dependency_root:true,dependency_depth:0});
+  state.graphSelected=rootId;argumentState.graph=graphGlobalGraph();
+  graphCanvasState.key='';graphCanvasState.positions=new Map([[rootId,{x:-180,y:0}]]);
+  graphGlobalState.needsInitialFit=false;
+  render();
+  const result=await expandLibraryDependencyNode(name);
+  // Source/presentation data is optional: precise dependency browsing also works
+  // for defs, axioms and other constants that are not theorem-index entries.
+  void loadLibraryTheoremDetail(name).catch?.(()=>{});
+  if(result)requestAnimationFrame(()=>fitGlobalGraphNodes([...graphGlobalState.nodes.keys()],{maxScale:1.0,padding:84}));
 }
 
 function fitGlobalGraphNodes(nodeIds,{maxScale=1.15,padding=72}={}){
@@ -448,6 +544,10 @@ loadGraph=async function persistentGlobalLoad(root=''){
   if(!graphGlobalState.loaded)await loadGlobalWorld();
   if(!root)return;
   const node=graphGlobalNode(root);
+  if(graphGlobalState.dependencyMode&&graphIsLibraryTheorem(node)){
+    await expandLibraryDependencyNode(dependencyNodeName(node));
+    return;
+  }
   if(graphIsCluster(node||root))await expandGlobalArea(root);else await expandGlobalClaim(root);
 };
 
@@ -459,6 +559,20 @@ buildCanvasLayout=function globalInitialLayout(graph){
   const positions=new Map(),clusters=(graph.nodes||[]).filter(graphIsCluster),claims=(graph.nodes||[]).filter(node=>!graphIsCluster(node));
   const golden=Math.PI*(3-Math.sqrt(5));
   clusters.sort((a,b)=>Number(b.claim_count||0)-Number(a.claim_count||0)||String(a.title).localeCompare(String(b.title)));
+  if(graphGlobalState.dependencyMode){
+    const levels=new Map();
+    for(const node of claims){
+      const depth=Math.max(0,Number(node.dependency_depth||0));
+      if(!levels.has(depth))levels.set(depth,[]);
+      levels.get(depth).push(node);
+    }
+    for(const [depth,nodes] of [...levels.entries()].sort((a,b)=>a[0]-b[0])){
+      nodes.sort((a,b)=>String(a.lean_name||a.title).localeCompare(String(b.lean_name||b.title)));
+      const spacing=Math.max(38,Math.min(62,560/Math.max(1,nodes.length)));
+      nodes.forEach((node,index)=>positions.set(node.id,{x:-210+depth*205,y:(index-(nodes.length-1)/2)*spacing}));
+    }
+    return positions;
+  }
   if(graphGlobalState.libraryMode){
     const libraryRoot=clusters.find(node=>node.id==='LIBMOD:(root)');
     if(libraryRoot){
@@ -577,10 +691,12 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
   for(const node of ordinaryNodes){
     const world=graphCanvasState.positions.get(node.id);if(!world)continue;
     const p=graphScreenPoint(world),isSelected=node.id===selected,isHover=node.id===hover;
-    const size=isSelected?6.5:(isHover?5.5:4.2);
-    ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.PI/4);
+    const size=node.dependency_root?9:(node.is_axiom?7:(isSelected?6.5:(isHover?5.5:4.2)));
+    ctx.save();ctx.translate(p.x,p.y);ctx.rotate(node.is_axiom?0:Math.PI/4);
     ctx.beginPath();ctx.rect(-size/2,-size/2,size,size);
-    if(node.status==='verified'){ctx.fillStyle=palette.accent;ctx.fill();}
+    if(node.dependency_root){ctx.fillStyle=palette.ink;ctx.fill();}
+    else if(node.is_axiom){ctx.fillStyle='rgba(255,255,255,.96)';ctx.fill();ctx.strokeStyle=palette.ink;ctx.lineWidth=1.4;ctx.stroke();}
+    else if(node.status==='verified'){ctx.fillStyle=palette.accent;ctx.fill();}
     else{
       ctx.fillStyle=isSelected?palette.ink:(isHover?'rgba(69,78,86,.86)':'rgba(111,121,129,.62)');
       ctx.fill();
