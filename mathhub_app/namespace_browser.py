@@ -1119,10 +1119,10 @@ def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dic
 
     if not refresh:
         cached = _cached_library_theorem_detail(environment_hash, name)
-        if cached and cached.get("dependency_graph_version") == "lean-direct-v1":
+        if cached and cached.get("dependency_graph_version") == "lean-direct-fast-v2":
             return cached
 
-    inspected = core.inspect_declaration(
+    inspected = core.inspect_direct_dependencies(
         {"imports": ["Mathlib"], "declaration_name": name}
     )
     if not inspected.get("ok"):
@@ -1150,16 +1150,11 @@ def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dic
         if str(dep) and str(dep) != name
     ]
     direct = list(dict.fromkeys([*statement, *proof]))
-    transitive = [
-        str(dep)
-        for dep in inspected.get("transitive_dependencies") or []
-        if str(dep) and str(dep) != name
-    ]
-    axioms = [
-        str(dep)
-        for dep in inspected.get("axioms") or []
-        if str(dep) and str(dep) != name
-    ]
+    # Interactive browsing intentionally discovers the transitive closure by
+    # expanding direct neighbors. Computing MinImports closure for every click
+    # made a single node inspection far too expensive.
+    transitive: list[str] = []
+    axioms: list[str] = []
 
     with core.FORMAL.connect() as conn:
         _ensure_global_cache_schema(conn)
@@ -1220,8 +1215,8 @@ def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dic
         "ok": True,
         "ready": True,
         "cache_hit": False,
-        "dependency_graph_version": "lean-direct-v1",
-        "inspection_mode": "lean-dependency",
+        "dependency_graph_version": "lean-direct-fast-v2",
+        "inspection_mode": "lean-direct",
         "lean_invocations": 1,
         "environment_hash": environment_hash,
         "declaration_name": name,
@@ -1231,14 +1226,15 @@ def library_declaration_dependencies(name: str, *, refresh: bool = False) -> dic
         "direct_dependencies": direct,
         "direct_dependency_count": len(direct),
         "transitive_dependencies": transitive,
-        "transitive_dependency_count": len(transitive),
+        "transitive_dependency_count": 0,
+        "transitive_complete": False,
         "axioms": axioms,
         "nodes": nodes,
         "edges": edges,
         "duration_ms": int(inspected.get("duration_ms") or 0),
         "verification_note": (
-            "Edges are read from Lean declaration/proof constants in the pinned environment. "
-            "Arrow direction is dependent -> dependency."
+            "Edges are direct Lean declaration/proof constants in the pinned environment. "
+            "Arrow direction is dependent -> dependency. Deeper closure is discovered recursively."
         ),
     }
     now = utc_now()
