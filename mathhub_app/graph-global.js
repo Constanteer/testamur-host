@@ -612,7 +612,8 @@ function globalInspector(node){
   return `<div class="global-inspector-kind">Claim</div><code>${esc(node.lean_name||'')}</code><h2>${esc(node.title||'Claim')}</h2>${badge(node.status||'open')}<p>${esc(node.area||'')}</p><div class="graph-inspector-actions"><button class="btn btn-primary" data-claim="${esc(node.id)}">Open Claim</button><button class="btn" data-expand-global-claim="${esc(node.id)}">Expand neighbors</button></div>${typeof graphRelationList==='function'?graphRelationList('Depends on',relations.outgoing,'No loaded dependencies yet.')+graphRelationList('Used by',relations.incoming,'No loaded uses yet.'):''}`;
 }
 
-// Initial unexpanded view is the top-level modules view; expanded views report modules visible.\nrenderGraph=function renderPersistentGlobalGraph(){
+// Initial unexpanded view is the top-level modules view; expanded views report modules visible.
+renderGraph=function renderPersistentGlobalGraph(){
   const graph=argumentState.graph;
   if(!graphGlobalState.loaded||!graph)return `<main class="global-graph-page"><div class="global-graph-loading"><div class="eyebrow">Global argument graph</div><h1>Opening the mathematical universe…</h1><p>MathHub shows durable Claims when they exist and otherwise reads the pinned Mathlib library directly.</p><button class="btn btn-primary" data-load-global-world>Open global graph</button></div></main>`;
   if(graphGlobalState.claimCount===0&&!graphGlobalState.libraryIndexed){
