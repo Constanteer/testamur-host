@@ -14,13 +14,13 @@ from apps.web.mail import MailDeliveryError, ResendMailer
 
 class FakeMailer:
     def __init__(self) -> None:
-        self.sent: list[tuple[dict[str, object], str]] = []
+        self.sent: list[tuple[dict[str, object], str, str]] = []
         self.fail = False
 
-    def send_verification(self, *, user: dict[str, object], token: str) -> str:
+    def send_verification(self, *, user: dict[str, object], token: str, code: str) -> str:
         from apps.web.mail import MailDeliveryError
 
-        self.sent.append((user, token))
+        self.sent.append((user, token, code))
         if self.fail:
             raise MailDeliveryError("simulated delivery failure")
         return "email_test"
@@ -96,6 +96,70 @@ class EmailVerificationTests(unittest.TestCase):
         replay_payload = body(replay)
         self.assertEqual(replay["status"], 400)
         self.assertEqual(replay_payload["error"]["code"], "verification_token_used")
+
+    def test_verification_code_activates_account_without_opening_link(self) -> None:
+        payload, token = self.signup()
+        code = self.mailer.sent[-1][2]
+        self.assertRegex(code, r"^\d{6}$")
+
+        verify_response = dispatch_account_write(
+            self.store,
+            "/v1/account/email-verification/verify-code",
+            {"identifier": "hank@example.com", "code": code},
+            cookie_header=None,
+            mailer=self.mailer,
+        )
+        verified = body(verify_response)
+        self.assertEqual(verify_response["status"], 200)
+        self.assertTrue(verified["authenticated"])
+        self.assertTrue(verified["verified"])
+        self.assertEqual(verified["method"], "code")
+        self.assertIn("Set-Cookie", verify_response["headers"])
+
+        with self.store._connect() as connection:
+            row = connection.execute(
+                "SELECT email_verification_source FROM users WHERE email = ?",
+                ("hank@example.com",),
+            ).fetchone()
+            self.assertEqual(row["email_verification_source"], "email_code")
+
+        replay = dispatch_account_write(
+            self.store,
+            "/v1/account/email-verification/verify",
+            {"token": token},
+            cookie_header=None,
+            mailer=self.mailer,
+        )
+        self.assertEqual(replay["status"], 400)
+        self.assertEqual(body(replay)["error"]["code"], "verification_token_used")
+
+    def test_verification_code_locks_after_repeated_failures(self) -> None:
+        self.signup()
+        for attempt in range(8):
+            response = dispatch_account_write(
+                self.store,
+                "/v1/account/email-verification/verify-code",
+                {"identifier": "hank@example.com", "code": "000000"},
+                cookie_header=None,
+                mailer=self.mailer,
+            )
+            if attempt < 7:
+                self.assertEqual(response["status"], 400)
+                self.assertEqual(body(response)["error"]["code"], "invalid_verification_code")
+            else:
+                self.assertEqual(response["status"], 429)
+                self.assertEqual(body(response)["error"]["code"], "verification_code_locked")
+
+        real_code = self.mailer.sent[-1][2]
+        locked = dispatch_account_write(
+            self.store,
+            "/v1/account/email-verification/verify-code",
+            {"identifier": "hank@example.com", "code": real_code},
+            cookie_header=None,
+            mailer=self.mailer,
+        )
+        self.assertEqual(locked["status"], 400)
+        self.assertEqual(body(locked)["error"]["code"], "invalid_verification_code")
 
     def test_resend_invalidates_previous_token(self) -> None:
         _payload, original = self.signup()
@@ -282,12 +346,12 @@ class EmailVerificationTests(unittest.TestCase):
                 );
                 """
             )
-        current_user, token = self.store.sign_up(
+        current_user, token, code = self.store.sign_up(
             username="digest-source",
             email="digest@example.com",
             password="a-long-test-password",
         )
-        del current_user, token
+        del current_user, token, code
         with self.store._connect() as connection:
             digest = connection.execute(
                 "SELECT password_digest FROM users WHERE username = 'digest-source'"
