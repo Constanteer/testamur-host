@@ -156,15 +156,16 @@ async function openLibraryDependencyGraph(name){
   const rootId=`LIB:${name}`;
   graphGlobalState.nodes.set(rootId,{id:rootId,kind:'library-declaration',lean_name:name,title:name.split('.').pop()||name,namespace_path:name.includes('.')?name.split('.').slice(0,-1).join('.'):'',dependency_root:true,dependency_depth:0});
   state.graphSelected=rootId;argumentState.graph=graphGlobalGraph();
-  graphCanvasState.key='';graphCanvasState.positions=new Map([[rootId,{x:-180,y:0}]]);
+  graphCanvasState.key='';graphCanvasState.positions=new Map([[rootId,{x:0,y:0}]]);
   graphGlobalState.needsInitialFit=false;
   render();
+  requestAnimationFrame(()=>fitGlobalGraphNodes([rootId],{maxScale:1.12,padding:110}));
+  // Presentation comes from the SQLite source index and should appear before
+  // Lean dependency inspection finishes. Dependency extraction runs in parallel.
+  const presentationPromise=loadLibraryTheoremDetail(name).catch(()=>null);
   const result=await expandLibraryDependencyNode(name);
-  // Source/presentation data is optional: precise dependency browsing also works
-  // for defs, axioms and other constants that are not theorem-index entries.
-  const rootNode=graphGlobalNode(rootId);
-  if(rootNode?.source_module)void loadLibraryTheoremDetail(name);
-  if(result)requestAnimationFrame(()=>fitGlobalGraphNodes([...graphGlobalState.nodes.keys()],{maxScale:1.0,padding:84}));
+  await presentationPromise;
+  if(result)requestAnimationFrame(()=>fitGlobalGraphNodes([...graphGlobalGraph().nodes.map(node=>node.id)],{maxScale:1.0,padding:96}));
 }
 
 function fitGlobalGraphNodes(nodeIds,{maxScale=1.15,padding=72}={}){
@@ -577,7 +578,12 @@ loadGraph=async function persistentGlobalLoad(root=''){
   if(graphIsCluster(node||root))await expandGlobalArea(root);else await expandGlobalClaim(root);
 };
 
-graphCanvasKey=function globalCanvasKey(graph){return graph?.persistent?'mathhub-global-world-v3':`local:${graph?.root||''}`;};
+graphCanvasKey=function globalCanvasKey(graph){
+  if(!graph?.persistent)return `local:${graph?.root||''}`;
+  return graphGlobalState.dependencyMode
+    ? `mathhub-dependency:${graphGlobalState.dependencyRoot}`
+    : 'mathhub-global-world-v3';
+};
 const graphGlobalBaseLayout=buildCanvasLayout;
 buildCanvasLayout=function globalInitialLayout(graph){
   if(!graph?.persistent)return graphGlobalBaseLayout(graph);
@@ -595,7 +601,7 @@ buildCanvasLayout=function globalInitialLayout(graph){
     for(const [depth,nodes] of [...levels.entries()].sort((a,b)=>a[0]-b[0])){
       nodes.sort((a,b)=>String(a.lean_name||a.title).localeCompare(String(b.lean_name||b.title)));
       const spacing=Math.max(38,Math.min(62,560/Math.max(1,nodes.length)));
-      nodes.forEach((node,index)=>positions.set(node.id,{x:-210+depth*205,y:(index-(nodes.length-1)/2)*spacing}));
+      nodes.forEach((node,index)=>positions.set(node.id,{x:depth*205,y:(index-(nodes.length-1)/2)*spacing}));
     }
     return positions;
   }
@@ -795,12 +801,30 @@ function dependencyRelationRoles(nodeId){
   return [...roles];
 }
 
+function dependencyFocusCard(){
+  if(!graphGlobalState.dependencyMode)return '';
+  const name=graphGlobalState.dependencyRoot,source=graphGlobalState.theoremDetails.get(name),meta=graphGlobalState.dependencyDetails.get(name),loading=graphGlobalState.dependencyLoading.has(name);
+  const short=source?.short_name||name.split('.').pop()||name;
+  const formula=source?.presentation_latex
+    ? `<div class="dependency-focus-formula" aria-label="${esc(source.presentation_text||name)}">\\[${esc(source.presentation_latex)}\\]</div>`
+    : source?.presentation_text
+      ? `<div class="dependency-focus-text">${esc(source.presentation_text)}</div>`
+      : meta?.pretty_type
+        ? `<pre class="dependency-focus-lean">${esc(meta.pretty_type)}</pre>`
+        : `<div class="dependency-focus-loading"><span></span>${loading?'Loading dependencies…':'Loading mathematical presentation…'}</div>`;
+  return `<section class="dependency-focus-card">
+    <div class="dependency-focus-head"><div><div class="eyebrow">Theorem</div><h1>${esc(short)}</h1><code>${esc(name)}</code></div><div class="dependency-focus-badges"><span>${Number(meta?.direct_dependency_count||0).toLocaleString()} direct dependencies</span><span>${meta?.fast_path===false?'full audit':'interactive Lean graph'}</span></div></div>
+    ${formula}
+    <div class="dependency-focus-foot"><span>Displayed as mathematics when a deterministic LaTeX presentation is available.</span><button class="btn" data-library-edit-copy="${esc(name)}" ${source?'':'disabled'}>Edit a copy</button></div>
+  </section>`;
+}
+
 function dependencyInspector(node){
   const name=dependencyNodeName(node),meta=graphGlobalState.dependencyDetails.get(name),loading=graphGlobalState.dependencyLoading.has(name),expanded=graphGlobalState.dependencyExpanded.has(name),roles=dependencyRelationRoles(node.id);
   const source=graphGlobalState.theoremDetails.get(name);
   const error=graphGlobalState.theoremErrors.get(name);
   const direct=Number(meta?.direct_dependency_count||dependencyChildren(node.id).length);
-  const transitive=Number(meta?.transitive_dependency_count||0);
+  const expandedChildren=dependencyChildren(node.id).filter(id=>graphGlobalState.dependencyExpanded.has(dependencyNodeName(graphGlobalNode(id)))).length;
   const axioms=(meta?.axioms||[]).map(String);
   const closure=(meta?.transitive_dependencies||[]).map(String);
   const formula=source?.presentation_latex
@@ -815,8 +839,8 @@ function dependencyInspector(node){
     <code class="library-theorem-name">${esc(name)}</code>
     <h2>${esc(node.title||name.split('.').pop()||name)}</h2>
     ${formula}
-    <div class="dependency-summary-grid"><div><strong>${direct.toLocaleString()}</strong><span>direct</span></div><div><strong>${transitive.toLocaleString()}</strong><span>transitive</span></div><div><strong>${axioms.length.toLocaleString()}</strong><span>axioms</span></div></div>
-    <p>Arrows point from this declaration to declarations it actually depends on in Lean. Module ownership is not part of this view.</p>
+    <div class="dependency-summary-grid"><div><strong>${direct.toLocaleString()}</strong><span>direct</span></div><div><strong>${expandedChildren.toLocaleString()}</strong><span>children expanded</span></div><div><strong>${meta?.duration_ms?Math.max(1,Math.round(Number(meta.duration_ms)/100)/10)+'s':'—'}</strong><span>Lean inspect</span></div></div>
+    <p>Arrows are direct Lean declaration/proof dependencies. Deeper closure is discovered by expanding nodes; module ownership is never mixed into this view.</p>
     ${axiomHtml}${closurePreview}
     ${error?`<div class="library-theorem-error">${esc(error)}</div>`:''}
     <div class="graph-inspector-actions">
@@ -913,10 +937,10 @@ renderGraph=function renderPersistentGlobalGraph(){
       ? `${graphGlobalState.libraryModulePath?'<button class="btn" data-library-module-back>Back</button>':''}<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button><button class="btn" data-reset-global-world>Reset world</button>`
       : `<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button><button class="btn" data-reset-global-world>Reset world</button>`;
   const meta=dependency
-    ? `<div class="global-world-meta"><span>${represented}</span><span>${Number(rootMeta?.direct_dependency_count||0).toLocaleString()} direct</span><span>${Number(rootMeta?.transitive_dependency_count||0).toLocaleString()} transitive</span><span>${Number((rootMeta?.axioms||[]).length).toLocaleString()} axioms reached</span>${graphGlobalState.dependencyLoading.size?'<strong>inspecting Lean…</strong>':''}</div>`
+    ? `<div class="global-world-meta"><span>${represented}</span><span>${Number(rootMeta?.direct_dependency_count||0).toLocaleString()} direct from root</span><span>${graphGlobalState.dependencyExpanded.size.toLocaleString()} declarations inspected</span>${graphGlobalState.dependencyLoading.size?'<strong>reading direct Lean dependencies…</strong>':''}</div>`
     : `<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} ${graphGlobalState.libraryMode?(graphGlobalState.libraryModulePath?'child modules':'modules visible'):'root namespaces / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} visible</span>${graphGlobalState.libraryMode&&graphGlobalState.libraryContextPrunedCount? `<span>${graphGlobalState.libraryContextPrunedCount.toLocaleString()} older-context nodes compacted</span>` : graphGlobalState.libraryMode&&graphGlobalState.libraryModuleHiddenCount? `<span>${graphGlobalState.libraryModuleHiddenCount.toLocaleString()} more in this branch</span>` : `<span>${graphGlobalState.expandedAreas.size} clusters expanded</span>`}${graphGlobalState.loading?'<strong>loading…</strong>':''}</div>`;
   const hint=dependency?'drag · zoom · click to inspect · double-click to expand dependencies · arrow = depends on':'drag · zoom · click to inspect · double-click to expand · module → child = hierarchy · theorem → theorem = source reference';
-  return `<main class="global-graph-page">${libraryBreadcrumbHtml()}<div class="global-graph-top"><div><div class="eyebrow">${dependency?'Lean dependency graph':graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${actions}</div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}${meta}${graphGlobalState.libraryModuleError?`<div class="global-module-error"><strong>Module open failed</strong><code>${esc(graphGlobalState.libraryModuleError)}</code></div>`:''}<div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="${dependency?'Lean dependency graph':'Global mathematical graph'}"></canvas><div class="global-graph-hint">${esc(hint)}</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
+  return `<main class="global-graph-page ${dependency?'dependency-graph-page':''}">${libraryBreadcrumbHtml()}${dependency?dependencyFocusCard():''}<div class="global-graph-top"><div><div class="eyebrow">${dependency?'Lean dependency graph':graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${actions}</div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}${meta}${graphGlobalState.libraryModuleError?`<div class="global-module-error"><strong>Module open failed</strong><code>${esc(graphGlobalState.libraryModuleError)}</code></div>`:''}<div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="${dependency?'Lean dependency graph':'Global mathematical graph'}"></canvas><div class="global-graph-hint">${esc(hint)}</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
 };
 
 const graphGlobalBaseBind=bind;
@@ -960,8 +984,11 @@ bind=function bindPersistentGlobalGraph(){
     const shouldLoadSource=!graphGlobalState.dependencyMode||Boolean(selected.source_module);
     if(shouldLoadSource&&name&&!graphGlobalState.theoremDetails.has(name)&&!graphGlobalState.theoremLoading.has(name)&&!graphGlobalState.theoremErrors.has(name))void loadLibraryTheoremDetail(name);
   }
-  const inspector=document.querySelector('.global-graph-inspector');
-  if(inspector&&window.MathJax?.typesetPromise)window.MathJax.typesetPromise([inspector]).catch(()=>{});
+  const inspector=document.querySelector('.global-graph-inspector'),focusCard=document.querySelector('.dependency-focus-card');
+  if(window.MathJax?.typesetPromise){
+    const targets=[inspector,focusCard].filter(Boolean);
+    if(targets.length)window.MathJax.typesetPromise(targets).catch(()=>{});
+  }
 };
 
 restoreGraphLocation=async function restoreGlobalGraphLocation(){
