@@ -135,11 +135,13 @@ class EmailVerificationTests(unittest.TestCase):
 
     def test_verification_code_locks_after_repeated_failures(self) -> None:
         self.signup()
+        real_code = self.mailer.sent[-1][2]
+        wrong_code = "000000" if real_code != "000000" else "999999"
         for attempt in range(8):
             response = dispatch_account_write(
                 self.store,
                 "/v1/account/email-verification/verify-code",
-                {"identifier": "hank@example.com", "code": "000000"},
+                {"identifier": "hank@example.com", "code": wrong_code},
                 cookie_header=None,
                 mailer=self.mailer,
             )
@@ -150,7 +152,6 @@ class EmailVerificationTests(unittest.TestCase):
                 self.assertEqual(response["status"], 429)
                 self.assertEqual(body(response)["error"]["code"], "verification_code_locked")
 
-        real_code = self.mailer.sent[-1][2]
         locked = dispatch_account_write(
             self.store,
             "/v1/account/email-verification/verify-code",
