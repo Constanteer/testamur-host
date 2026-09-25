@@ -101,6 +101,16 @@
     window.bindNavigation?.();
   }
 
+  let renderQueued = false;
+  function queueRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    queueMicrotask(() => {
+      renderQueued = false;
+      render();
+    });
+  }
+
   addEventListener('DOMContentLoaded', queueRender);
   addEventListener('popstate', queueRender);
   addEventListener('testamur:rendered', queueRender);
