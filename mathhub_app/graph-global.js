@@ -4,8 +4,9 @@
    same Canvas without replacing nodes already on screen. */
 const graphGlobalState={
   loaded:false,loading:false,nodes:new Map(),edges:new Map(),
-  expandedAreas:new Set(),expandedClaims:new Set(),claimCount:0,clusterCount:0,
+  expandedAreas:new Set(),expandedClaims:new Set(),claimCount:0,clusterCount:0,starterStatus:null,
 };
+let graphStarterPollTimer=null;
 
 function graphGlobalEdgeKey(edge){return `${edge.evidence_kind||'uses'}:${edge.from}:${edge.to}`;}
 function graphGlobalGraph(){return {
@@ -33,6 +34,21 @@ function mergeWorldChunk(chunk,{anchorId='',radius=125}={}){
   return newcomers;
 }
 
+async function loadStarterStatus(){
+  try{graphGlobalState.starterStatus=await apiJson('/api/starter-status');}
+  catch(error){graphGlobalState.starterStatus={error:String(error?.message||error)};}
+  return graphGlobalState.starterStatus;
+}
+
+function scheduleStarterGraphPoll(){
+  if(graphStarterPollTimer)clearTimeout(graphStarterPollTimer);
+  graphStarterPollTimer=setTimeout(async()=>{
+    graphStarterPollTimer=null;
+    if(state.view!=='graph'||graphGlobalState.claimCount>0)return;
+    await loadGlobalWorld({reset:true});
+  },2500);
+}
+
 async function loadGlobalWorld({reset=false}={}){
   if(graphGlobalState.loading)return;
   if(graphGlobalState.loaded&&!reset){argumentState.graph=graphGlobalGraph();render();return;}
@@ -42,6 +58,7 @@ async function loadGlobalWorld({reset=false}={}){
     graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();
     for(const node of world.nodes||[])graphGlobalState.nodes.set(node.id,node);mergeWorldEdges(world.edges||[]);
     graphGlobalState.claimCount=Number(world.claim_count||0);graphGlobalState.clusterCount=Number(world.cluster_count||0);graphGlobalState.loaded=true;
+    if(graphGlobalState.claimCount===0)await loadStarterStatus();else graphGlobalState.starterStatus=null;
     argumentState.graph=graphGlobalGraph();graphCanvasState.key='';graphCanvasState.positions=new Map();state.graphSelected=(world.nodes||[])[0]?.id||'';
   }finally{graphGlobalState.loading=false;render();}
 }
@@ -113,6 +130,25 @@ function globalInspector(node){
 renderGraph=function renderPersistentGlobalGraph(){
   const graph=argumentState.graph;
   if(!graphGlobalState.loaded||!graph)return `<main class="global-graph-page"><div class="global-graph-loading"><div class="eyebrow">Global argument graph</div><h1>Opening the mathematical universe…</h1><p>Small sparse registries open as literal Claim graphs. Larger registries keep every Claim represented through curated fields or Lean-namespace clusters.</p><button class="btn btn-primary" data-load-global-world>Open global graph</button></div></main>`;
+  if(graphGlobalState.claimCount===0){
+    const starter=graphGlobalState.starterStatus||{},task=starter.task||{},status=String(task.status||''),lastError=String(task.last_error||starter.error||''),imported=Number(task.imported||0),failed=Number(task.failed||0),processed=Number(task.processed_claims||0),scheduled=Number(task.scheduled_claims||0);
+    const heading=status==='paused'?'Starter import paused':status==='completed'?'Starter import finished without Claims':'Preparing starter mathematics…';
+    const copy=status==='paused'
+      ? 'Mathlib is ready, but the starter import paused. MathHub will retry recoverable work automatically.'
+      : status==='completed'
+        ? 'The starter task completed without populating the registry. Its task detail is shown below instead of an empty graph.'
+        : 'Mathlib is ready. MathHub is importing a small deterministic starter set so Connections has real Claims to display.';
+    return `<main class="global-graph-page"><section class="global-starter-empty">
+      <div class="eyebrow">Global argument graph</div><div class="global-starter-spinner" aria-hidden="true"></div>
+      <h1>${esc(heading)}</h1><p>${esc(copy)}</p>
+      <div class="global-starter-stats">
+        <span><strong>${processed}</strong> processed</span><span><strong>${scheduled}</strong> scheduled</span><span><strong>${imported}</strong> imported</span><span><strong>${failed}</strong> failed</span>
+      </div>
+      ${lastError?`<details class="global-starter-detail"><summary>Technical detail</summary><code>${esc(lastError)}</code></details>`:''}
+      <div class="global-starter-actions"><button class="btn btn-primary" data-refresh-starter-world>Refresh now</button><a class="btn" href="./?view=library">Open Math library</a></div>
+      <small>Connections will appear automatically as soon as the first starter Claims are recorded.</small>
+    </section></main>`;
+  }
   const selected=graphGlobalNode(state.graphSelected)||graph.nodes?.[0],realClaims=(graph.nodes||[]).filter(node=>!graphIsCluster(node)).length,focus=typeof graphProofFocusHtml==='function'?graphProofFocusHtml():'',trail=typeof graphTrailHtml==='function'?graphTrailHtml():'';
   return `<main class="global-graph-page"><div class="global-graph-top"><div><div class="eyebrow">Global argument graph</div><h1>Mathematics, all in one field of view.</h1><p>Curated areas take priority; unclassified formal mathematics organizes itself deterministically by Lean namespace. Double-click clusters to unfold the hierarchy, then Claims to grow Proof neighborhoods.</p></div><div class="global-graph-actions"><button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button><button class="btn" data-reset-global-world>Reset world</button></div></div>${typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${Number(graphGlobalState.claimCount).toLocaleString()} Claims represented</span><span>${graphGlobalState.clusterCount} root clusters</span><span>${realClaims} Claims unfolded</span><span>${graphGlobalState.expandedAreas.size} clusters expanded</span>${graphGlobalState.loading?'<strong>growing graph…</strong>':''}</div><div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical argument graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to unfold</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
 };
@@ -122,6 +158,9 @@ bind=function bindPersistentGlobalGraph(){
   graphGlobalBaseBind();if(state.view!=='graph')return;
   if(!graphGlobalState.loaded&&!graphGlobalState.loading)loadGlobalWorld();
   document.querySelector('[data-load-global-world]')?.addEventListener('click',()=>loadGlobalWorld());
+  document.querySelector('[data-refresh-starter-world]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
+  if(graphGlobalState.loaded&&graphGlobalState.claimCount===0)scheduleStarterGraphPoll();
+  else if(graphStarterPollTimer){clearTimeout(graphStarterPollTimer);graphStarterPollTimer=null;}
   document.querySelector('[data-reset-global-world]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
   document.querySelector('[data-expand-global-area]')?.addEventListener('click',event=>expandGlobalArea(event.currentTarget.dataset.expandGlobalArea));
   document.querySelector('[data-expand-global-claim]')?.addEventListener('click',event=>expandGlobalClaim(event.currentTarget.dataset.expandGlobalClaim));
