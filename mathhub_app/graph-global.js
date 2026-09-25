@@ -329,6 +329,7 @@ graphCanvasKey=function globalCanvasKey(graph){return graph?.persistent?'mathhub
 const graphGlobalBaseLayout=buildCanvasLayout;
 buildCanvasLayout=function globalInitialLayout(graph){
   if(!graph?.persistent)return graphGlobalBaseLayout(graph);
+  graphCanvasState.clusters=[];
   const positions=new Map(),clusters=(graph.nodes||[]).filter(graphIsCluster),claims=(graph.nodes||[]).filter(node=>!graphIsCluster(node));
   const golden=Math.PI*(3-Math.sqrt(5));
   clusters.sort((a,b)=>Number(b.claim_count||0)-Number(a.claim_count||0)||String(a.title).localeCompare(String(b.title)));
