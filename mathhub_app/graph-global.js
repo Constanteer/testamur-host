@@ -39,6 +39,7 @@ function mergeWorldChunk(chunk,{anchorId='',radius=125}={}){
   for(const node of chunk?.nodes||[]){if(!graphGlobalState.nodes.has(node.id))newcomers.push(node);graphGlobalState.nodes.set(node.id,{...graphGlobalState.nodes.get(node.id),...node});}
   mergeWorldEdges(chunk?.edges||[]);
   if(anchorId&&newcomers.length)placeAround(anchorId,newcomers,radius);
+  graphGlobalState.clusterCount=[...graphGlobalState.nodes.values()].filter(graphIsCluster).length;
   argumentState.graph=graphGlobalGraph();
   return newcomers;
 }
@@ -78,9 +79,29 @@ async function loadLibraryStatus(){
   return graphGlobalState.libraryStatus;
 }
 
+function mergeLibrarySourceRelations(name,detail){
+  const anchorId=`LIB:${name}`,outgoing=[...new Set((detail?.source_dependencies||[]).map(String))].slice(0,14),incoming=[...new Set((detail?.source_used_by||[]).map(String))].slice(0,10);
+  const additions=[],ensureNode=(other)=>{
+    const id=`LIB:${other}`;
+    if(!graphGlobalState.nodes.has(id)){
+      const node={id,kind:'library-theorem',lean_name:other,title:other.split('.').pop()||other,namespace_path:other.includes('.')?other.split('.').slice(0,-1).join('.'):'',status:'library',registered:false,claim_id:null};
+      graphGlobalState.nodes.set(id,node);additions.push(node);
+    }
+  };
+  outgoing.forEach(ensureNode);incoming.forEach(ensureNode);
+  if(additions.length)placeAround(anchorId,additions,132);
+  mergeWorldEdges([
+    ...outgoing.map(target=>({from:anchorId,to:`LIB:${target}`,evidence_kind:'mathlib-source-ref',proof_count:0,proof_ids:[]})),
+    ...incoming.map(source=>({from:`LIB:${source}`,to:anchorId,evidence_kind:'mathlib-source-ref',proof_count:0,proof_ids:[]})),
+  ]);
+  argumentState.graph=graphGlobalGraph();
+}
+
 async function loadLibraryTheoremDetail(name,{refresh=false}={}){
   name=String(name||'').trim();if(!name)return null;
-  if(!refresh&&graphGlobalState.theoremDetails.has(name))return graphGlobalState.theoremDetails.get(name);
+  if(!refresh&&graphGlobalState.theoremDetails.has(name)){
+    const cached=graphGlobalState.theoremDetails.get(name);mergeLibrarySourceRelations(name,cached);return cached;
+  }
   if(graphGlobalState.theoremLoading.has(name))return null;
   graphGlobalState.theoremLoading.add(name);graphGlobalState.theoremErrors.delete(name);render();
   try{
@@ -88,6 +109,7 @@ async function loadLibraryTheoremDetail(name,{refresh=false}={}){
     const detail=await apiJson(`/api/library/theorem?name=${encodeURIComponent(name)}${suffix}`);
     if(!detail?.ok)throw new Error(detail?.error||'Theorem inspection failed');
     graphGlobalState.theoremDetails.set(name,detail);
+    mergeLibrarySourceRelations(name,detail);
     return detail;
   }catch(error){
     graphGlobalState.theoremErrors.set(name,error?.message||String(error));
@@ -258,10 +280,6 @@ function libraryBreadcrumbHtml(){
 
 async function expandGlobalArea(clusterId){
   const cluster=graphGlobalNode(clusterId);if(!cluster||!graphIsCluster(cluster)||graphGlobalState.loading)return;
-  if(graphGlobalState.libraryMode&&cluster.cluster_source==='mathlib-module'){
-    await openLibraryModule(cluster.module_path||cluster.title||'');
-    return;
-  }
   const key=graphClusterKey(cluster);if(!key)return;
   state.graphSelected=clusterId;
   if(graphGlobalState.expandedAreas.has(key)){
@@ -315,32 +333,35 @@ buildCanvasLayout=function globalInitialLayout(graph){
   const golden=Math.PI*(3-Math.sqrt(5));
   clusters.sort((a,b)=>Number(b.claim_count||0)-Number(a.claim_count||0)||String(a.title).localeCompare(String(b.title)));
   if(graphGlobalState.libraryMode){
-    const roots=clusters.filter(node=>!node.parent_cluster_id),children=clusters.filter(node=>node.parent_cluster_id);
-    const rings=[
-      {count:8,radius:175},
-      {count:14,radius:315},
-      {count:22,radius:465},
-      {count:32,radius:620},
-    ];
-    let cursor=0;
-    for(const ring of rings){
-      const slice=roots.slice(cursor,cursor+ring.count);if(!slice.length)break;
-      slice.forEach((node,index)=>{
-        const angle=(-Math.PI/2)+(index/Math.max(1,slice.length))*Math.PI*2+(cursor?0.12:0);
-        positions.set(node.id,{x:Math.cos(angle)*ring.radius,y:Math.sin(angle)*ring.radius});
+    const libraryRoot=clusters.find(node=>node.id==='LIBMOD:(root)');
+    if(libraryRoot){
+      positions.set(libraryRoot.id,{x:0,y:0});
+      const top=clusters.filter(node=>node.parent_cluster_id===libraryRoot.id);
+      const rings=[{count:10,radius:205},{count:18,radius:365},{count:30,radius:530}];
+      let cursor=0;
+      for(const ring of rings){
+        const slice=top.slice(cursor,cursor+ring.count);if(!slice.length)break;
+        slice.forEach((node,index)=>{
+          const angle=(-Math.PI/2)+(index/Math.max(1,slice.length))*Math.PI*2+(cursor?0.09:0);
+          positions.set(node.id,{x:Math.cos(angle)*ring.radius,y:Math.sin(angle)*ring.radius});
+        });
+        cursor+=slice.length;
+      }
+      top.slice(cursor).forEach((node,index)=>{
+        const radius=690+80*Math.floor(index/36),angle=(index%36)/36*Math.PI*2;
+        positions.set(node.id,{x:Math.cos(angle)*radius,y:Math.sin(angle)*radius});
       });
-      cursor+=slice.length;
-    }
-    roots.slice(cursor).forEach((node,index)=>{
-      const radius=760+90*Math.floor(index/36),angle=(index%36)/36*Math.PI*2;
-      positions.set(node.id,{x:Math.cos(angle)*radius,y:Math.sin(angle)*radius});
-    });
-    const siblingIndex=new Map();
-    for(const node of children){
-      const parent=positions.get(node.parent_cluster_id)||{x:0,y:0};
-      const i=siblingIndex.get(node.parent_cluster_id)||0;siblingIndex.set(node.parent_cluster_id,i+1);
-      const angle=i*golden+stableAngle(node.id)*.12,radius=125+26*Math.sqrt(i);
-      positions.set(node.id,{x:parent.x+Math.cos(angle)*radius,y:parent.y+Math.sin(angle)*radius});
+      const deeper=clusters.filter(node=>node.parent_cluster_id&&node.parent_cluster_id!==libraryRoot.id);
+      const siblingIndex=new Map();
+      for(const node of deeper){
+        const parent=positions.get(node.parent_cluster_id)||{x:0,y:0};
+        const i=siblingIndex.get(node.parent_cluster_id)||0;siblingIndex.set(node.parent_cluster_id,i+1);
+        const angle=i*golden+stableAngle(node.id)*.12,radius=125+26*Math.sqrt(i);
+        positions.set(node.id,{x:parent.x+Math.cos(angle)*radius,y:parent.y+Math.sin(angle)*radius});
+      }
+    }else{
+      const roots=clusters.filter(node=>!node.parent_cluster_id);
+      roots.forEach((node,index)=>{const radius=index?190*Math.sqrt(index):0,angle=index*golden;positions.set(node.id,{x:Math.cos(angle)*radius,y:Math.sin(angle)*radius});});
     }
   }else{
     clusters.forEach((node,index)=>{const radius=index?190*Math.sqrt(index):0,angle=index*golden;positions.set(node.id,{x:Math.cos(angle)*radius,y:Math.sin(angle)*radius});});
@@ -379,31 +400,40 @@ drawGraphCanvas=function drawGlobalGraph(canvas){
 function globalInspector(node){
   if(!node)return '<div class="global-inspector-empty">Select a module or theorem.</div>';
   if(graphIsCluster(node)){
-    const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),library=graphGlobalState.libraryMode&&(node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library'),moduleCluster=node.cluster_source==='mathlib-module',namespace=node.cluster_source==='lean-namespace',kind=library?(moduleCluster?'Mathlib module':'Mathlib namespace'):(namespace?'Lean namespace':'Curated field'),path=node.module_path||node.namespace_path||node.title,action=moduleCluster?(graphGlobalState.openingModulePath===path?'Opening…':'Open module'):(expanded?'Focus branch':(library||namespace?'Expand namespace':'Expand field'));
+    const key=graphClusterKey(node),expanded=graphGlobalState.expandedAreas.has(key),library=graphGlobalState.libraryMode&&(node.cluster_source==='mathlib-module'||node.cluster_source==='mathlib-library'),moduleCluster=node.cluster_source==='mathlib-module',namespace=node.cluster_source==='lean-namespace',kind=library?(moduleCluster?'Mathlib module':'Mathlib namespace'):(namespace?'Lean namespace':'Curated field'),path=node.module_path||node.namespace_path||node.title;
+    const action=expanded?'Focus expanded branch':(moduleCluster?'Expand one level':(library||namespace?'Expand namespace':'Expand field'));
     const countLabel=library?'theorems':'Claims';
     const hidden=Number(node.expansion_hidden_count||0);
     const copy=moduleCluster
-      ? 'A source-module branch of the installed Mathlib library. Expand one level at a time; browsing never creates Claims or runs Lean.'
+      ? 'Double-click expands this module in place and keeps the surrounding graph visible. Enter module is an explicit focused navigation mode.'
       : library
         ? 'Read-only theorems from the installed Mathlib source index. Expand freely; nothing becomes a Claim until you explicitly import it.'
         : (namespace?'This deterministic fallback comes from the Lean declaration namespace.':'This curated mathematical field groups durable MathHub Claims.');
-    return `<div class="global-inspector-kind">${esc(kind)}</div><h2>${esc(path)}</h2><strong class="global-claim-count">${Number(node.claim_count||0).toLocaleString()} ${countLabel}</strong><p>${esc(copy)}</p>${hidden?`<div class="global-module-limit">Showing a bounded branch · ${hidden.toLocaleString()} more available through deeper modules or search.</div>`:''}<button class="btn btn-primary" data-expand-global-area="${esc(node.id)}" ${moduleCluster&&graphGlobalState.openingModulePath===path?'disabled':''}>${esc(action)}</button>`;
+    const enter=moduleCluster&&path!=='(root)'?`<button class="btn" data-open-library-module="${esc(path)}" ${graphGlobalState.openingModulePath===path?'disabled':''}>${graphGlobalState.openingModulePath===path?'Entering…':'Enter module'}</button>`:'';
+    return `<div class="global-inspector-kind">${esc(kind)}</div><h2>${esc(path==='(root)'?'Mathlib':path)}</h2><strong class="global-claim-count">${Number(node.claim_count||0).toLocaleString()} ${countLabel}</strong><p>${esc(copy)}</p>${hidden?`<div class="global-module-limit">Showing a bounded branch · ${hidden.toLocaleString()} more available through deeper modules or search.</div>`:''}<button class="btn btn-primary" data-expand-global-area="${esc(node.id)}">${esc(action)}</button>${enter}`;
   }
   if(graphIsLibraryTheorem(node)){
     const name=String(node.lean_name||node.title||''),detail=graphGlobalState.theoremDetails.get(name),loading=graphGlobalState.theoremLoading.has(name),error=graphGlobalState.theoremErrors.get(name),importing=graphGlobalState.theoremImporting.has(name),registered=Boolean(node.registered||detail?.registered),claimId=node.claim_id||detail?.claim_id||'';
     if(loading&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-loading"><span></span>Loading theorem source…</div>`;
     if(error&&!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><div class="library-theorem-error">${esc(error)}</div><button class="btn" data-library-inspect-refresh="${esc(name)}">Retry inspection</button>`;
-    if(!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><p>Selecting a theorem reads its declaration directly from the installed Mathlib sources. This does not run Lean or create a Claim.</p>`;
-    const q=encodeURIComponent(name);
+    if(!detail)return `<div class="global-inspector-kind">Mathlib theorem · read-only</div><code>${esc(name)}</code><h2>${esc(node.title||'Theorem')}</h2><p>Selecting a theorem reads its declaration and source-reference neighborhood directly from the installed Mathlib index.</p>`;
+    const q=encodeURIComponent(name),nodeId=`LIB:${name}`;
     const action=registered&&claimId
       ? `<button class="btn btn-primary" data-claim="${esc(claimId)}">Open Claim</button>`
       : `<button class="btn btn-primary" data-library-import-theorem="${esc(name)}" ${importing?'disabled':''}>${importing?'Importing…':'Import as Claim'}</button>`;
+    const formula=detail.presentation_latex
+      ? `<div class="library-theorem-formula" aria-label="${esc(detail.presentation_text||name)}">\\[${esc(detail.presentation_latex)}\\]</div>`
+      : `<div class="library-theorem-formula-fallback">${esc(detail.presentation_text||'No conservative LaTeX rendering for this Lean syntax.')}</div>`;
+    const outgoing=libraryDependencyList('Referenced in statement',detail.source_dependencies,nodeId);
+    const incoming=libraryDependencyList('Referenced by statements',detail.source_used_by,nodeId);
     return `<div class="global-inspector-kind">Mathlib theorem · source index</div>
       <code class="library-theorem-name">${esc(name)}</code>
       <h2>${esc(detail.short_name||node.title||'Theorem')}</h2>
-      <pre class="library-theorem-type">${esc(detail.source_declaration||detail.pretty_type||'Declaration unavailable')}</pre>
+      ${formula}
+      ${outgoing}${incoming}
+      <details class="library-theorem-source"><summary>Lean source</summary><pre class="library-theorem-type">${esc(detail.source_declaration||detail.pretty_type||'Declaration unavailable')}</pre></details>
       <div class="library-theorem-meta"><span>${esc(detail.source_module||'Mathlib')}</span><span>${esc(detail.source_path||'source unavailable')}:${Number(detail.source_line||0)}</span><span>0 Lean calls</span></div>
-      <p>Browsing reads the installed Mathlib source tree only. Lean verification and dependency evidence run only if you import this theorem as a Claim.</p>
+      <p>Solid theorem links here are conservative source-statement references. They are browsing evidence, not verified proof dependencies; importing the theorem runs Lean and records the verified evidence separately.</p>
       ${error?`<div class="library-theorem-error">${esc(error)}</div>`:''}
       <div class="graph-inspector-actions">${action}<a class="btn" href="./?view=library&q=${q}">Open in Math library</a></div>`;
   }
@@ -434,12 +464,12 @@ renderGraph=function renderPersistentGlobalGraph(){
   const selected=graphGlobalNode(state.graphSelected)||graph.nodes?.[0],nonClusters=(graph.nodes||[]).filter(node=>!graphIsCluster(node)).length,focus=!graphGlobalState.libraryMode&&typeof graphProofFocusHtml==='function'?graphProofFocusHtml():'',trail=!graphGlobalState.libraryMode&&typeof graphTrailHtml==='function'?graphTrailHtml():'';
   const title=graphGlobalState.libraryMode?'Explore Mathlib by module.':'Mathematics, all in one field of view.';
   const copy=graphGlobalState.libraryMode
-    ? 'Start from a source module, unfold only the branch you care about, then open any theorem. Search and Random theorem remain the fastest way to jump across the library.'
+    ? 'Double-click a module to expand one level in place. Module lines show containment; theorem lines show conservative source-statement references. Enter module remains available when you want a focused next-level view.'
     : 'Curated areas take priority; unclassified formal mathematics organizes itself deterministically by Lean namespace. Double-click clusters to unfold the hierarchy, then Claims to grow Proof neighborhoods.';
   const represented=graphGlobalState.libraryMode
     ? `${Number(graphGlobalState.libraryTheoremCount||0).toLocaleString()} Mathlib theorems indexed`
     : `${Number(graphGlobalState.claimCount).toLocaleString()} Claims represented`;
-  return `<main class="global-graph-page">${libraryBreadcrumbHtml()}<div class="global-graph-top"><div><div class="eyebrow">${graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${graphGlobalState.libraryMode?`${graphGlobalState.libraryModulePath?'<button class="btn" data-library-module-back>Back</button>':''}<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button>`:`<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button>`}<button class="btn" data-reset-global-world>Reset world</button></div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} ${graphGlobalState.libraryMode?(graphGlobalState.libraryModulePath?'child modules':'top-level modules'):'root namespaces / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} visible</span>${graphGlobalState.libraryMode&&graphGlobalState.libraryModuleHiddenCount? `<span>${graphGlobalState.libraryModuleHiddenCount.toLocaleString()} more in this branch</span>` : `<span>${graphGlobalState.expandedAreas.size} clusters expanded</span>`}${graphGlobalState.loading?'<strong>loading…</strong>':''}</div>${graphGlobalState.libraryModuleError?`<div class="global-module-error"><strong>Module open failed</strong><code>${esc(graphGlobalState.libraryModuleError)}</code></div>`:''}<div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to unfold</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
+  return `<main class="global-graph-page">${libraryBreadcrumbHtml()}<div class="global-graph-top"><div><div class="eyebrow">${graphGlobalState.libraryMode?'Read-only library graph':'Global argument graph'}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="global-graph-actions">${graphGlobalState.libraryMode?`${graphGlobalState.libraryModulePath?'<button class="btn" data-library-module-back>Back</button>':''}<a class="btn" href="./?view=library">Search Mathlib</a><button class="btn" data-random-library-theorem>Random theorem</button>`:`<button class="filter ${argumentState.depth===1?'active':''}" data-depth="1">1 hop</button><button class="filter ${argumentState.depth===2?'active':''}" data-depth="2">2 hops</button>`}<button class="btn" data-reset-global-world>Reset world</button></div></div>${!graphGlobalState.libraryMode&&typeof graphSearchHtml==='function'?graphSearchHtml():''}${trail}${focus}<div class="global-world-meta"><span>${represented}</span><span>${graphGlobalState.clusterCount} ${graphGlobalState.libraryMode?(graphGlobalState.libraryModulePath?'child modules':'top-level modules'):'root namespaces / clusters'}</span><span>${nonClusters} ${graphGlobalState.libraryMode?'theorems':'Claims'} visible</span>${graphGlobalState.libraryMode&&graphGlobalState.libraryModuleHiddenCount? `<span>${graphGlobalState.libraryModuleHiddenCount.toLocaleString()} more in this branch</span>` : `<span>${graphGlobalState.expandedAreas.size} clusters expanded</span>`}${graphGlobalState.loading?'<strong>loading…</strong>':''}</div>${graphGlobalState.libraryModuleError?`<div class="global-module-error"><strong>Module open failed</strong><code>${esc(graphGlobalState.libraryModuleError)}</code></div>`:''}<div class="global-graph-stage"><canvas id="argument-graph-canvas-element" aria-label="Global mathematical graph"></canvas><div class="global-graph-hint">drag · zoom · click to inspect · double-click to expand · module → child = hierarchy · theorem → theorem = source reference</div><aside class="global-graph-inspector">${globalInspector(selected)}</aside></div></main>`;
 };
 
 const graphGlobalBaseBind=bind;
@@ -453,8 +483,11 @@ bind=function bindPersistentGlobalGraph(){
   if(graphGlobalState.loaded&&graphGlobalState.needsInitialFit){
     graphGlobalState.needsInitialFit=false;
     requestAnimationFrame(()=>{
-      const roots=[...graphGlobalState.nodes.values()].filter(node=>!node.parent_cluster_id).map(node=>node.id);
-      fitGlobalGraphNodes(roots,{maxScale:1.0,padding:76});
+      const all=[...graphGlobalState.nodes.values()],roots=all.filter(node=>!node.parent_cluster_id).map(node=>node.id);
+      const fitIds=graphGlobalState.libraryMode
+        ? all.filter(node=>node.id==='LIBMOD:(root)'||node.parent_cluster_id==='LIBMOD:(root)').map(node=>node.id)
+        : roots;
+      fitGlobalGraphNodes(fitIds,{maxScale:1.0,padding:76});
     });
   }
   document.querySelector('[data-reset-global-world]')?.addEventListener('click',()=>loadGlobalWorld({reset:true}));
@@ -463,6 +496,7 @@ bind=function bindPersistentGlobalGraph(){
   document.querySelectorAll('[data-library-module-path]').forEach(button=>button.addEventListener('click',()=>openLibraryModule(button.dataset.libraryModulePath)));
   document.querySelector('[data-random-library-theorem]')?.addEventListener('click',()=>randomLibraryTheorem());
   document.querySelector('[data-expand-global-area]')?.addEventListener('click',event=>expandGlobalArea(event.currentTarget.dataset.expandGlobalArea));
+  document.querySelector('[data-open-library-module]')?.addEventListener('click',event=>openLibraryModule(event.currentTarget.dataset.openLibraryModule));
   document.querySelector('[data-expand-global-claim]')?.addEventListener('click',event=>expandGlobalClaim(event.currentTarget.dataset.expandGlobalClaim));
   document.querySelectorAll('[data-library-theorem-name]').forEach(button=>button.addEventListener('click',()=>selectLibraryTheorem(button.dataset.libraryTheoremName,{anchorId:button.dataset.libraryAnchor||state.graphSelected})));
   document.querySelector('[data-library-import-theorem]')?.addEventListener('click',event=>importLibraryTheorem(event.currentTarget.dataset.libraryImportTheorem));
@@ -472,6 +506,8 @@ bind=function bindPersistentGlobalGraph(){
     const name=String(selected.lean_name||selected.title||'');
     if(name&&!graphGlobalState.theoremDetails.has(name)&&!graphGlobalState.theoremLoading.has(name)&&!graphGlobalState.theoremErrors.has(name))void loadLibraryTheoremDetail(name);
   }
+  const inspector=document.querySelector('.global-graph-inspector');
+  if(inspector&&window.MathJax?.typesetPromise)window.MathJax.typesetPromise([inspector]).catch(()=>{});
 };
 
 restoreGraphLocation=async function restoreGlobalGraphLocation(){
