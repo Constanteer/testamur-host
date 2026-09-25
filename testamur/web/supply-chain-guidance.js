@@ -108,7 +108,8 @@
     hydrateProjectDiff();
   };
 
-  const observer = new MutationObserver(enhance);
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  addEventListener('testamur:rendered', enhance);
+  addEventListener('popstate', enhance);
+  addEventListener('DOMContentLoaded', enhance);
   enhance();
 })();
