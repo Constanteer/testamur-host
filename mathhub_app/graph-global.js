@@ -7,6 +7,7 @@ const graphGlobalState={
   expandedAreas:new Set(),expandedClaims:new Set(),claimCount:0,clusterCount:0,
   libraryMode:false,libraryIndexed:false,libraryStatus:null,libraryTheoremCount:0,
   libraryModulePath:'',libraryModuleHiddenCount:0,libraryModuleError:'',openingModulePath:'',
+  libraryContextPrunedCount:0,
   needsInitialFit:true,pendingFocusIds:[],
   theoremDetails:new Map(),theoremLoading:new Set(),theoremErrors:new Map(),theoremImporting:new Set(),
 };
@@ -73,6 +74,61 @@ function focusGlobalBranch(clusterId,preferredIds=[]){
   fitGlobalGraphNodes(ids,{maxScale:1.18,padding:84});
 }
 
+function libraryAncestorChain(clusterId){
+  const chain=[];let current=graphGlobalNode(clusterId),guard=0;
+  while(current&&guard++<32){
+    chain.push(current.id);
+    const parentId=String(current.parent_cluster_id||'');
+    if(!parentId)break;
+    current=graphGlobalNode(parentId);
+  }
+  return chain;
+}
+
+function compressLibraryContext(clusterId){
+  if(!graphGlobalState.libraryMode)return 0;
+  const current=graphGlobalNode(clusterId);
+  if(!current||current.cluster_source!=='mathlib-module')return 0;
+  const chain=libraryAncestorChain(clusterId);
+  if(!chain.length)return 0;
+  const keep=new Set(chain);
+  for(const node of graphGlobalState.nodes.values()){
+    if(node.parent_cluster_id===clusterId)keep.add(node.id);
+  }
+  // Keep fewer alternatives the farther an ancestor is from the active branch.
+  const siblingBudgets=[5,2,1];
+  for(let distance=1;distance<chain.length;distance++){
+    const ancestorId=chain[distance],pathChildId=chain[distance-1];
+    keep.add(ancestorId);keep.add(pathChildId);
+    const budget=siblingBudgets[Math.min(distance-1,siblingBudgets.length-1)];
+    const siblings=[...graphGlobalState.nodes.values()]
+      .filter(node=>node.parent_cluster_id===ancestorId&&node.id!==pathChildId&&graphIsCluster(node))
+      .sort((a,b)=>Number(b.claim_count||0)-Number(a.claim_count||0)||String(a.title||'').localeCompare(String(b.title||'')))
+      .slice(0,budget);
+    siblings.forEach(node=>keep.add(node.id));
+  }
+  let removed=0;
+  for(const [id,node] of [...graphGlobalState.nodes.entries()]){
+    if(!graphIsCluster(node)&&!graphIsLibraryTheorem(node))continue;
+    if(keep.has(id))continue;
+    graphGlobalState.nodes.delete(id);
+    graphCanvasState.positions.delete(id);
+    removed++;
+  }
+  if(removed){
+    for(const [edgeKey,edge] of [...graphGlobalState.edges.entries()]){
+      if(!graphGlobalState.nodes.has(edge.from)||!graphGlobalState.nodes.has(edge.to))graphGlobalState.edges.delete(edgeKey);
+    }
+    const liveClusterKeys=new Set(chain.map(id=>graphGlobalNode(id)).filter(Boolean).map(graphClusterKey).filter(Boolean));
+    for(const key of [...graphGlobalState.expandedAreas]){
+      if(!liveClusterKeys.has(key))graphGlobalState.expandedAreas.delete(key);
+    }
+  }
+  graphGlobalState.libraryContextPrunedCount=removed;
+  graphGlobalState.clusterCount=[...graphGlobalState.nodes.values()].filter(graphIsCluster).length;
+  argumentState.graph=graphGlobalGraph();
+  return removed;
+}
 async function loadLibraryStatus(){
   try{graphGlobalState.libraryStatus=await apiJson('/api/library/status');}
   catch(error){graphGlobalState.libraryStatus={error:String(error?.message||error)};}
@@ -204,7 +260,7 @@ async function loadGlobalWorld({reset=false}={}){
         await loadLibraryStatus();
       }
     }
-    graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();graphGlobalState.pendingFocusIds=[];graphGlobalState.needsInitialFit=true;graphGlobalState.libraryModulePath='';graphGlobalState.libraryModuleHiddenCount=0;graphGlobalState.libraryModuleError='';
+    graphGlobalState.nodes.clear();graphGlobalState.edges.clear();graphGlobalState.expandedAreas.clear();graphGlobalState.expandedClaims.clear();graphGlobalState.pendingFocusIds=[];graphGlobalState.needsInitialFit=true;graphGlobalState.libraryModulePath='';graphGlobalState.libraryModuleHiddenCount=0;graphGlobalState.libraryModuleError='';graphGlobalState.libraryContextPrunedCount=0;
     for(const node of world.nodes||[])graphGlobalState.nodes.set(node.id,node);mergeWorldEdges(world.edges||[]);
     graphGlobalState.clusterCount=Number(world.cluster_count||0);graphGlobalState.libraryTheoremCount=Number(world.theorem_count||0);graphGlobalState.loaded=true;
     argumentState.graph=graphGlobalGraph();graphCanvasState.key='';graphCanvasState.positions=new Map();state.graphSelected=(world.nodes||[])[0]?.id||'';
@@ -239,6 +295,7 @@ async function openLibraryModule(modulePath){
     mergeWorldEdges(chunk.edges||[]);
     graphGlobalState.libraryModulePath=modulePath;
     graphGlobalState.libraryModuleHiddenCount=Number(chunk.hidden_count||0);
+    graphGlobalState.libraryContextPrunedCount=0;
     graphGlobalState.clusterCount=nodes.filter(graphIsCluster).length;
     argumentState.graph=graphGlobalGraph();
     graphCanvasState.key='';
@@ -282,7 +339,7 @@ async function expandGlobalArea(clusterId){
   const cluster=graphGlobalNode(clusterId);if(!cluster||!graphIsCluster(cluster)||graphGlobalState.loading)return;
   const key=graphClusterKey(cluster);if(!key)return;
   state.graphSelected=clusterId;
-  if(graphGlobalState.expandedAreas.has(key)){
+  if(graphGlobalState.expandedAreas.has(key)&&!(graphGlobalState.libraryMode&&cluster.cluster_source==='mathlib-module')){
     render();
     requestAnimationFrame(()=>focusGlobalBranch(clusterId));
     return;
@@ -301,6 +358,10 @@ async function expandGlobalArea(clusterId){
     const newcomers=mergeWorldChunk(chunk,{anchorId:clusterId,radius:145});
     focusIds=newcomers.map(node=>node.id);
     graphGlobalState.expandedAreas.add(key);
+    if(graphGlobalState.libraryMode&&cluster.cluster_source==='mathlib-module'){
+      compressLibraryContext(clusterId);
+      focusIds=[...graphGlobalState.nodes.values()].filter(node=>node.parent_cluster_id===clusterId).map(node=>node.id);
+    }
   }finally{
     graphGlobalState.loading=false;argumentState.graph=graphGlobalGraph();render();
     requestAnimationFrame(()=>focusGlobalBranch(clusterId,focusIds));
@@ -512,7 +573,7 @@ function globalInspector(node){
     const countLabel=library?'theorems':'Claims';
     const hidden=Number(node.expansion_hidden_count||0);
     const copy=moduleCluster
-      ? 'Double-click expands this module in place and keeps the surrounding graph visible. Enter module is an explicit focused navigation mode.'
+      ? 'Double-click expands this module in place. Older ancestor levels are progressively compacted so this branch can grow without leaving the whole path open.'
       : library
         ? 'Read-only theorems from the installed Mathlib source index. Expand freely; nothing becomes a Claim until you explicitly import it.'
         : (namespace?'This deterministic fallback comes from the Lean declaration namespace.':'This curated mathematical field groups durable MathHub Claims.');
@@ -571,7 +632,7 @@ renderGraph=function renderPersistentGlobalGraph(){
   const selected=graphGlobalNode(state.graphSelected)||graph.nodes?.[0],nonClusters=(graph.nodes||[]).filter(node=>!graphIsCluster(node)).length,focus=!graphGlobalState.libraryMode&&typeof graphProofFocusHtml==='function'?graphProofFocusHtml():'',trail=!graphGlobalState.libraryMode&&typeof graphTrailHtml==='function'?graphTrailHtml():'';
   const title=graphGlobalState.libraryMode?'Explore Mathlib by module.':'Mathematics, all in one field of view.';
   const copy=graphGlobalState.libraryMode
-    ? 'Double-click a module to expand one level in place. Module lines show containment; theorem lines show conservative source-statement references. Enter module remains available when you want a focused next-level view.'
+    ? 'Double-click a module to expand one level in place. As you go deeper, older levels are compacted automatically so the active branch stays readable. Module lines show containment; theorem lines show conservative source-statement references.'
     : 'Curated areas take priority; unclassified formal mathematics organizes itself deterministically by Lean namespace. Double-click clusters to unfold the hierarchy, then Claims to grow Proof neighborhoods.';
   const represented=graphGlobalState.libraryMode
     ? `${Number(graphGlobalState.libraryTheoremCount||0).toLocaleString()} Mathlib theorems indexed`
