@@ -46,6 +46,14 @@ WORKSPACE_COOKIE = "testamur_workspace"
 _MATHHUB_PREFIX = "/sources/mathhub"
 _MATHHUB_ROOT = Path(__file__).resolve().parents[2] / "mathhub_app"
 _ACCOUNT_ROUTES = {"signin", "signup", "settings"}
+_LEGACY_PUBLIC_ROUTE_ALIASES = {
+    "/index.html": "/",
+    "/learn.html": "/learn",
+    "/docs.html": "/docs",
+    "/quickstart.html": "/quickstart",
+    "/demo.html": "/demo",
+    "/plugins.html": "/integrations",
+}
 _PUBLIC_ASSETS = {
     item.name
     for item in WEB_ROOT.iterdir()
@@ -1045,6 +1053,10 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         split = urlsplit(self.path)
         path = unquote(split.path or "/")
         name = path.lstrip("/")
+        legacy_target = _LEGACY_PUBLIC_ROUTE_ALIASES.get(path)
+        if legacy_target is not None:
+            self._send(_redirect(legacy_target))
+            return
         if path == "/healthz":
             mathhub_ok = False
             mathhub_error = None

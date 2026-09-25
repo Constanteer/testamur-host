@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from apps.web.hosted_app import _LEGACY_PUBLIC_ROUTE_ALIASES
+
 
 APP = (Path(__file__).parents[1] / "testamur" / "web" / "app.js").read_text(encoding="utf-8")
 
@@ -55,3 +57,14 @@ def test_hosted_monitor_flow_keeps_first_baseline_step():
     assert "Record the first observation." in APP
     assert "Check now" in APP
     assert "recorded ≠ verified · fetched ≠ relied" in APP
+
+
+def test_legacy_launch_urls_handoff_to_current_hosted_routes():
+    assert _LEGACY_PUBLIC_ROUTE_ALIASES == {
+        "/index.html": "/",
+        "/learn.html": "/learn",
+        "/docs.html": "/docs",
+        "/quickstart.html": "/quickstart",
+        "/demo.html": "/demo",
+        "/plugins.html": "/integrations",
+    }
