@@ -282,7 +282,7 @@ class AccountStore:
             ).fetchone()
             pending_verification_count = connection.execute(
                 """
-                SELECT COUNT(*) AS count
+                SELECT COUNT(DISTINCT user_id) AS count
                 FROM email_verification_tokens
                 WHERE consumed_at IS NULL
                   AND invalidated_at IS NULL
