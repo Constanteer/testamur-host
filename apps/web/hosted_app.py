@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
+import html
 import json
 import mimetypes
 import os
@@ -60,6 +62,161 @@ _PUBLIC_ASSETS = {
     for item in WEB_ROOT.iterdir()
     if item.is_file() and item.suffix.lower() in {".js", ".css"}
 } | {"index.html"}
+_ADMIN_PREFIX = "/_ops/"
+_ADMIN_TOKEN_ENV = "TESTAMUR_ADMIN_PATH_TOKEN"
+
+
+def _configured_admin_token() -> str | None:
+    token = os.environ.get(_ADMIN_TOKEN_ENV, "").strip()
+    if not token:
+        return None
+    if len(token) < 32 or len(token) > 256:
+        return None
+    if re.fullmatch(r"[A-Za-z0-9_-]+", token) is None:
+        return None
+    return token
+
+
+def _admin_path_matches(path: str) -> bool:
+    if not path.startswith(_ADMIN_PREFIX):
+        return False
+    token = _configured_admin_token()
+    if token is None:
+        return False
+    candidate = path[len(_ADMIN_PREFIX):]
+    if not candidate or "/" in candidate:
+        return False
+    return hmac.compare_digest(candidate, token)
+
+
+def _admin_time(value: int | None) -> str:
+    if value is None:
+        return "never"
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(int(value)))
+
+
+def _admin_dashboard_response(store: AccountStore, *, path: str) -> dict[str, Any]:
+    snapshot = store.admin_snapshot()
+    summary = snapshot["summary"]
+
+    cards = [
+        ("Users", summary["total_users"]),
+        ("Verified", summary["verified_users"]),
+        ("Unverified", summary["unverified_users"]),
+        ("Signups · 24h", summary["signups_24h"]),
+        ("Signups · 7d", summary["signups_7d"]),
+        ("Active users · 24h", summary["active_users_24h"]),
+        ("Active users · 7d", summary["active_users_7d"]),
+        ("Active sessions", summary["active_sessions"]),
+        ("Organizations", summary["organizations"]),
+        ("Pending verification", summary["pending_verifications"]),
+    ]
+    cards_html = "".join(
+        (
+            '<div class="metric">'
+            f'<div class="metric-label">{html.escape(str(label))}</div>'
+            f'<div class="metric-value">{int(value)}</div>'
+            "</div>"
+        )
+        for label, value in cards
+    )
+
+    rows: list[str] = []
+    for user in snapshot["users"]:
+        verified = "yes" if user["email_verified"] else "no"
+        active = int(user["active_sessions"])
+        rows.append(
+            "<tr>"
+            f'<td><strong>{html.escape(str(user["username"]))}</strong>'
+            f'<div class="muted">{html.escape(str(user["display_name"]))}</div></td>'
+            f'<td>{html.escape(str(user["email"]))}</td>'
+            f'<td><span class="pill {"ok" if user["email_verified"] else "warn"}">{verified}</span></td>'
+            f'<td>{html.escape(_admin_time(user["created_at"]))}</td>'
+            f'<td>{html.escape(_admin_time(user["last_seen_at"]))}</td>'
+            f'<td>{active}</td>'
+            f'<td class="mono">{html.escape(str(user["user_id"]))}</td>'
+            "</tr>"
+        )
+    if not rows:
+        rows.append('<tr><td colspan="7" class="empty">No hosted users yet.</td></tr>')
+
+    refresh_path = html.escape(path, quote=True)
+    body = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Testamur · Operations</title>
+<style>
+:root {{ color-scheme: dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; background: #0b0d10; color: #eef1f5; }}
+main {{ width: min(1500px, calc(100% - 32px)); margin: 32px auto 64px; }}
+header {{ display: flex; gap: 24px; justify-content: space-between; align-items: flex-end; margin-bottom: 24px; }}
+h1 {{ margin: 0; font-size: 28px; letter-spacing: -0.03em; }}
+.sub {{ color: #8f98a5; margin-top: 7px; font-size: 13px; }}
+a {{ color: #eef1f5; text-decoration: none; }}
+.refresh {{ border: 1px solid #2a3039; border-radius: 10px; padding: 9px 12px; background: #12161b; }}
+.metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 24px; }}
+.metric {{ border: 1px solid #202630; background: #11151a; border-radius: 12px; padding: 15px; min-height: 92px; }}
+.metric-label {{ color: #8f98a5; font-size: 12px; }}
+.metric-value {{ font-size: 30px; font-weight: 700; margin-top: 12px; letter-spacing: -0.04em; }}
+.panel {{ border: 1px solid #202630; background: #101419; border-radius: 14px; overflow: hidden; }}
+.panel-head {{ padding: 15px 17px; border-bottom: 1px solid #202630; display: flex; justify-content: space-between; gap: 16px; }}
+table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+th, td {{ padding: 12px 14px; text-align: left; border-bottom: 1px solid #1b2028; vertical-align: top; }}
+th {{ color: #8f98a5; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }}
+tr:last-child td {{ border-bottom: 0; }}
+.muted {{ color: #7f8996; margin-top: 3px; font-size: 12px; }}
+.mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #9ca6b3; font-size: 11px; }}
+.pill {{ display: inline-block; border-radius: 999px; padding: 3px 7px; font-size: 11px; }}
+.pill.ok {{ background: #173522; color: #9ae6b4; }}
+.pill.warn {{ background: #3a2b12; color: #f6cf7a; }}
+.empty {{ color: #8f98a5; padding: 30px; text-align: center; }}
+.scroller {{ overflow-x: auto; }}
+@media (max-width: 700px) {{ main {{ width: min(100% - 20px, 1500px); margin-top: 20px; }} header {{ align-items: flex-start; flex-direction: column; }} }}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1>Testamur operations</h1>
+    <div class="sub">Private read-only account overview · observed {_admin_time(snapshot["observed_at"])}</div>
+  </div>
+  <a class="refresh" href="{refresh_path}">Refresh</a>
+</header>
+<section class="metrics">{cards_html}</section>
+<section class="panel">
+  <div class="panel-head"><strong>Recent users</strong><span class="muted">newest first · max 200</span></div>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>User</th><th>Email</th><th>Verified</th><th>Created</th><th>Last seen</th><th>Sessions</th><th>ID</th></tr></thead>
+      <tbody>{"".join(rows)}</tbody>
+    </table>
+  </div>
+</section>
+</main>
+</body>
+</html>""".encode("utf-8")
+
+    return {
+        "status": int(HTTPStatus.OK),
+        "headers": {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+            "Referrer-Policy": "no-referrer",
+            "X-Robots-Tag": "noindex, nofollow, noarchive",
+            "Content-Security-Policy": (
+                "default-src 'none'; style-src 'unsafe-inline'; "
+                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            ),
+            **_SECURITY_HEADERS,
+        },
+        "body": body,
+    }
 
 
 def _core_web_cache_token() -> str:
@@ -1104,6 +1261,12 @@ class HostedTestamurWebHandler(TestamurWebHandler):
         legacy_target = _LEGACY_PUBLIC_ROUTE_ALIASES.get(path)
         if legacy_target is not None:
             self._send(_redirect(legacy_target))
+            return
+        if path.startswith(_ADMIN_PREFIX):
+            if not _admin_path_matches(path):
+                self._send(_error("not_found", "Not found.", status=404))
+                return
+            self._send(_admin_dashboard_response(self.hosted_server.account_store, path=path))
             return
         if path == "/healthz":
             mathhub_ok = False
