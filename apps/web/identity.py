@@ -242,6 +242,111 @@ class AccountStore:
             ).fetchone()
             return None if row is None else self._public_profile(row)
 
+    def admin_snapshot(self, *, now: int | None = None, limit: int = 200) -> dict[str, Any]:
+        """Return a read-only hosted-account overview for the private admin surface."""
+        observed_at = _now() if now is None else int(now)
+        cutoff_24h = observed_at - 24 * 60 * 60
+        cutoff_7d = observed_at - 7 * 24 * 60 * 60
+        row_limit = max(1, min(int(limit), 500))
+
+        with self._connect() as connection:
+            user_counts = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_users,
+                    COALESCE(SUM(CASE WHEN email_verified_at IS NOT NULL THEN 1 ELSE 0 END), 0)
+                        AS verified_users,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0)
+                        AS signups_24h,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0)
+                        AS signups_7d
+                FROM users
+                """,
+                (cutoff_24h, cutoff_7d),
+            ).fetchone()
+            activity = connection.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT CASE WHEN last_seen_at >= ? THEN user_id END) AS active_users_24h,
+                    COUNT(DISTINCT CASE WHEN last_seen_at >= ? THEN user_id END) AS active_users_7d,
+                    COALESCE(SUM(CASE WHEN expires_at > ? THEN 1 ELSE 0 END), 0) AS active_sessions
+                FROM sessions
+                """,
+                (cutoff_24h, cutoff_7d, observed_at),
+            ).fetchone()
+            organization_count = connection.execute(
+                "SELECT COUNT(*) AS count FROM organizations"
+            ).fetchone()
+            pending_invitation_count = connection.execute(
+                "SELECT COUNT(*) AS count FROM organization_invitations WHERE status = 'pending'"
+            ).fetchone()
+            pending_verification_count = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM email_verification_tokens
+                WHERE consumed_at IS NULL
+                  AND invalidated_at IS NULL
+                  AND expires_at > ?
+                """,
+                (observed_at,),
+            ).fetchone()
+            rows = connection.execute(
+                """
+                SELECT
+                    users.user_id,
+                    users.username,
+                    users.email,
+                    users.display_name,
+                    users.email_verified_at,
+                    users.created_at,
+                    MAX(sessions.last_seen_at) AS last_seen_at,
+                    COALESCE(
+                        SUM(CASE WHEN sessions.expires_at > ? THEN 1 ELSE 0 END),
+                        0
+                    ) AS active_sessions
+                FROM users
+                LEFT JOIN sessions ON sessions.user_id = users.user_id
+                GROUP BY users.user_id
+                ORDER BY users.created_at DESC, users.user_id DESC
+                LIMIT ?
+                """,
+                (observed_at, row_limit),
+            ).fetchall()
+
+        total_users = int(user_counts["total_users"] or 0)
+        verified_users = int(user_counts["verified_users"] or 0)
+        return {
+            "observed_at": observed_at,
+            "summary": {
+                "total_users": total_users,
+                "verified_users": verified_users,
+                "unverified_users": max(0, total_users - verified_users),
+                "signups_24h": int(user_counts["signups_24h"] or 0),
+                "signups_7d": int(user_counts["signups_7d"] or 0),
+                "active_users_24h": int(activity["active_users_24h"] or 0),
+                "active_users_7d": int(activity["active_users_7d"] or 0),
+                "active_sessions": int(activity["active_sessions"] or 0),
+                "organizations": int(organization_count["count"] or 0),
+                "pending_invitations": int(pending_invitation_count["count"] or 0),
+                "pending_verifications": int(pending_verification_count["count"] or 0),
+            },
+            "users": [
+                {
+                    "user_id": row["user_id"],
+                    "username": row["username"],
+                    "email": row["email"],
+                    "display_name": row["display_name"],
+                    "email_verified": row["email_verified_at"] is not None,
+                    "created_at": int(row["created_at"]),
+                    "last_seen_at": (
+                        None if row["last_seen_at"] is None else int(row["last_seen_at"])
+                    ),
+                    "active_sessions": int(row["active_sessions"] or 0),
+                }
+                for row in rows
+            ],
+        }
+
     @staticmethod
     def _organization(row: sqlite3.Row, *, role: str | None = None) -> dict[str, Any]:
         value = {
