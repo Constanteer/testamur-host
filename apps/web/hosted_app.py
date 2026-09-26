@@ -204,6 +204,7 @@ tr:last-child td {{ border-bottom: 0; }}
     return {
         "status": int(HTTPStatus.OK),
         "headers": {
+            **_SECURITY_HEADERS,
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store, max-age=0",
             "Pragma": "no-cache",
@@ -213,7 +214,6 @@ tr:last-child td {{ border-bottom: 0; }}
                 "default-src 'none'; style-src 'unsafe-inline'; "
                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
             ),
-            **_SECURITY_HEADERS,
         },
         "body": body,
     }
