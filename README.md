@@ -87,6 +87,26 @@ For an initial private smoke test, Resend's `onboarding@resend.dev` sender can b
 
 If the mail backend is not configured, hosted signup fails closed with `email_delivery_unavailable` rather than creating accounts that cannot receive a verification link. Existing accounts created before this schema migration are explicitly grandfathered with `email_verification_source=legacy_migration` so deployment does not lock them out.
 
+## Private operations dashboard
+
+The hosted service has a read-only operations page for account counts and recent users. It is not linked from the public UI and is only served when a high-entropy path token is configured.
+
+Set a deployment secret:
+
+```text
+TESTAMUR_ADMIN_PATH_TOKEN=<at least 32 URL-safe characters>
+```
+
+A 256-bit hex token is suitable, for example one generated locally with `openssl rand -hex 32`. The dashboard is then available at:
+
+```text
+https://testamur.org/_ops/<TESTAMUR_ADMIN_PATH_TOKEN>
+```
+
+The page reports total/verified/unverified users, recent signups, active users and sessions, organizations, pending verification state, and a newest-first account table. It is read-only, uses `Cache-Control: no-store`, sends `Referrer-Policy: no-referrer`, and is marked `noindex`. Invalid or unconfigured tokens return 404.
+
+Treat the path token as an administrator bearer credential. Keep it out of screenshots, shared browser history, analytics exports, and public logs; rotate the deployment secret if it is exposed.
+
 ## Repository boundaries
 
 `testamur/` is a deployment snapshot of the private canonical core; it is not a second semantic implementation. Hosted account, tenancy, deployment and routing code lives under `apps/`. MathHub remains a separate product/ontology even though it is bundled into the same deployment unit for cost and routing.
